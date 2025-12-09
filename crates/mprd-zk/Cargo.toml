@@ -1,0 +1,7 @@
+[package]
+name = "mprd-zk"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mprd-core = { path = "../mprd-core" }

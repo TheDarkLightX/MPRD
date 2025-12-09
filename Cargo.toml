@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/mprd-core",
+    "crates/mprd-zk",
+    "crates/mprd-adapters",
+]
+resolver = "2"

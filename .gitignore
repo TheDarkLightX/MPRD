@@ -1,0 +1,6 @@
+# Build artifacts
+/target
+
+# Project-private trees (per Tau license and internal dev docs)
+/internal/
+/external/
