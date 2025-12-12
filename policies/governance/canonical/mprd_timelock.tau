@@ -1,0 +1,57 @@
+# ============================================================================
+# CANONICAL: Timelock Governance (Two-Phase Commit)
+# ============================================================================
+# Implements mandatory delay between proposal and execution.
+# Uses sbf delay chain pattern (no bv arithmetic).
+#
+# This is the RECOMMENDED approach for timelocked operations.
+# ============================================================================
+
+# Inputs
+i_propose            : sbf = in file("inputs/propose.in").
+i_execute            : sbf = in file("inputs/execute.in").
+i_signatures_ok      : sbf = in file("inputs/signatures_ok.in").
+
+# State outputs
+o_pending            : sbf = out file("outputs/pending.out").
+o_waited_1           : sbf = out file("outputs/waited_1.out").
+o_waited_2           : sbf = out file("outputs/waited_2.out").
+o_ready              : sbf = out file("outputs/ready.out").
+o_executed           : sbf = out file("outputs/executed.out").
+
+defs
+r (
+    # Initialize
+    (o_pending[0] = 0) &&
+    (o_waited_1[0] = 0) &&
+    (o_waited_2[0] = 0) &&
+    
+    # Pending: set by propose, cleared by execute
+    (o_pending[t] = (i_propose[t] & i_signatures_ok[t]) | (o_pending[t-1] & o_executed[t-1]')) &&
+    
+    # Delay chain (2-step delay)
+    (o_waited_1[t] = o_pending[t-1]) &&
+    (o_waited_2[t] = o_waited_1[t-1]) &&
+    
+    # Ready after delay
+    (o_ready[t] = o_waited_2[t]) &&
+    
+    # Execute when ready and authorized
+    (o_executed[t] = o_pending[t] & o_ready[t] & i_execute[t] & i_signatures_ok[t])
+)
+n
+n
+n
+n
+n
+q
+
+# ============================================================================
+# Timeline:
+#   Step 1: propose=1, signatures_ok=1 -> pending=1
+#   Step 2: waited_1=1
+#   Step 3: waited_2=1, ready=1
+#   Step 4: execute=1, signatures_ok=1 -> executed=1
+#
+# To change delay, add more waited_N variables in the chain.
+# ============================================================================

@@ -1,0 +1,14 @@
+[package]
+name = "mprd-risc0-methods"
+version = "0.1.0"
+edition = "2021"
+description = "MPRD Risc0 guest methods - ELF binaries and image IDs"
+
+[build-dependencies]
+risc0-build = "1.2"
+
+[dependencies]
+# Empty - this crate only provides the ELF and IMAGE_ID constants
+
+[package.metadata.risc0]
+methods = ["guest"]

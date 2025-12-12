@@ -3,5 +3,12 @@ members = [
     "crates/mprd-core",
     "crates/mprd-zk",
     "crates/mprd-adapters",
+    "crates/mprd-proof",
+    "crates/mprd-cli",
+    "crates/mprd-risc0-shared",
+    "methods",
+    "methods/guest",
 ]
 resolver = "2"
+
+# methods hosts the Risc0 methods + guest crates used by mprd-zk.

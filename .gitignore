@@ -1,6 +1,29 @@
 # Build artifacts
-/target
+/target/
+Cargo.lock
 
-# Project-private trees (per Tau license and internal dev docs)
+# Project-private trees (per Tau/IDNI license and internal dev docs)
+# IMPORTANT: external/ contains IDNI licensed tau-lang - do NOT commit
 /internal/
 /external/
+/specs/
+
+# Tau interpreter artifacts
+.tau_history
+*.tau.out
+policies/governance/inputs/
+policies/governance/outputs/
+policies/governance/canonical/inputs/
+policies/governance/canonical/outputs/
+policies/governance/archive/
+
+# IDE and OS artifacts
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Test artifacts
+*.log
+/tmp/

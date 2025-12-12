@@ -1,0 +1,39 @@
+# ============================================================================
+# CANONICAL: Committee Quorum (M-of-N Voting)
+# ============================================================================
+# Pure sbf Boolean logic for committee voting.
+# Supports 2-of-3 and 3-of-3 (unanimous) modes.
+#
+# This is the RECOMMENDED approach for committee decisions.
+# ============================================================================
+
+# Inputs - committee votes
+i_vote_0             : sbf = in file("inputs/vote_0.in").
+i_vote_1             : sbf = in file("inputs/vote_1.in").
+i_vote_2             : sbf = in file("inputs/vote_2.in").
+
+# Outputs
+o_at_least_1         : sbf = out file("outputs/at_least_1.out").
+o_at_least_2         : sbf = out file("outputs/at_least_2.out").
+o_unanimous          : sbf = out file("outputs/unanimous.out").
+o_passed             : sbf = out file("outputs/passed.out").
+
+defs
+r (
+    # Vote counting using Boolean combinatorics
+    (o_at_least_1[t] = i_vote_0[t] | i_vote_1[t] | i_vote_2[t]) &&
+    (o_at_least_2[t] = (i_vote_0[t] & i_vote_1[t]) | (i_vote_0[t] & i_vote_2[t]) | (i_vote_1[t] & i_vote_2[t])) &&
+    (o_unanimous[t] = i_vote_0[t] & i_vote_1[t] & i_vote_2[t]) &&
+    
+    # Default: 2-of-3 quorum
+    (o_passed[t] = o_at_least_2[t])
+)
+n
+q
+
+# ============================================================================
+# To change quorum requirement, modify o_passed assignment:
+#   - 1-of-3: (o_passed[t] = o_at_least_1[t])
+#   - 2-of-3: (o_passed[t] = o_at_least_2[t])  [default]
+#   - 3-of-3: (o_passed[t] = o_unanimous[t])
+# ============================================================================

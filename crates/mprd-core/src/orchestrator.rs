@@ -3,6 +3,7 @@ use crate::{
     StateProvider, StateSnapshot, PolicyEngine, PolicyHash, Proposer, Selector, VerificationStatus,
     ZkAttestor, ZkLocalVerifier, ExecutorAdapter,
 };
+use tracing::{debug, error, info, instrument, warn, Span};
 
 /// Factory responsible for constructing signed decision tokens from
 /// decisions and state snapshots.
@@ -16,6 +17,11 @@ pub trait DecisionTokenFactory {
     fn create(&self, decision: &Decision, state: &StateSnapshot) -> Result<DecisionToken>;
 }
 
+/// Optional hook for recording verified decisions (e.g., on-chain/Tau anchoring).
+pub trait DecisionRecorder {
+    /// Called after ZK verification succeeds but before execution.
+    fn record(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<()>;
+}
 /// Execute a single MPRD decision cycle:
 ///
 /// 1. Observe state.
@@ -26,6 +32,113 @@ pub trait DecisionTokenFactory {
 /// 6. Attest with ZK.
 /// 7. Verify locally.
 /// 8. Execute via adapter.
+///
+/// # Tracing
+///
+/// This function is instrumented with tracing spans and events:
+/// - `run_once` span with policy_hash field
+/// - Events for each stage (state, propose, evaluate, select, etc.)
+#[instrument(
+    name = "mprd_run_once",
+    skip(state_provider, proposer, policy_engine, selector, token_factory, attestor, verifier, executor, recorder),
+    fields(
+        policy_hash = %hex::encode(&policy_hash.0[..8]),
+        candidates = tracing::field::Empty,
+        allowed = tracing::field::Empty,
+        chosen_index = tracing::field::Empty,
+    )
+)]
+fn run_once_internal<P, Pr, PE, S, TF, ZA, ZV, E>(
+    state_provider: &P,
+    proposer: &Pr,
+    policy_engine: &PE,
+    selector: &S,
+    token_factory: &TF,
+    attestor: &ZA,
+    verifier: &ZV,
+    executor: &E,
+    recorder: Option<&dyn DecisionRecorder>,
+    policy_hash: &PolicyHash,
+) -> Result<ExecutionResult>
+where
+    P: StateProvider,
+    Pr: Proposer,
+    PE: PolicyEngine,
+    S: Selector,
+    TF: DecisionTokenFactory,
+    ZA: ZkAttestor,
+    ZV: ZkLocalVerifier,
+    E: ExecutorAdapter,
+{
+    // 1. Observe state
+    debug!("Capturing state snapshot");
+    let state = state_provider.snapshot()?;
+    debug!(state_hash = %hex::encode(&state.state_hash.0[..8]), "State captured");
+
+    // 2. Propose candidates
+    debug!("Proposing candidates");
+    let candidates: Vec<CandidateAction> = proposer.propose(&state)?;
+    Span::current().record("candidates", candidates.len());
+    debug!(num_candidates = candidates.len(), "Candidates proposed");
+
+    // 3. Evaluate with policy engine
+    debug!("Evaluating policy");
+    let verdicts = policy_engine.evaluate(policy_hash, &state, &candidates)?;
+    let allowed_count = verdicts.iter().filter(|v| v.allowed).count();
+    Span::current().record("allowed", allowed_count);
+    debug!(allowed = allowed_count, denied = candidates.len() - allowed_count, "Policy evaluated");
+
+    // 4. Select deterministically
+    debug!("Selecting action");
+    let decision = selector.select(policy_hash, &state, &candidates, &verdicts)?;
+    Span::current().record("chosen_index", decision.chosen_index);
+    info!(
+        chosen_index = decision.chosen_index,
+        action_type = %decision.chosen_action.action_type,
+        "Action selected"
+    );
+
+    // 5. Create decision token
+    debug!("Creating decision token");
+    let token = token_factory.create(&decision, &state)?;
+    debug!(nonce = %hex::encode(&token.nonce_or_tx_hash.0[..8]), "Token created");
+
+    // 6. Attest with ZK
+    debug!("Generating attestation");
+    let proof: ProofBundle = attestor.attest(&decision, &state, &candidates)?;
+    debug!("Attestation complete");
+
+    // 7. Verify locally
+    debug!("Verifying proof");
+    match verifier.verify(&token, &proof) {
+        VerificationStatus::Success => {
+            debug!("Verification passed");
+
+            if let Some(r) = recorder {
+                debug!("Recording verified decision");
+                r.record(&token, &proof)?;
+            }
+
+            // 8. Execute via adapter
+            debug!("Executing action");
+            let result = executor.execute(&token, &proof)?;
+            
+            if result.success {
+                info!(message = ?result.message, "Execution successful");
+            } else {
+                warn!(message = ?result.message, "Execution completed with failure status");
+            }
+            
+            Ok(result)
+        }
+        VerificationStatus::Failure(msg) => {
+            error!(reason = %msg, "Verification failed");
+            Err(MprdError::ZkError(msg))
+        }
+    }
+}
+
+/// Execute a single MPRD decision cycle without recording.
 pub fn run_once<P, Pr, PE, S, TF, ZA, ZV, E>(
     state_provider: &P,
     proposer: &Pr,
@@ -47,26 +160,64 @@ where
     ZV: ZkLocalVerifier,
     E: ExecutorAdapter,
 {
-    let state = state_provider.snapshot()?;
-    let candidates: Vec<CandidateAction> = proposer.propose(&state)?;
-    let verdicts = policy_engine.evaluate(policy_hash, &state, &candidates)?;
-    let decision = selector.select(policy_hash, &state, &candidates, &verdicts)?;
-    let token = token_factory.create(&decision, &state)?;
-    let proof: ProofBundle = attestor.attest(&decision, &state, &candidates)?;
+    run_once_internal(
+        state_provider,
+        proposer,
+        policy_engine,
+        selector,
+        token_factory,
+        attestor,
+        verifier,
+        executor,
+        None,
+        policy_hash,
+    )
+}
 
-    match verifier.verify(&token, &proof) {
-        VerificationStatus::Success => executor.execute(&token, &proof),
-        VerificationStatus::Failure(msg) => Err(MprdError::ZkError(msg)),
-    }
+/// Execute a single MPRD decision cycle and record verified decisions.
+pub fn run_once_with_recorder<P, Pr, PE, S, TF, ZA, ZV, E>(
+    state_provider: &P,
+    proposer: &Pr,
+    policy_engine: &PE,
+    selector: &S,
+    token_factory: &TF,
+    attestor: &ZA,
+    verifier: &ZV,
+    executor: &E,
+    recorder: &dyn DecisionRecorder,
+    policy_hash: &PolicyHash,
+) -> Result<ExecutionResult>
+where
+    P: StateProvider,
+    Pr: Proposer,
+    PE: PolicyEngine,
+    S: Selector,
+    TF: DecisionTokenFactory,
+    ZA: ZkAttestor,
+    ZV: ZkLocalVerifier,
+    E: ExecutorAdapter,
+{
+    run_once_internal(
+        state_provider,
+        proposer,
+        policy_engine,
+        selector,
+        token_factory,
+        attestor,
+        verifier,
+        executor,
+        Some(recorder),
+        policy_hash,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        CandidateHash, Hash32, RuleVerdict, Score, StateHash, Value,
-    };
+    use crate::{Hash32, RuleVerdict, Score, Value};
     use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     fn dummy_hash(byte: u8) -> Hash32 {
         Hash32([byte; 32])
@@ -81,6 +232,17 @@ mod tests {
                 policy_inputs: HashMap::new(),
                 state_hash: dummy_hash(1),
             })
+        }
+    }
+
+    struct RecordingRecorder {
+        called: Arc<AtomicBool>,
+    }
+
+    impl DecisionRecorder for RecordingRecorder {
+        fn record(&self, _token: &DecisionToken, _proof: &ProofBundle) -> Result<()> {
+            self.called.store(true, Ordering::SeqCst);
+            Ok(())
         }
     }
 
@@ -218,6 +380,40 @@ mod tests {
 
         assert!(result.success);
         assert_eq!(result.message.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn run_once_with_recorder_invokes_recorder() {
+        let state_provider = DummyStateProvider;
+        let proposer = DummyProposer;
+        let policy_engine = AllowAllPolicyEngine;
+        let selector = DummySelector;
+        let token_factory = DummyTokenFactory;
+        let attestor = DummyAttestor;
+        let verifier = DummyVerifier;
+        let executor = DummyExecutor;
+        let policy_hash = Hash32([9u8; 32]);
+
+        let called = Arc::new(AtomicBool::new(false));
+        let recorder = RecordingRecorder { called: called.clone() };
+
+        let result = run_once_with_recorder(
+            &state_provider,
+            &proposer,
+            &policy_engine,
+            &selector,
+            &token_factory,
+            &attestor,
+            &verifier,
+            &executor,
+            &recorder,
+            &policy_hash,
+        )
+        .expect("run_once_with_recorder should succeed in dummy pipeline");
+
+        assert!(result.success);
+        assert_eq!(result.message.as_deref(), Some("ok"));
+        assert!(called.load(Ordering::SeqCst));
     }
 }
 

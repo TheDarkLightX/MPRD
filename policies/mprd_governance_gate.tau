@@ -1,0 +1,46 @@
+# MPRD Governance Gate (Tau spec)
+
+# Inputs (in console):
+#   i_update_kind       : bv[8]  -- 0x01=POLICY_TWEAK, 0x02=SAFETY_RULE_CHANGE, 0x03=AGENT_CAPABILITY_EXPAND
+#   i_profile_app_ok    : sbf    -- 1 if app profile signatures verified
+#   i_profile_safety_ok : sbf    -- 1 if safety profile signatures verified
+#   i_link_ok           : sbf    -- 1 if hash/seq linkage checks pass (host + chain logic)
+
+# Output (out console):
+#   o_accept            : sbf    -- 1 if governance gate accepts the update
+
+i_update_kind       : bv[8] = in console.
+i_profile_app_ok    : sbf   = in console.
+i_profile_safety_ok : sbf   = in console.
+i_link_ok           : sbf   = in console.
+
+o_accept            : sbf   = out console.
+
+(
+    # POLICY_TWEAK: app profile only, linkage must be ok
+    (
+        (i_update_kind[t] = { #x01 }:bv[8]) &&
+        (i_profile_app_ok[t] = 1:sbf)      &&
+        (i_link_ok[t] = 1:sbf)
+    )
+    ||
+    # SAFETY_RULE_CHANGE: safety profile only, linkage must be ok
+    (
+        (i_update_kind[t] = { #x02 }:bv[8]) &&
+        (i_profile_safety_ok[t] = 1:sbf)    &&
+        (i_link_ok[t] = 1:sbf)
+    )
+    ||
+    # AGENT_CAPABILITY_EXPAND: both app and safety profiles must agree, linkage must be ok
+    (
+        (i_update_kind[t] = { #x03 }:bv[8]) &&
+        (i_profile_app_ok[t] = 1:sbf)       &&
+        (i_profile_safety_ok[t] = 1:sbf)    &&
+        (i_link_ok[t] = 1:sbf)
+    )
+)
+?
+    o_accept[t] = 1:sbf
+:
+    o_accept[t] = 0:sbf
+.

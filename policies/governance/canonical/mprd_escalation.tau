@@ -1,0 +1,60 @@
+# ============================================================================
+# CANONICAL: Escalation Ladder (Tiered Authorization)
+# ============================================================================
+# Different authorization levels for different risk tiers.
+# Uses bv[8] tier input with ternary decode.
+#
+# This is the RECOMMENDED approach for risk-based governance.
+# ============================================================================
+
+# Inputs
+i_tier               : bv[8] = in file("inputs/tier.in").
+i_vote_0             : sbf   = in file("inputs/vote_0.in").
+i_vote_1             : sbf   = in file("inputs/vote_1.in").
+i_vote_2             : sbf   = in file("inputs/vote_2.in").
+i_timelock_ok        : sbf   = in file("inputs/timelock_ok.in").
+
+# Decoded tier flags
+o_is_tier_1          : sbf   = out file("outputs/is_tier_1.out").
+o_is_tier_2          : sbf   = out file("outputs/is_tier_2.out").
+o_is_tier_3          : sbf   = out file("outputs/is_tier_3.out").
+
+# Vote counts
+o_at_least_1         : sbf   = out file("outputs/at_least_1.out").
+o_at_least_2         : sbf   = out file("outputs/at_least_2.out").
+o_all_3              : sbf   = out file("outputs/all_3.out").
+
+# Result
+o_accepted           : sbf   = out file("outputs/accepted.out").
+
+defs
+r (
+    # Decode tier
+    ((i_tier[t] = {1}:bv[8]) ? (o_is_tier_1[t] = 1) : (o_is_tier_1[t] = 0)) &&
+    ((i_tier[t] = {2}:bv[8]) ? (o_is_tier_2[t] = 1) : (o_is_tier_2[t] = 0)) &&
+    ((i_tier[t] = {3}:bv[8]) ? (o_is_tier_3[t] = 1) : (o_is_tier_3[t] = 0)) &&
+    
+    # Vote counting
+    (o_at_least_1[t] = i_vote_0[t] | i_vote_1[t] | i_vote_2[t]) &&
+    (o_at_least_2[t] = (i_vote_0[t] & i_vote_1[t]) | (i_vote_0[t] & i_vote_2[t]) | (i_vote_1[t] & i_vote_2[t])) &&
+    (o_all_3[t] = i_vote_0[t] & i_vote_1[t] & i_vote_2[t]) &&
+    
+    # Tier-based acceptance:
+    # - Tier 1 (low risk): 1-of-3
+    # - Tier 2 (medium risk): 2-of-3
+    # - Tier 3 (high risk): 3-of-3 + timelock
+    (o_accepted[t] = 
+        (o_is_tier_1[t] & o_at_least_1[t]) |
+        (o_is_tier_2[t] & o_at_least_2[t]) |
+        (o_is_tier_3[t] & o_all_3[t] & i_timelock_ok[t])
+    )
+)
+n
+q
+
+# ============================================================================
+# Risk Tiers:
+#   1 = Low risk (routine operations): 1-of-3 approval
+#   2 = Medium risk (policy changes): 2-of-3 approval
+#   3 = High risk (capability expansion): 3-of-3 + timelock
+# ============================================================================

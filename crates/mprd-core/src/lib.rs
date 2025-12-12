@@ -1,10 +1,23 @@
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
+pub mod anti_replay;
+pub mod components;
+pub mod config;
+pub mod crypto;
+pub mod hash;
+pub mod metrics;
+pub mod mpb;
 pub mod orchestrator;
+pub mod registry;
 pub mod tau;
 
+pub use config::MprdConfig;
+pub use crypto::{TokenSigningKey, TokenVerifyingKey};
+
 /// 32-byte hash newtype used for commitments (policy, state, actions, etc.).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Hash32(pub [u8; 32]);
 
 pub type PolicyHash = Hash32;
@@ -13,7 +26,7 @@ pub type CandidateHash = Hash32;
 pub type NonceHash = Hash32;
 
 /// Generic bounded value used in state fields and action parameters.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     Bool(bool),
     Int(i64),
@@ -27,7 +40,7 @@ pub enum Value {
 /// Preconditions (DbC):
 /// - All keys are non-empty and normalized (e.g., lower_snake_case).
 /// - All values are within configured bounds (sizes, ranges).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StateSnapshot {
     pub fields: HashMap<String, Value>,
     pub policy_inputs: HashMap<String, Vec<u8>>, // Canonical encoding for Tau.
@@ -97,14 +110,57 @@ pub struct ProofBundle {
 }
 
 /// Unified error type for MPRD core operations.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum MprdError {
+    // Input validation errors
+    #[error("Invalid input: {0}")]
     InvalidInput(String),
+
+    #[error("Bounded value exceeded: {0}")]
     BoundedValueExceeded(String),
+
+    // Policy errors
+    #[error("Policy evaluation failed: {0}")]
     PolicyEvaluationFailed(String),
+
+    #[error("Selection failed: {0}")]
     SelectionFailed(String),
+
+    // ZK errors
+    #[error("ZK error: {0}")]
     ZkError(String),
+
+    // Execution errors
+    #[error("Execution error: {0}")]
     ExecutionError(String),
+
+    // Policy registry errors (S6)
+    #[error("Policy hash collision for hash {hash:?}")]
+    PolicyHashCollision { hash: PolicyHash },
+
+    #[error("Policy not found for hash {hash:?}")]
+    PolicyNotFound { hash: PolicyHash },
+
+    // Anti-replay errors (S4)
+    #[error("Token expired: age {age_ms}ms exceeds max {max_age_ms}ms")]
+    TokenExpired { age_ms: i64, max_age_ms: i64 },
+
+    #[error("Token from future: skew {skew_ms}ms")]
+    TokenFromFuture { skew_ms: i64 },
+
+    #[error("Nonce replay detected")]
+    NonceReplay { nonce: NonceHash },
+
+    // Cryptographic errors
+    #[error("Crypto error: {0}")]
+    CryptoError(String),
+
+    #[error("Signature invalid: {0}")]
+    SignatureInvalid(String),
+
+    // Configuration errors
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
 }
 
 pub type Result<T> = std::result::Result<T, MprdError>;

@@ -1,0 +1,59 @@
+# ============================================================================
+# CANONICAL: Conviction Voting (Time-Weighted)
+# ============================================================================
+# Voting power increases with sustained support over time.
+# Uses sbf delay chain to track conviction level.
+#
+# This is the RECOMMENDED approach for time-weighted governance.
+# ============================================================================
+
+# Inputs
+i_vote               : sbf = in file("inputs/vote.in").
+i_has_stake          : sbf = in file("inputs/has_stake.in").
+
+# State - conviction accumulation
+o_voted_1_ago        : sbf = out file("outputs/voted_1_ago.out").
+o_voted_2_ago        : sbf = out file("outputs/voted_2_ago.out").
+o_voted_3_ago        : sbf = out file("outputs/voted_3_ago.out").
+
+# Conviction levels
+o_partial            : sbf = out file("outputs/partial.out").
+o_full               : sbf = out file("outputs/full.out").
+o_passed             : sbf = out file("outputs/passed.out").
+
+defs
+r (
+    # Initialize
+    (o_voted_1_ago[0] = 0) &&
+    (o_voted_2_ago[0] = 0) &&
+    (o_voted_3_ago[0] = 0) &&
+    
+    # Track voting history
+    (o_voted_1_ago[t] = i_vote[t-1]) &&
+    (o_voted_2_ago[t] = o_voted_1_ago[t-1]) &&
+    (o_voted_3_ago[t] = o_voted_2_ago[t-1]) &&
+    
+    # Partial conviction: 2+ consecutive steps
+    (o_partial[t] = i_vote[t] & o_voted_1_ago[t]) &&
+    
+    # Full conviction: 3+ consecutive steps
+    (o_full[t] = i_vote[t] & o_voted_1_ago[t] & o_voted_2_ago[t]) &&
+    
+    # Pass: full conviction + stake
+    (o_passed[t] = o_full[t] & i_has_stake[t])
+)
+n
+n
+n
+n
+n
+q
+
+# ============================================================================
+# Conviction Levels:
+#   - None: vote[t] only
+#   - Partial: vote[t] && vote[t-1]
+#   - Full: vote[t] && vote[t-1] && vote[t-2]
+#
+# This prevents flash-voting attacks by requiring sustained support.
+# ============================================================================

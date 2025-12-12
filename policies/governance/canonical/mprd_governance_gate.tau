@@ -1,0 +1,47 @@
+# ============================================================================
+# CANONICAL: MPRD Governance Gate
+# ============================================================================
+# The RECOMMENDED governance gate specification for MPRD.
+# Uses pure sbf (Boolean) logic with one-hot update kind flags.
+# Host decodes UpdateKind enum to one-hot flags before invoking Tau.
+# PROVEN WORKING in execution mode.
+# ============================================================================
+
+# Inputs: one-hot update kind flags + authorization flags
+i_is_policy_tweak    : sbf = in file("inputs/is_policy_tweak.in").
+i_is_safety_change   : sbf = in file("inputs/is_safety_change.in").
+i_is_cap_expand      : sbf = in file("inputs/is_cap_expand.in").
+i_profile_app_ok     : sbf = in file("inputs/profile_app_ok.in").
+i_profile_safety_ok  : sbf = in file("inputs/profile_safety_ok.in").
+i_link_ok            : sbf = in file("inputs/link_ok.in").
+
+# Output
+o_accept             : sbf = out file("outputs/accept.out").
+
+defs
+r (
+    # One-hot constraint implicitly enforced by formula structure
+    # POLICY_TWEAK: app profile + linkage
+    # SAFETY_CHANGE: safety profile + linkage
+    # CAPABILITY_EXPAND: both profiles + linkage
+    (o_accept[t] = 
+        (i_is_policy_tweak[t] & i_is_safety_change[t]' & i_is_cap_expand[t]' & i_profile_app_ok[t] & i_link_ok[t]) |
+        (i_is_policy_tweak[t]' & i_is_safety_change[t] & i_is_cap_expand[t]' & i_profile_safety_ok[t] & i_link_ok[t]) |
+        (i_is_policy_tweak[t]' & i_is_safety_change[t]' & i_is_cap_expand[t] & i_profile_app_ok[t] & i_profile_safety_ok[t] & i_link_ok[t])
+    )
+)
+n
+q
+
+# ============================================================================
+# PROS:
+# - Simple, direct Boolean logic
+# - Works reliably in Tau execution mode
+# - Easy to verify exhaustively (64 combinations)
+# - No type conversion issues
+#
+# CONS:
+# - Requires host to encode update_kind as one-hot flags
+# - 3 input streams instead of 1 for update_kind
+# - Can't easily extend to more update kinds without adding more flags
+# ============================================================================

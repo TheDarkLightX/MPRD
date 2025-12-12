@@ -1,0 +1,29 @@
+[package]
+name = "mprd-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Command-line interface for MPRD (Model Proposes, Rules Decide)"
+
+[[bin]]
+name = "mprd"
+path = "src/main.rs"
+
+[dependencies]
+mprd-core = { path = "../mprd-core" }
+mprd-zk = { path = "../mprd-zk" }
+mprd-adapters = { path = "../mprd-adapters" }
+mprd_risc0_methods = { package = "mprd-risc0-methods", path = "../../methods" }
+
+clap = { version = "4.4", features = ["derive", "env"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0"
+hex = "0.4"
+dirs = "5.0"
+base64 = "0.21"
+reqwest = { version = "0.11", features = ["blocking", "json"] }
+sha2 = "0.10"
+axum = { version = "0.7", features = ["macros", "json"] }
