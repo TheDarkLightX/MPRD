@@ -1,22 +1,26 @@
 //! `mprd init` command implementation
 
 use anyhow::{Context, Result};
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 
 use super::MprdConfigFile;
 
-pub fn run(output: PathBuf, mode: String) -> Result<()> {
+pub fn run(output: PathBuf, mode: String, insecure_demo: bool) -> Result<()> {
+    if mode == "local" && !insecure_demo {
+        anyhow::bail!(
+            "Refusing to initialize `local` mode without explicit acknowledgement. Re-run with `--insecure-demo` to generate an operator-trusted local config."
+        );
+    }
+
     println!("🔧 Initializing MPRD configuration...");
-    
+
     // Create directory structure
     let mprd_dir = output.join(".mprd");
-    fs::create_dir_all(&mprd_dir)
-        .context("Failed to create .mprd directory")?;
-    
-    fs::create_dir_all(mprd_dir.join("policies"))
-        .context("Failed to create policies directory")?;
-    
+    fs::create_dir_all(&mprd_dir).context("Failed to create .mprd directory")?;
+
+    fs::create_dir_all(mprd_dir.join("policies")).context("Failed to create policies directory")?;
+
     // Create config based on mode
     let config = match mode.as_str() {
         "local" => MprdConfigFile {
@@ -25,25 +29,28 @@ pub fn run(output: PathBuf, mode: String) -> Result<()> {
         },
         "trustless" => MprdConfigFile {
             mode: "trustless".into(),
-            risc0_image_id: Some("0000000000000000000000000000000000000000000000000000000000000000".into()),
+            risc0_image_id: Some(
+                "0000000000000000000000000000000000000000000000000000000000000000".into(),
+            ),
             ..Default::default()
         },
         "private" => MprdConfigFile {
             mode: "private".into(),
-            risc0_image_id: Some("0000000000000000000000000000000000000000000000000000000000000000".into()),
+            risc0_image_id: Some(
+                "0000000000000000000000000000000000000000000000000000000000000000".into(),
+            ),
             ..Default::default()
         },
         _ => {
             anyhow::bail!("Unknown mode: {}. Use local, trustless, or private.", mode);
         }
     };
-    
+
     // Write config
     let config_path = mprd_dir.join("config.json");
     let config_json = serde_json::to_string_pretty(&config)?;
-    fs::write(&config_path, config_json)
-        .context("Failed to write config file")?;
-    
+    fs::write(&config_path, config_json).context("Failed to write config file")?;
+
     println!("✅ Created configuration at {}", config_path.display());
     println!();
     println!("📁 Directory structure:");
@@ -54,13 +61,27 @@ pub fn run(output: PathBuf, mode: String) -> Result<()> {
     println!("🚀 Next steps:");
     println!("   1. Add a policy: mprd policy add --file my-policy.tau");
     println!("   2. Run pipeline:  mprd run --policy <hash> --state state.json --candidates candidates.json");
-    
+
     if mode == "trustless" {
         println!();
         println!("⚠️  Trustless mode requires:");
         println!("   - Risc0 zkVM installed");
         println!("   - Guest program compiled and image ID set in config");
     }
-    
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn init_fails_closed_for_local_without_insecure_demo() {
+        let err = run(PathBuf::from("."), "local".into(), false)
+            .expect_err("should refuse local init without insecure_demo");
+        assert!(err
+            .to_string()
+            .contains("Refusing to initialize `local` mode"));
+    }
 }

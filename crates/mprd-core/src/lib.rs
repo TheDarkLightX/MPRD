@@ -1,11 +1,12 @@
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use thiserror::Error;
 
 pub mod anti_replay;
 pub mod components;
 pub mod config;
 pub mod crypto;
+pub mod egress;
 pub mod hash;
 pub mod metrics;
 pub mod mpb;
@@ -172,6 +173,7 @@ pub const MAX_CANDIDATES: usize = 64;
 pub trait StateProvider {
     /// Preconditions:
     /// - Underlying data sources are reachable or provide explicit errors.
+    ///
     /// Postconditions:
     /// - Returned state satisfies all `StateSnapshot` invariants.
     fn snapshot(&self) -> Result<StateSnapshot>;
@@ -181,6 +183,7 @@ pub trait StateProvider {
 pub trait Proposer {
     /// Preconditions:
     /// - `state` satisfies `StateSnapshot` invariants.
+    ///
     /// Postconditions:
     /// - Returned slice length is `<= MAX_CANDIDATES`.
     /// - Each candidate is schema-valid for its `action_type`.
@@ -192,6 +195,7 @@ pub trait PolicyEngine {
     /// Preconditions:
     /// - `policy_hash` refers to an immutable, known Tau spec.
     /// - `candidates.len() <= MAX_CANDIDATES`.
+    ///
     /// Postconditions:
     /// - `verdicts.len() == candidates.len()`.
     fn evaluate(
@@ -206,6 +210,7 @@ pub trait PolicyEngine {
 pub trait Selector {
     /// Preconditions:
     /// - `candidates.len() == verdicts.len()`.
+    ///
     /// Postconditions:
     /// - For fixed inputs, returns the same `Decision` on every call.
     fn select(
@@ -222,6 +227,7 @@ pub trait ZkAttestor {
     /// Preconditions:
     /// - `decision` was produced by a compliant `Selector`.
     /// - `candidates.len() <= MAX_CANDIDATES`.
+    ///
     /// Postconditions:
     /// - Returned bundle commitments are consistent with inputs.
     fn attest(
@@ -243,6 +249,7 @@ pub enum VerificationStatus {
 pub trait ZkLocalVerifier {
     /// Preconditions:
     /// - `token` and `bundle` are well-formed and not null.
+    ///
     /// Postconditions:
     /// - Returns `Success` iff the proof and commitments are valid.
     fn verify(&self, token: &DecisionToken, proof: &ProofBundle) -> VerificationStatus;
@@ -260,6 +267,7 @@ pub trait ExecutorAdapter {
     /// Preconditions:
     /// - `ZkLocalVerifier::verify(token, proof)` has returned `Success`.
     /// - Token freshness and anti-replay checks have passed.
+    ///
     /// Postconditions:
     /// - Either performs the side effect exactly once, or performs none.
     fn execute(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<ExecutionResult>;
@@ -281,9 +289,7 @@ impl Selector for DefaultSelector {
             ));
         }
         if candidates.is_empty() {
-            return Err(MprdError::SelectionFailed(
-                "no candidates provided".into(),
-            ));
+            return Err(MprdError::SelectionFailed("no candidates provided".into()));
         }
         if candidates.len() > MAX_CANDIDATES {
             return Err(MprdError::BoundedValueExceeded(
@@ -306,9 +312,8 @@ impl Selector for DefaultSelector {
             }
         }
 
-        let chosen_index = best_index.ok_or_else(|| {
-            MprdError::SelectionFailed("no allowed candidates".into())
-        })?;
+        let chosen_index =
+            best_index.ok_or_else(|| MprdError::SelectionFailed("no allowed candidates".into()))?;
 
         let chosen_action = candidates[chosen_index].clone();
         let decision_commitment = Hash32([0u8; 32]);
@@ -429,5 +434,3 @@ mod tests {
         assert!(matches!(result, Err(MprdError::BoundedValueExceeded(_))));
     }
 }
-
-pub fn init() {}

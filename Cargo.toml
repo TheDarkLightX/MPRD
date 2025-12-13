@@ -7,8 +7,13 @@ members = [
     "crates/mprd-cli",
     "crates/mprd-risc0-shared",
     "methods",
+]
+exclude = [
     "methods/guest",
 ]
 resolver = "2"
 
 # methods hosts the Risc0 methods + guest crates used by mprd-zk.
+
+[patch.crates-io]
+ark-relations = { path = "vendor/ark-relations-0.4.0" }

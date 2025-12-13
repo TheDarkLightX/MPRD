@@ -28,19 +28,19 @@ risc0_zkvm::guest::entry!(main);
 pub struct GuestInput {
     /// The policy being evaluated (serialized).
     pub policy_bytes: Vec<u8>,
-    
+
     /// The state snapshot (serialized).
     pub state_bytes: Vec<u8>,
-    
+
     /// All candidate actions (serialized).
     pub candidates_bytes: Vec<u8>,
-    
+
     /// Number of candidates (for bounds checking).
     pub candidate_count: usize,
-    
+
     /// Index of the chosen action in candidates.
     pub chosen_index: usize,
-    
+
     /// The verdict for the chosen action (must be allowed=true).
     pub chosen_verdict_allowed: bool,
 }
@@ -50,19 +50,19 @@ pub struct GuestInput {
 pub struct GuestOutput {
     /// Hash of the policy.
     pub policy_hash: [u8; 32],
-    
+
     /// Hash of the state.
     pub state_hash: [u8; 32],
-    
+
     /// Hash of the entire candidate set.
     pub candidate_set_hash: [u8; 32],
-    
+
     /// Hash of the chosen action.
     pub chosen_action_hash: [u8; 32],
-    
+
     /// The decision commitment binding all of the above.
     pub decision_commitment: [u8; 32],
-    
+
     /// Whether the selector contract was satisfied.
     pub selector_contract_satisfied: bool,
 }
@@ -103,12 +103,12 @@ fn verify_selector_contract(input: &GuestInput) -> bool {
     if input.chosen_index >= input.candidate_count {
         return false; // Bounds violation - action not in candidate set
     }
-    
+
     // Precondition 2: empty candidate set is invalid
     if input.candidate_count == 0 {
         return false; // No candidates to choose from
     }
-    
+
     // Precondition 3: the verdict must indicate the action is allowed
     // This ensures the policy permitted this action
     input.chosen_verdict_allowed
@@ -121,12 +121,12 @@ fn verify_selector_contract(input: &GuestInput) -> bool {
 fn main() {
     // Read private input from host
     let input: GuestInput = env::read();
-    
+
     // Compute hashes of all inputs
     let policy_hash = hash_with_domain(b"MPRD_POLICY_V1", &input.policy_bytes);
     let state_hash = hash_with_domain(b"MPRD_STATE_V1", &input.state_bytes);
     let candidate_set_hash = hash_with_domain(b"MPRD_CANDIDATES_V1", &input.candidates_bytes);
-    
+
     // Compute hash of the chosen action
     // The chosen action is identified by its index in the serialized candidates
     let chosen_action_hash = {
@@ -137,10 +137,10 @@ fn main() {
         let result: [u8; 32] = hasher.finalize().into();
         result
     };
-    
+
     // Verify the Selector Contract
     let selector_contract_satisfied = verify_selector_contract(&input);
-    
+
     // Compute decision commitment (binds everything together)
     let decision_commitment = {
         let mut hasher = Sha256::new();
@@ -153,7 +153,7 @@ fn main() {
         let result: [u8; 32] = hasher.finalize().into();
         result
     };
-    
+
     // Commit public output to journal
     let output = GuestOutput {
         policy_hash,
@@ -163,6 +163,6 @@ fn main() {
         decision_commitment,
         selector_contract_satisfied,
     };
-    
+
     env::commit(&output);
 }

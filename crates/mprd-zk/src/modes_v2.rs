@@ -19,20 +19,23 @@
 //! | B-Full | Cryptographic ZK | Risc0 receipts | ~minutes |
 //! | C | Private + ZK | Encrypted + Risc0 | ~minutes |
 
-use crate::abi::{GovernorInput, GovernorJournal};
+use crate::abi::GovernorJournal;
 use crate::error::{ModeError, ModeResult};
+use crate::privacy::{
+    EncryptedState, EncryptionConfig as ModeCEncryptionConfig,
+    StateEncryptor as ModeCStateEncryptor,
+};
+use crate::risc0_host::{
+    GuestOutput as Risc0GuestOutput, Risc0Attestor as DecisionRisc0Attestor,
+    Risc0Verifier as DecisionRisc0Verifier,
+};
 use crate::security::SecurityChecker;
-use crate::privacy::{StateEncryptor as ModeCStateEncryptor, EncryptionConfig as ModeCEncryptionConfig, EncryptedState};
-use crate::risc0_host::{GuestOutput as Risc0GuestOutput, Risc0Attestor as DecisionRisc0Attestor, Risc0Verifier as DecisionRisc0Verifier};
 use mprd_core::{
-    CandidateAction, Decision, DecisionToken, Hash32, MprdError, ProofBundle, Result,
-    RuleVerdict, StateSnapshot, VerificationStatus, ZkAttestor, ZkLocalVerifier,
+    CandidateAction, Decision, DecisionToken, Hash32, MprdError, ProofBundle, Result, RuleVerdict,
+    StateSnapshot, VerificationStatus, ZkAttestor, ZkLocalVerifier,
 };
+use mprd_proof::integration::MpbLocalVerifier as ProofVerifier;
 use mprd_risc0_methods::MPRD_GUEST_ELF;
-use mprd_proof::integration::{
-    MpbAttestor as ProofAttestor, MpbAttestorConfig, MpbLocalVerifier as ProofVerifier,
-    MpbProofBundle,
-};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -118,7 +121,7 @@ pub struct ModeConfig {
 
 impl Default for ModeConfig {
     fn default() -> Self {
-        Self::mode_a()
+        Self::mode_b_lite()
     }
 }
 
@@ -184,6 +187,15 @@ impl ModeConfig {
 
     /// Validate the configuration.
     pub fn validate(&self) -> ModeResult<()> {
+        if self.strict_security && self.mode == DeploymentMode::LocalTrusted {
+            return Err(ModeError::InvariantViolation {
+                invariant: "strict_security".into(),
+                details: "LocalTrusted mode is not trustless; set strict_security=false to explicitly allow stub verification/attestation".into(),
+            });
+        }
+
+        let is_all_zero_image_id = |image_id: [u8; 32]| image_id == [0u8; 32];
+
         match self.mode {
             DeploymentMode::LocalTrusted => {
                 // No special requirements
@@ -202,6 +214,12 @@ impl ModeConfig {
                         field: "risc0_image_id".into(),
                     });
                 }
+
+                if self.risc0_image_id.is_some_and(is_all_zero_image_id) {
+                    return Err(ModeError::InvalidConfig(
+                        "Mode B-Full risc0_image_id is all-zero; refusing to run with an unspecified guest".into(),
+                    ));
+                }
             }
             DeploymentMode::Private => {
                 if self.risc0_image_id.is_none() {
@@ -209,6 +227,12 @@ impl ModeConfig {
                         mode: "C".into(),
                         field: "risc0_image_id".into(),
                     });
+                }
+
+                if self.risc0_image_id.is_some_and(is_all_zero_image_id) {
+                    return Err(ModeError::InvalidConfig(
+                        "Mode C risc0_image_id is all-zero; refusing to run with an unspecified guest".into(),
+                    ));
                 }
                 if self.encryption_key_id.is_none() {
                     return Err(ModeError::MissingConfig {
@@ -232,7 +256,6 @@ impl ModeConfig {
 /// execution trace proofs with Merkle commitments.
 pub struct RobustMpbAttestor {
     config: ModeConfig,
-    proof_attestor: ProofAttestor,
     security_checker: SecurityChecker,
 }
 
@@ -248,12 +271,6 @@ impl RobustMpbAttestor {
 
         config.validate()?;
 
-        let proof_attestor = ProofAttestor::with_config(MpbAttestorConfig {
-            num_spot_checks: config.mpb_spot_checks,
-            seed: None, // Non-deterministic for security
-            fuel_limit: config.mpb_max_fuel,
-        });
-
         let security_checker = if config.strict_security {
             SecurityChecker::strict()
         } else {
@@ -262,7 +279,6 @@ impl RobustMpbAttestor {
 
         Ok(Self {
             config,
-            proof_attestor,
             security_checker,
         })
     }
@@ -320,8 +336,14 @@ impl ZkAttestor for RobustMpbAttestor {
         let mut metadata = HashMap::new();
         metadata.insert("mode".into(), self.config.mode.as_str().into());
         metadata.insert("proof_type".into(), "MPB".into());
-        metadata.insert("spot_checks".into(), self.config.mpb_spot_checks.to_string());
-        metadata.insert("security_bits".into(), format!("{:.1}", self.security_bits()));
+        metadata.insert(
+            "spot_checks".into(),
+            self.config.mpb_spot_checks.to_string(),
+        );
+        metadata.insert(
+            "security_bits".into(),
+            format!("{:.1}", self.security_bits()),
+        );
         metadata.insert("fuel_limit".into(), self.config.mpb_max_fuel.to_string());
 
         // Compute binding commitment
@@ -331,7 +353,7 @@ impl ZkAttestor for RobustMpbAttestor {
             &candidate_set_hash,
             &decision.chosen_action.candidate_hash,
         );
-        metadata.insert("binding_commitment".into(), hex::encode(&binding.0));
+        metadata.insert("binding_commitment".into(), hex::encode(binding.0));
 
         debug!(
             binding = %hex::encode(&binding.0[..8]),
@@ -393,6 +415,12 @@ impl ZkLocalVerifier for RobustMpbVerifier {
     fn verify(&self, token: &DecisionToken, proof: &ProofBundle) -> VerificationStatus {
         debug!("Starting MPB proof verification");
 
+        if self.config.mode != DeploymentMode::TrustlessLite {
+            return VerificationStatus::Failure(
+                "RobustMpbVerifier requires TrustlessLite mode".into(),
+            );
+        }
+
         // Step 1: Verify binding (S5 invariant)
         if let Err(e) = self.security_checker.check_binding(token, proof) {
             error!(error = %e, "Binding check failed");
@@ -427,6 +455,13 @@ impl ZkLocalVerifier for RobustMpbVerifier {
             }
         }
 
+        // Step 4b: Verify spot check count matches verifier expectations (fail-closed)
+        if let Some(spot_checks) = proof.attestation_metadata.get("spot_checks") {
+            if spot_checks != &self.config.mpb_spot_checks.to_string() {
+                return VerificationStatus::Failure("Spot check count mismatch".into());
+            }
+        }
+
         // Step 5: Verify binding commitment
         let expected_binding = SecurityChecker::compute_binding_commitment(
             &token.policy_hash,
@@ -436,7 +471,7 @@ impl ZkLocalVerifier for RobustMpbVerifier {
         );
 
         if let Some(stored_binding) = proof.attestation_metadata.get("binding_commitment") {
-            let expected_hex = hex::encode(&expected_binding.0);
+            let expected_hex = hex::encode(expected_binding.0);
             if stored_binding != &expected_hex {
                 warn!(
                     expected = %hex::encode(&expected_binding.0[..8]),
@@ -531,8 +566,16 @@ impl ZkAttestor for RobustRisc0Attestor {
         // and selector have enforced Allowed(policy, state, action) = true.
         // We therefore pass a synthetic RuleVerdict { allowed: true } as the
         // guest witness for the selector contract.
-        let image_id = self.config.risc0_image_id.expect("availability_status ensured image_id");
-        let guest_elf = self.method_elf.expect("availability_status ensured method_elf");
+        let Some(image_id) = self.config.risc0_image_id else {
+            return Err(MprdError::ZkError(
+                "Risc0 not available: risc0_image_id not configured. Use Mode B-Lite for computational proofs.".into(),
+            ));
+        };
+        let Some(guest_elf) = self.method_elf else {
+            return Err(MprdError::ZkError(
+                "Risc0 not available: method_elf not provided. Use Mode B-Lite for computational proofs.".into(),
+            ));
+        };
 
         let inner = DecisionRisc0Attestor::new(guest_elf, image_id);
 
@@ -574,26 +617,29 @@ impl RobustRisc0Verifier {
             return Err(ModeError::VerificationFailed("Empty Risc0 receipt".into()));
         }
 
-        let image_id = self.config.risc0_image_id.ok_or_else(|| ModeError::MissingConfig {
-            mode: "B-Full".into(),
-            field: "risc0_image_id".into(),
-        })?;
+        let image_id = self
+            .config
+            .risc0_image_id
+            .ok_or_else(|| ModeError::MissingConfig {
+                mode: "B-Full".into(),
+                field: "risc0_image_id".into(),
+            })?;
 
         // Deserialize the zkVM receipt
-        let receipt: risc0_zkvm::Receipt = bincode::deserialize(receipt)
-            .map_err(|e| ModeError::VerificationFailed(format!("Failed to deserialize receipt: {}", e)))?;
+        let receipt: risc0_zkvm::Receipt = bincode::deserialize(receipt).map_err(|e| {
+            ModeError::VerificationFailed(format!("Failed to deserialize receipt: {}", e))
+        })?;
 
         // Verify against image ID
         let digest = risc0_zkvm::sha::Digest::from_bytes(image_id);
-        receipt
-            .verify(digest)
-            .map_err(|e| ModeError::VerificationFailed(format!("Receipt verification failed: {}", e)))?;
+        receipt.verify(digest).map_err(|e| {
+            ModeError::VerificationFailed(format!("Receipt verification failed: {}", e))
+        })?;
 
         // Decode guest output
-        let output: Risc0GuestOutput = receipt
-            .journal
-            .decode()
-            .map_err(|e| ModeError::VerificationFailed(format!("Failed to decode journal: {}", e)))?;
+        let output: Risc0GuestOutput = receipt.journal.decode().map_err(|e| {
+            ModeError::VerificationFailed(format!("Failed to decode journal: {}", e))
+        })?;
 
         let journal = GovernorJournal {
             policy_hash: output.policy_hash,
@@ -633,15 +679,21 @@ impl ZkLocalVerifier for RobustRisc0Verifier {
                 }
 
                 if Hash32(journal.candidate_set_hash) != proof.candidate_set_hash {
-                    return VerificationStatus::Failure("Candidate set hash mismatch in journal".into());
+                    return VerificationStatus::Failure(
+                        "Candidate set hash mismatch in journal".into(),
+                    );
                 }
 
                 if Hash32(journal.chosen_action_hash) != token.chosen_action_hash {
-                    return VerificationStatus::Failure("Chosen action hash mismatch in journal".into());
+                    return VerificationStatus::Failure(
+                        "Chosen action hash mismatch in journal".into(),
+                    );
                 }
 
                 if !journal.allowed {
-                    return VerificationStatus::Failure("Selector contract not satisfied in journal".into());
+                    return VerificationStatus::Failure(
+                        "Selector contract not satisfied in journal".into(),
+                    );
                 }
 
                 VerificationStatus::Success
@@ -710,11 +762,7 @@ impl ZkAttestor for RobustPrivateAttestor {
     ) -> Result<ProofBundle> {
         let image_id = match self.config.risc0_image_id {
             Some(id) => id,
-            None => {
-                return Err(MprdError::ZkError(
-                    "Mode C requires Risc0 image_id".into(),
-                ))
-            }
+            None => return Err(MprdError::ZkError("Mode C requires Risc0 image_id".into())),
         };
 
         let key_id = match &self.config.encryption_key_id {
@@ -722,11 +770,7 @@ impl ZkAttestor for RobustPrivateAttestor {
             None => self.encryption_config.key_id.clone(),
         };
 
-        let committed_fields: Vec<String> = state
-            .fields
-            .keys()
-            .cloned()
-            .collect();
+        let committed_fields: Vec<String> = state.fields.keys().cloned().collect();
 
         let enc_config = ModeCEncryptionConfig {
             key_id: key_id.clone(),
@@ -751,8 +795,9 @@ impl ZkAttestor for RobustPrivateAttestor {
 
         let mut bundle = attestor.attest_with_verdict(decision, state, candidates, &verdict)?;
 
-        let encrypted_json = serde_json::to_string(&encrypted_state)
-            .map_err(|e| MprdError::ZkError(format!("Failed to serialize encrypted state: {}", e)))?;
+        let encrypted_json = serde_json::to_string(&encrypted_state).map_err(|e| {
+            MprdError::ZkError(format!("Failed to serialize encrypted state: {}", e))
+        })?;
 
         bundle
             .attestation_metadata
@@ -760,9 +805,10 @@ impl ZkAttestor for RobustPrivateAttestor {
         bundle
             .attestation_metadata
             .insert("encryption_key_id".into(), key_id);
-        bundle
-            .attestation_metadata
-            .insert("encryption_algorithm".into(), self.encryption_config.algorithm.clone());
+        bundle.attestation_metadata.insert(
+            "encryption_algorithm".into(),
+            self.encryption_config.algorithm.clone(),
+        );
         bundle
             .attestation_metadata
             .insert("encrypted_state".into(), encrypted_json);
@@ -792,11 +838,7 @@ impl ZkLocalVerifier for RobustPrivateVerifier {
     fn verify(&self, token: &DecisionToken, proof: &ProofBundle) -> VerificationStatus {
         let image_id = match self.config.risc0_image_id {
             Some(id) => id,
-            None => {
-                return VerificationStatus::Failure(
-                    "Mode C requires Risc0 image_id".into(),
-                )
-            }
+            None => return VerificationStatus::Failure("Mode C requires Risc0 image_id".into()),
         };
 
         if proof.risc0_receipt.is_empty() {
@@ -822,9 +864,7 @@ impl ZkLocalVerifier for RobustPrivateVerifier {
             match proof.attestation_metadata.get("encryption_key_id") {
                 Some(actual) if actual == expected_key_id => {}
                 _ => {
-                    return VerificationStatus::Failure(
-                        "Mode C encryption key_id mismatch".into(),
-                    )
+                    return VerificationStatus::Failure("Mode C encryption key_id mismatch".into())
                 }
             }
         }
@@ -852,7 +892,9 @@ impl ZkLocalVerifier for RobustPrivateVerifier {
 
 /// Create an attestor for the specified mode.
 pub fn create_robust_attestor(config: &ModeConfig) -> Result<Box<dyn ZkAttestor>> {
-    config.validate().map_err(|e| MprdError::ZkError(e.to_string()))?;
+    config
+        .validate()
+        .map_err(|e| MprdError::ZkError(e.to_string()))?;
 
     match config.mode {
         DeploymentMode::LocalTrusted => {
@@ -879,7 +921,9 @@ pub fn create_robust_attestor(config: &ModeConfig) -> Result<Box<dyn ZkAttestor>
 
 /// Create a verifier for the specified mode.
 pub fn create_robust_verifier(config: &ModeConfig) -> Result<Box<dyn ZkLocalVerifier>> {
-    config.validate().map_err(|e| MprdError::ZkError(e.to_string()))?;
+    config
+        .validate()
+        .map_err(|e| MprdError::ZkError(e.to_string()))?;
 
     match config.mode {
         DeploymentMode::LocalTrusted => {
@@ -911,7 +955,7 @@ pub fn create_robust_verifier(config: &ModeConfig) -> Result<Box<dyn ZkLocalVeri
 pub fn compute_candidate_set_hash(candidates: &[CandidateAction]) -> Hash32 {
     let mut hasher = Sha256::new();
     for candidate in candidates {
-        hasher.update(&candidate.candidate_hash.0);
+        hasher.update(candidate.candidate_hash.0);
     }
     Hash32(hasher.finalize().into())
 }
@@ -927,8 +971,12 @@ mod tests {
 
     #[test]
     fn mode_config_validation() {
-        // Mode A always valid
-        assert!(ModeConfig::mode_a().validate().is_ok());
+        // Mode A is only valid when strict_security is explicitly disabled.
+        assert!(ModeConfig::mode_a().validate().is_err());
+
+        let mut mode_a = ModeConfig::mode_a();
+        mode_a.strict_security = false;
+        assert!(mode_a.validate().is_ok());
 
         // Mode B-Lite needs enough spot checks
         let mut config = ModeConfig::mode_b_lite();
@@ -939,7 +987,9 @@ mod tests {
         assert!(config.validate().is_ok());
 
         // Mode B-Full needs image_id
-        let mut config = ModeConfig::mode_b_full([0u8; 32]);
+        assert!(ModeConfig::mode_b_full([0u8; 32]).validate().is_err());
+
+        let mut config = ModeConfig::mode_b_full([1u8; 32]);
         config.risc0_image_id = None;
         assert!(config.validate().is_err());
     }
@@ -970,8 +1020,13 @@ mod tests {
         assert!(result.is_ok());
 
         let proof = result.unwrap();
-        assert_eq!(proof.attestation_metadata.get("mode"), Some(&"B-Lite".to_string()));
-        assert!(proof.attestation_metadata.contains_key("binding_commitment"));
+        assert_eq!(
+            proof.attestation_metadata.get("mode"),
+            Some(&"B-Lite".to_string())
+        );
+        assert!(proof
+            .attestation_metadata
+            .contains_key("binding_commitment"));
     }
 
     #[test]
@@ -998,7 +1053,7 @@ mod tests {
         let mut metadata = HashMap::new();
         metadata.insert("mode".into(), "B-Lite".into());
         metadata.insert("proof_type".into(), "MPB".into());
-        metadata.insert("binding_commitment".into(), hex::encode(&binding.0));
+        metadata.insert("binding_commitment".into(), hex::encode(binding.0));
 
         let proof = ProofBundle {
             policy_hash: dummy_hash(1),

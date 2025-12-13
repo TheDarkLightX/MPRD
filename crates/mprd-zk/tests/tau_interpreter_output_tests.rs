@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -61,7 +63,7 @@ o_allowed:sbf = out file(\"{}\").\n\
 \n\
 defs\n\
 r (\n\
-    ((i_risk[t] <= i_max_risk[t]) && (i_cost[t] <= i_max_cost[t]) ? (o_allowed[t] = i_approval[t]) : (o_allowed[t] = 0))\n\
+    ((i_risk[t] <= i_max_risk[t]) ? ((i_cost[t] <= i_max_cost[t]) ? (o_allowed[t] = i_approval[t]) : (o_allowed[t] = 0)) : (o_allowed[t] = 0))\n\
 )\n\
 n\n\
 q\n",
@@ -74,15 +76,10 @@ q\n",
     );
 
     run_tau_file_io_once(tau_bin, &program)?;
-    let out_line = read_last_nonempty_line(&out_path)?.ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::Other, "no output produced")
-    })?;
-    let allowed = parse_sbf_value_to_bool(&out_line).ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("unexpected sbf output '{out_line}'"),
-        )
-    })?;
+    let out_line = read_last_nonempty_line(&out_path)?
+        .ok_or_else(|| std::io::Error::other("no output produced"))?;
+    let allowed = parse_sbf_value_to_bool(&out_line)
+        .ok_or_else(|| std::io::Error::other(format!("unexpected sbf output '{out_line}'")))?;
     Ok(allowed)
 }
 
@@ -127,7 +124,11 @@ fn ansi_wrap(mode: TruthTableTerminalMode, code: &str, s: &str) -> String {
 
 fn print_progress_line(label: &str, done: u32, total: u32) {
     let mut stderr = std::io::stderr();
-    let pct = if total == 0 { 100u32 } else { (done.saturating_mul(100)) / total };
+    let pct = if total == 0 {
+        100u32
+    } else {
+        (done.saturating_mul(100)) / total
+    };
     let _ = write!(
         &mut stderr,
         "\r[tau-truth-table] {label}: {done}/{total} ({pct}%)"
@@ -186,7 +187,10 @@ where
     F: Fn(&[bool]) -> bool,
 {
     assert!(num_inputs > 0, "num_inputs must be > 0");
-    assert!(num_inputs <= 8, "num_inputs too large for exhaustive truth table");
+    assert!(
+        num_inputs <= 8,
+        "num_inputs too large for exhaustive truth table"
+    );
 
     let export_dir = truth_table_export_dir();
     let terminal_mode = truth_table_terminal_mode();
@@ -208,7 +212,9 @@ where
     let max_state: u32 = 1u32 << num_inputs;
 
     let mut terminal_rows: Vec<(u32, Vec<bool>, bool, bool)> = Vec::new();
-    if terminal_mode == TruthTableTerminalMode::Table || terminal_mode == TruthTableTerminalMode::Pretty {
+    if terminal_mode == TruthTableTerminalMode::Table
+        || terminal_mode == TruthTableTerminalMode::Pretty
+    {
         terminal_rows.reserve(max_state as usize);
     }
 
@@ -222,7 +228,10 @@ where
         let expected = expected_fn(&inputs_vec);
 
         // One working directory per state to avoid any file caching edge-cases.
-        let case_dir = base_dir.join(format!("{export_label}_{bits:0width$b}", width = num_inputs as usize));
+        let case_dir = base_dir.join(format!(
+            "{export_label}_{bits:0width$b}",
+            width = num_inputs as usize
+        ));
         let _ = std::fs::create_dir_all(&case_dir);
 
         let mut input_paths = Vec::<PathBuf>::new();
@@ -237,30 +246,54 @@ where
         let out_path = case_dir.join("o0.out");
         let _ = std::fs::remove_file(&out_path);
 
-        let mut program = String::new();
+        let mut program = String::from("set charvar off\n");
         for i in 0..num_inputs {
             let p = input_paths[i as usize].to_string_lossy();
-            program.push_str(&format!("i{i} : sbf = in file(\"{p}\")\n"));
+            program.push_str(&format!("i{i}:sbf = in file(\"{p}\").\n"));
         }
         program.push_str(&format!(
-            "o0 : sbf = out file(\"{}\")\n",
+            "o0:sbf = out file(\"{}\").\n",
             out_path.to_string_lossy()
         ));
-        program.push_str(&format!("r {tau_relation}\n"));
+        program.push_str("defs\n");
+        program.push_str(&format!("r (\n    {tau_relation}\n)\n"));
         program.push_str("n\nq\n");
 
-        run_tau_file_io_once(tau_bin, &program)
-            .unwrap_or_else(|e| panic!("tau file-io run failed for state {:0width$b}: {e}", bits, width = num_inputs as usize));
+        run_tau_file_io_once(tau_bin, &program).unwrap_or_else(|e| {
+            panic!(
+                "tau file-io run failed for state {:0width$b}: {e}",
+                bits,
+                width = num_inputs as usize
+            )
+        });
 
         let out_line = read_last_nonempty_line(&out_path)
-            .unwrap_or_else(|e| panic!("failed reading output for state {:0width$b}: {e}", bits, width = num_inputs as usize))
-            .unwrap_or_else(|| panic!("no output produced for state {:0width$b}", bits, width = num_inputs as usize));
+            .unwrap_or_else(|e| {
+                panic!(
+                    "failed reading output for state {:0width$b}: {e}",
+                    bits,
+                    width = num_inputs as usize
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "no output produced for state {:0width$b}",
+                    bits,
+                    width = num_inputs as usize
+                )
+            });
 
         let Some(actual) = parse_sbf_value_to_bool(&out_line) else {
-            panic!("unexpected sbf output '{out_line}' for state {:0width$b}", bits, width = num_inputs as usize);
+            panic!(
+                "unexpected sbf output '{out_line}' for state {:0width$b}",
+                bits,
+                width = num_inputs as usize
+            );
         };
 
-        if terminal_mode == TruthTableTerminalMode::Table || terminal_mode == TruthTableTerminalMode::Pretty {
+        if terminal_mode == TruthTableTerminalMode::Table
+            || terminal_mode == TruthTableTerminalMode::Pretty
+        {
             terminal_rows.push((bits, inputs_vec.clone(), expected, actual));
         }
 
@@ -305,7 +338,9 @@ where
         );
     }
 
-    if terminal_mode == TruthTableTerminalMode::Table || terminal_mode == TruthTableTerminalMode::Pretty {
+    if terminal_mode == TruthTableTerminalMode::Table
+        || terminal_mode == TruthTableTerminalMode::Pretty
+    {
         print_truth_table_rows(terminal_mode, export_label, num_inputs, &terminal_rows);
         let mut stderr = std::io::stderr();
         let _ = writeln!(
@@ -330,9 +365,7 @@ where
 #[test]
 fn mprd_risk_threshold_policy_truth_table_matches_expected() {
     let Some(tau_bin) = tau_binary_path() else {
-        eprintln!(
-            "Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",
-        );
+        eprintln!("Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",);
         return;
     };
 
@@ -398,15 +431,18 @@ fn spawn_tau_with_spec(tau_bin: &Path, spec_path: &Path) -> std::io::Result<TauC
         .stderr(Stdio::piped())
         .spawn()?;
 
-    let stdin = child.stdin.take().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::Other, "tau stdin unavailable")
-    })?;
-    let stdout = child.stdout.take().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::Other, "tau stdout unavailable")
-    })?;
-    let stderr = child.stderr.take().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::Other, "tau stderr unavailable")
-    })?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| std::io::Error::other("tau stdin unavailable"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| std::io::Error::other("tau stdout unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| std::io::Error::other("tau stderr unavailable"))?;
 
     let (stdout_tx, stdout_rx) = mpsc::channel::<u8>();
     let (stderr_tx, stderr_rx) = mpsc::channel::<u8>();
@@ -470,15 +506,18 @@ fn spawn_tau_repl(tau_bin: &Path) -> std::io::Result<TauChild> {
         .stderr(Stdio::piped())
         .spawn()?;
 
-    let stdin = child.stdin.take().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::Other, "tau stdin unavailable")
-    })?;
-    let stdout = child.stdout.take().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::Other, "tau stdout unavailable")
-    })?;
-    let stderr = child.stderr.take().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::Other, "tau stderr unavailable")
-    })?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| std::io::Error::other("tau stdin unavailable"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| std::io::Error::other("tau stdout unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| std::io::Error::other("tau stderr unavailable"))?;
 
     let (stdout_tx, stdout_rx) = mpsc::channel::<u8>();
     let (stderr_tx, stderr_rx) = mpsc::channel::<u8>();
@@ -520,10 +559,7 @@ fn parse_prompt_line(prefix: char, line: &str) -> Option<u32> {
     }
 
     let rest = trimmed.strip_prefix(prefix)?;
-    let digits_end = rest
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .count();
+    let digits_end = rest.chars().take_while(|c| c.is_ascii_digit()).count();
     if digits_end == 0 {
         return None;
     }
@@ -571,10 +607,7 @@ fn parse_output_assignment_line(line: &str) -> Option<(u32, String)> {
     }
 
     let rest = trimmed.strip_prefix('o')?;
-    let digits_end = rest
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .count();
+    let digits_end = rest.chars().take_while(|c| c.is_ascii_digit()).count();
     if digits_end == 0 {
         return None;
     }
@@ -746,12 +779,13 @@ fn run_tau_one_step_and_capture_outputs(
 
             if current_step == 0 {
                 satisfied_inputs_step0.insert(idx);
-                if !sent_step0_continue && !expected_inputs.is_empty() {
-                    if satisfied_inputs_step0 == expected_inputs {
-                        // Send an empty line to allow Tau to proceed to compute outputs.
-                        write_line(&mut tau.stdin, "")?;
-                        sent_step0_continue = true;
-                    }
+                if !sent_step0_continue
+                    && !expected_inputs.is_empty()
+                    && satisfied_inputs_step0 == expected_inputs
+                {
+                    // Send an empty line to allow Tau to proceed to compute outputs.
+                    write_line(&mut tau.stdin, "")?;
+                    sent_step0_continue = true;
                 }
             }
         }
@@ -807,10 +841,7 @@ fn read_last_nonempty_line(path: &Path) -> std::io::Result<Option<String>> {
     Ok(last)
 }
 
-fn run_tau_file_io_once(
-    tau_bin: &Path,
-    program: &str,
-) -> std::io::Result<()> {
+fn run_tau_file_io_once(tau_bin: &Path, program: &str) -> std::io::Result<()> {
     let mut child = Command::new(tau_bin)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -821,7 +852,7 @@ fn run_tau_file_io_once(
         let stdin = child
             .stdin
             .as_mut()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "tau stdin unavailable"))?;
+            .ok_or_else(|| std::io::Error::other("tau stdin unavailable"))?;
         stdin.write_all(program.as_bytes())?;
         stdin.flush()?;
     }
@@ -831,17 +862,15 @@ fn run_tau_file_io_once(
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
 
     if !output.status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("tau file-io run failed. stderr: {stderr}"),
-        ));
+        return Err(std::io::Error::other(format!(
+            "tau file-io run failed. stderr: {stderr}"
+        )));
     }
 
     if stdout.contains("(Error)") || stderr.contains("(Error)") {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("tau file-io reported error. stdout: {stdout} stderr: {stderr}"),
-        ));
+        return Err(std::io::Error::other(format!(
+            "tau file-io reported error. stdout: {stdout} stderr: {stderr}"
+        )));
     }
 
     Ok(())
@@ -868,7 +897,10 @@ fn check_sbf_truth_table<F>(
     F: Fn(&[bool]) -> bool,
 {
     assert!(num_inputs > 0, "num_inputs must be > 0");
-    assert!(num_inputs <= 8, "num_inputs too large for exhaustive truth table");
+    assert!(
+        num_inputs <= 8,
+        "num_inputs too large for exhaustive truth table"
+    );
 
     let mut inputs_vec = vec![false; num_inputs as usize];
     let max_state: u32 = 1u32 << num_inputs;
@@ -897,7 +929,14 @@ fn check_sbf_truth_table<F>(
             // Tau REPL sbf prompts accept boolean literals like "T."/"F.".
             // Using numeric forms like "1."/"0." here tends to keep values symbolic,
             // causing Tau to output formulas rather than concrete T/F.
-            inputs_by_stream.insert(idx as u32, if b { "T.".to_string() } else { "F.".to_string() });
+            inputs_by_stream.insert(
+                idx as u32,
+                if b {
+                    "T.".to_string()
+                } else {
+                    "F.".to_string()
+                },
+            );
         }
 
         let events = run_tau_one_step_and_capture_outputs(
@@ -907,12 +946,24 @@ fn check_sbf_truth_table<F>(
             target_output_stream,
             timeout,
         )
-        .unwrap_or_else(|e| panic!("tau run failed for input state {:0width$b}: {e}", bits, width = num_inputs as usize));
+        .unwrap_or_else(|e| {
+            panic!(
+                "tau run failed for input state {:0width$b}: {e}",
+                bits,
+                width = num_inputs as usize
+            )
+        });
 
         let ev = events
             .iter()
             .find(|e| e.stream_idx == target_output_stream && e.step == 0)
-            .unwrap_or_else(|| panic!("no output for state {:0width$b}", bits, width = num_inputs as usize));
+            .unwrap_or_else(|| {
+                panic!(
+                    "no output for state {:0width$b}",
+                    bits,
+                    width = num_inputs as usize
+                )
+            });
 
         let Some(actual) = parse_sbf_value_to_bool(&ev.value) else {
             panic!(
@@ -923,7 +974,7 @@ fn check_sbf_truth_table<F>(
             );
         };
 
-        if let Some(_) = export_dir {
+        if export_dir.is_some() {
             let mut row = format!("{:0width$b}", bits, width = num_inputs as usize);
             for b in &inputs_vec {
                 row.push_str(if *b { ",1" } else { ",0" });
@@ -935,7 +986,8 @@ fn check_sbf_truth_table<F>(
         }
 
         assert_eq!(
-            actual, expected,
+            actual,
+            expected,
             "truth table mismatch for state {:0width$b}",
             bits,
             width = num_inputs as usize
@@ -983,8 +1035,7 @@ fn tau_testnet_genesis_step0_outputs_are_deterministic() {
             let _ = tau.child.wait();
             panic!(
                 "tau timed out while waiting for step0 output. recent stdout: {:?}. stderr: {}",
-                recent_stdout_lines,
-                stderr
+                recent_stdout_lines, stderr
             );
         }
 
@@ -1071,9 +1122,7 @@ fn tau_testnet_genesis_step0_outputs_are_deterministic() {
 #[test]
 fn mprd_governance_gate_truth_table_matches_expected() {
     let Some(tau_bin) = tau_binary_path() else {
-        eprintln!(
-            "Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",
-        );
+        eprintln!("Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",);
         return;
     };
 
@@ -1091,9 +1140,7 @@ fn mprd_governance_gate_truth_table_matches_expected() {
             let safety_ok = inputs[4];
             let link_ok = inputs[5];
 
-            let one_hot_mode = (pt && !sc && !ce)
-                || (!pt && sc && !ce)
-                || (!pt && !sc && ce);
+            let one_hot_mode = usize::from(pt) + usize::from(sc) + usize::from(ce) == 1;
             one_hot_mode
                 && ((pt && app_ok && link_ok)
                     || (sc && safety_ok && link_ok)
@@ -1106,9 +1153,7 @@ fn mprd_governance_gate_truth_table_matches_expected() {
 #[test]
 fn mprd_committee_decision_matrix_2_of_3_with_veto_truth_table_matches_expected() {
     let Some(tau_bin) = tau_binary_path() else {
-        eprintln!(
-            "Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",
-        );
+        eprintln!("Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",);
         return;
     };
 
@@ -1123,7 +1168,7 @@ fn mprd_committee_decision_matrix_2_of_3_with_veto_truth_table_matches_expected(
             let v2 = inputs[2];
             let veto = inputs[3];
 
-            let at_least_two = (v0 && v1) || (v0 && v2) || (v1 && v2);
+            let at_least_two = usize::from(v0) + usize::from(v1) + usize::from(v2) >= 2;
             at_least_two && !veto
         },
     )
@@ -1133,9 +1178,7 @@ fn mprd_committee_decision_matrix_2_of_3_with_veto_truth_table_matches_expected(
 #[test]
 fn decision_tool_supermajority_2_of_3_truth_table_matches_expected() {
     let Some(tau_bin) = tau_binary_path() else {
-        eprintln!(
-            "Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",
-        );
+        eprintln!("Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",);
         return;
     };
 
@@ -1148,7 +1191,7 @@ fn decision_tool_supermajority_2_of_3_truth_table_matches_expected() {
             let y0 = inputs[0];
             let y1 = inputs[1];
             let y2 = inputs[2];
-            (y0 && y1) || (y0 && y2) || (y1 && y2)
+            usize::from(y0) + usize::from(y1) + usize::from(y2) >= 2
         },
     )
     .expect("supermajority 2-of-3 truth table should run");
@@ -1157,9 +1200,7 @@ fn decision_tool_supermajority_2_of_3_truth_table_matches_expected() {
 #[test]
 fn decision_tool_quorum_abstention_2_of_3_present_truth_table_matches_expected() {
     let Some(tau_bin) = tau_binary_path() else {
-        eprintln!(
-            "Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",
-        );
+        eprintln!("Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",);
         return;
     };
 
@@ -1181,12 +1222,12 @@ fn decision_tool_quorum_abstention_2_of_3_present_truth_table_matches_expected()
             let y1 = inputs[4];
             let y2 = inputs[5];
 
-            let quorum = (p0 && p1) || (p0 && p2) || (p1 && p2);
+            let quorum = usize::from(p0) + usize::from(p1) + usize::from(p2) >= 2;
 
             let yp0 = y0 && p0;
             let yp1 = y1 && p1;
             let yp2 = y2 && p2;
-            let yes_two_present = (yp0 && yp1) || (yp0 && yp2) || (yp1 && yp2);
+            let yes_two_present = usize::from(yp0) + usize::from(yp1) + usize::from(yp2) >= 2;
 
             quorum && yes_two_present
         },
@@ -1197,9 +1238,7 @@ fn decision_tool_quorum_abstention_2_of_3_present_truth_table_matches_expected()
 #[test]
 fn decision_tool_proposal_sequencing_gate_truth_table_matches_expected() {
     let Some(tau_bin) = tau_binary_path() else {
-        eprintln!(
-            "Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",
-        );
+        eprintln!("Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",);
         return;
     };
 
@@ -1216,9 +1255,7 @@ fn decision_tool_proposal_sequencing_gate_truth_table_matches_expected() {
 #[test]
 fn decision_tool_emergency_pause_override_truth_table_matches_expected() {
     let Some(tau_bin) = tau_binary_path() else {
-        eprintln!(
-            "Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",
-        );
+        eprintln!("Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",);
         return;
     };
 
@@ -1239,27 +1276,25 @@ fn decision_tool_emergency_pause_override_truth_table_matches_expected() {
 
 /// Cross-verification test: Rust GovernanceProfile::would_accept() vs Tau governance gate spec.
 /// This test verifies that the Rust implementation exactly matches the Tau spec logic.
-/// 
+///
 /// Note: Uses sbf flags for update_kind encoding since bv[N] comparisons with && in ternary
 /// conditionals don't execute properly in Tau execution mode.
 #[test]
 fn governance_gate_rust_vs_tau_cross_verification() {
     let Some(tau_bin) = tau_binary_path() else {
-        eprintln!(
-            "Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",
-        );
+        eprintln!("Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",);
         return;
     };
 
     // Encode update_kind as one-hot sbf flags: is_policy_tweak, is_safety_change, is_cap_expand
     // This avoids bv[8] comparison issues in execution mode
-    // 
+    //
     // Logic matches mprd_governance_gate.tau:
     //   POLICY_TWEAK (0x01): app_ok && link_ok
     //   SAFETY_CHANGE (0x02): safety_ok && link_ok
     //   CAPABILITY_EXPAND (0x03): app_ok && safety_ok && link_ok
     //   Invalid: always reject
-    
+
     // Tau formula encoding the governance gate logic:
     // i0=is_policy_tweak, i1=is_safety_change, i2=is_cap_expand
     // i3=app_ok, i4=safety_ok, i5=link_ok
@@ -1279,9 +1314,10 @@ fn governance_gate_rust_vs_tau_cross_verification() {
             let link_ok = inputs[5];
 
             // One-hot constraint: exactly one mode flag must be set
-            let one_hot = (is_policy_tweak && !is_safety_change && !is_cap_expand)
-                || (!is_policy_tweak && is_safety_change && !is_cap_expand)
-                || (!is_policy_tweak && !is_safety_change && is_cap_expand);
+            let one_hot = usize::from(is_policy_tweak)
+                + usize::from(is_safety_change)
+                + usize::from(is_cap_expand)
+                == 1;
 
             if !one_hot {
                 return false;
@@ -1305,27 +1341,26 @@ fn governance_gate_rust_vs_tau_cross_verification() {
 #[test]
 fn mprd_risk_threshold_policy_bv16_grid_matches_expected() {
     let Some(tau_bin) = tau_binary_path() else {
-        eprintln!(
-            "Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",
-        );
+        eprintln!("Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",);
         return;
     };
 
     const EXPORT_LABEL: &str = "mprd_risk_threshold_policy_bv16_grid";
 
-    let mut cases: Vec<(u16, u16, u16, u16, bool)> = Vec::new();
-    cases.push((0, 0, 0, 0, true));
-    cases.push((1, 2, 1, 2, true));
-    cases.push((255, 256, 255, 256, true));
-    cases.push((u16::MAX, u16::MAX, u16::MAX, u16::MAX, true));
-    cases.push((2, 1, 0, 0, true));
-    cases.push((u16::MAX, u16::MAX - 1, 0, 0, true));
-    cases.push((0, 0, 2, 1, true));
-    cases.push((0, 0, u16::MAX, u16::MAX - 1, true));
-    cases.push((0, 0, 0, 0, false));
-    cases.push((1, 2, 1, 2, false));
-    cases.push((2, 1, 2, 1, true));
-    cases.push((2, 1, 2, 1, false));
+    let mut cases: Vec<(u16, u16, u16, u16, bool)> = vec![
+        (0, 0, 0, 0, true),
+        (1, 2, 1, 2, true),
+        (255, 256, 255, 256, true),
+        (u16::MAX, u16::MAX, u16::MAX, u16::MAX, true),
+        (2, 1, 0, 0, true),
+        (u16::MAX, u16::MAX - 1, 0, 0, true),
+        (0, 0, 2, 1, true),
+        (0, 0, u16::MAX, u16::MAX - 1, true),
+        (0, 0, 0, 0, false),
+        (1, 2, 1, 2, false),
+        (2, 1, 2, 1, true),
+        (2, 1, 2, 1, false),
+    ];
 
     let slice_values: [u16; 6] = [0, 1, 2, 255, 256, u16::MAX];
     for &risk in &slice_values {

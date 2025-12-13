@@ -18,11 +18,11 @@
 //! ```
 
 use crate::abi::GovernorJournal;
-use crate::modes::{DeploymentMode, ExtendedVerificationResult, VerificationStep};
+use crate::modes::{DeploymentMode, VerificationStep};
 use crate::privacy::EncryptedState;
 use crate::risc0_host::GuestOutput as Risc0GuestOutput;
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 /// External verification request.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -114,18 +114,10 @@ impl ExternalVerifier {
 
         // Step 2: Verify based on mode
         let mode_result = match request.mode {
-            DeploymentMode::LocalTrusted => {
-                self.verify_local_trusted(request, &mut steps)
-            }
-            DeploymentMode::TrustlessLite => {
-                self.verify_trustless_lite(request, &mut steps)
-            }
-            DeploymentMode::TrustlessFull => {
-                self.verify_trustless_full(request, &mut steps)
-            }
-            DeploymentMode::Private => {
-                self.verify_private(request, &mut steps)
-            }
+            DeploymentMode::LocalTrusted => self.verify_local_trusted(request, &mut steps),
+            DeploymentMode::TrustlessLite => self.verify_trustless_lite(request, &mut steps),
+            DeploymentMode::TrustlessFull => self.verify_trustless_full(request, &mut steps),
+            DeploymentMode::Private => self.verify_private(request, &mut steps),
         };
 
         VerificationResponse {
@@ -138,7 +130,11 @@ impl ExternalVerifier {
     }
 
     /// Validate request structure.
-    fn validate_structure(&self, request: &VerificationRequest, steps: &mut Vec<VerificationStep>) -> bool {
+    fn validate_structure(
+        &self,
+        request: &VerificationRequest,
+        steps: &mut Vec<VerificationStep>,
+    ) -> bool {
         // Check hash lengths
         let hashes_valid = request.policy_hash.len() == 32
             && request.state_hash.len() == 32
@@ -159,10 +155,16 @@ impl ExternalVerifier {
     }
 
     /// Verify Mode A (Local Trusted).
-    fn verify_local_trusted(&self, request: &VerificationRequest, steps: &mut Vec<VerificationStep>) -> Result<(), String> {
+    fn verify_local_trusted(
+        &self,
+        request: &VerificationRequest,
+        steps: &mut Vec<VerificationStep>,
+    ) -> Result<(), String> {
         // Mode A just checks that metadata indicates local mode
         let mode_marker = request.metadata.get("mode");
-        let is_local = mode_marker.map(|m| m == "Local" || m == "A").unwrap_or(true);
+        let is_local = mode_marker
+            .map(|m| m == "Local" || m == "A")
+            .unwrap_or(false);
 
         steps.push(VerificationStep {
             name: "Mode A verification".into(),
@@ -178,7 +180,11 @@ impl ExternalVerifier {
     }
 
     /// Verify Mode B-Lite (MPB Proofs).
-    fn verify_trustless_lite(&self, request: &VerificationRequest, steps: &mut Vec<VerificationStep>) -> Result<(), String> {
+    fn verify_trustless_lite(
+        &self,
+        request: &VerificationRequest,
+        steps: &mut Vec<VerificationStep>,
+    ) -> Result<(), String> {
         // Check mode marker
         let mode_marker = request.metadata.get("mode");
         let is_mpb = mode_marker.map(|m| m == "B-Lite").unwrap_or(false);
@@ -193,36 +199,23 @@ impl ExternalVerifier {
             return Err("Missing B-Lite mode marker".into());
         }
 
-        // Verify proof type
-        let proof_type = request.metadata.get("proof_type");
-        let is_mpb_proof = proof_type.map(|t| t == "MPB").unwrap_or(false);
-
+        // Fail-closed: external MPB verification is not implemented yet.
+        // Accepting marker-only proofs would enable trivial forgery.
         steps.push(VerificationStep {
-            name: "Proof type".into(),
-            passed: is_mpb_proof,
-            details: Some(format!("Proof type: {:?}", proof_type)),
+            name: "MPB proof verification".into(),
+            passed: false,
+            details: Some("External B-Lite verification is not implemented. Refusing marker-only verification.".into()),
         });
 
-        if !is_mpb_proof {
-            return Err("Invalid proof type for B-Lite".into());
-        }
-
-        // For full verification, we would need to:
-        // 1. Deserialize the MPB proof from proof_data
-        // 2. Verify the Merkle proofs
-        // 3. Re-execute spot-checked steps
-
-        steps.push(VerificationStep {
-            name: "Commitment binding".into(),
-            passed: true,
-            details: Some("Commitments are structurally valid".into()),
-        });
-
-        Ok(())
+        Err("External verification for B-Lite (MPB) is not implemented".into())
     }
 
     /// Verify Mode B-Full (Risc0 ZK).
-    fn verify_trustless_full(&self, request: &VerificationRequest, steps: &mut Vec<VerificationStep>) -> Result<(), String> {
+    fn verify_trustless_full(
+        &self,
+        request: &VerificationRequest,
+        steps: &mut Vec<VerificationStep>,
+    ) -> Result<(), String> {
         // Check if Risc0 image ID is configured
         let image_id = match self.risc0_image_id {
             Some(id) => id,
@@ -235,6 +228,17 @@ impl ExternalVerifier {
                 return Err("Risc0 image ID required for B-Full verification".into());
             }
         };
+
+        if image_id == [0u8; 32] {
+            steps.push(VerificationStep {
+                name: "Risc0 configuration".into(),
+                passed: false,
+                details: Some(
+                    "Risc0 image ID is all-zero; refusing to verify an unspecified guest".into(),
+                ),
+            });
+            return Err("Invalid (all-zero) Risc0 image ID".into());
+        }
 
         steps.push(VerificationStep {
             name: "Risc0 configuration".into(),
@@ -326,9 +330,15 @@ impl ExternalVerifier {
     }
 
     /// Verify Mode C (Private).
-    fn verify_private(&self, request: &VerificationRequest, steps: &mut Vec<VerificationStep>) -> Result<(), String> {
+    fn verify_private(
+        &self,
+        request: &VerificationRequest,
+        steps: &mut Vec<VerificationStep>,
+    ) -> Result<(), String> {
         let mode_marker = request.metadata.get("mode");
-        let is_private = mode_marker.map(|m| m == "C" || m == "Private").unwrap_or(false);
+        let is_private = mode_marker
+            .map(|m| m == "C" || m == "Private")
+            .unwrap_or(false);
 
         steps.push(VerificationStep {
             name: "Mode C marker".into(),
@@ -380,8 +390,7 @@ impl ExternalVerifier {
                 passed: key_matches,
                 details: Some(format!(
                     "expected: {:?}, actual: {}",
-                    expected_key_id,
-                    encrypted_state.key_id
+                    expected_key_id, encrypted_state.key_id
                 )),
             });
 
@@ -423,14 +432,12 @@ pub fn compute_commitment(inputs: &[&[u8]]) -> [u8; 32] {
 
 /// Serialize a verification response to JSON.
 pub fn serialize_response(response: &VerificationResponse) -> Result<String, String> {
-    serde_json::to_string_pretty(response)
-        .map_err(|e| format!("Serialization failed: {}", e))
+    serde_json::to_string_pretty(response).map_err(|e| format!("Serialization failed: {}", e))
 }
 
 /// Deserialize a verification request from JSON.
 pub fn deserialize_request(json: &str) -> Result<VerificationRequest, String> {
-    serde_json::from_str(json)
-        .map_err(|e| format!("Deserialization failed: {}", e))
+    serde_json::from_str(json).map_err(|e| format!("Deserialization failed: {}", e))
 }
 
 #[cfg(test)]
@@ -456,8 +463,13 @@ mod tests {
         };
 
         let response = verifier.verify(&request);
-        assert!(response.valid);
+        assert!(!response.valid);
         assert_eq!(response.mode, DeploymentMode::TrustlessLite);
+        assert!(response
+            .error
+            .as_ref()
+            .expect("error")
+            .contains("not implemented"));
     }
 
     #[test]
@@ -474,6 +486,24 @@ mod tests {
             metadata: HashMap::from([
                 ("mode".into(), "B-Full".into()), // Wrong mode!
             ]),
+        };
+
+        let response = verifier.verify(&request);
+        assert!(!response.valid);
+    }
+
+    #[test]
+    fn external_verifier_local_mode_requires_marker() {
+        let verifier = ExternalVerifier::new();
+
+        let request = VerificationRequest {
+            mode: DeploymentMode::LocalTrusted,
+            policy_hash: [1u8; 32],
+            state_hash: [2u8; 32],
+            candidate_set_hash: [3u8; 32],
+            chosen_action_hash: [4u8; 32],
+            proof_data: vec![],
+            metadata: HashMap::new(),
         };
 
         let response = verifier.verify(&request);
@@ -500,6 +530,25 @@ mod tests {
     }
 
     #[test]
+    fn external_verifier_risc0_rejects_all_zero_image_id() {
+        let verifier = ExternalVerifier::with_risc0_image([0u8; 32]);
+
+        let request = VerificationRequest {
+            mode: DeploymentMode::TrustlessFull,
+            policy_hash: [1u8; 32],
+            state_hash: [2u8; 32],
+            candidate_set_hash: [3u8; 32],
+            chosen_action_hash: [4u8; 32],
+            proof_data: vec![1, 2, 3],
+            metadata: HashMap::new(),
+        };
+
+        let response = verifier.verify(&request);
+        assert!(!response.valid);
+        assert!(response.error.as_ref().unwrap().contains("all-zero"));
+    }
+
+    #[test]
     fn commitment_computation() {
         let input1 = [1u8; 32];
         let input2 = [2u8; 32];
@@ -521,13 +570,11 @@ mod tests {
         let response = VerificationResponse {
             valid: true,
             mode: DeploymentMode::TrustlessLite,
-            steps: vec![
-                VerificationStep {
-                    name: "Test".into(),
-                    passed: true,
-                    details: Some("Details".into()),
-                },
-            ],
+            steps: vec![VerificationStep {
+                name: "Test".into(),
+                passed: true,
+                details: Some("Details".into()),
+            }],
             error: None,
             verified_at: 12345,
         };

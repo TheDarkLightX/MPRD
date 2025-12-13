@@ -24,6 +24,6 @@ anyhow = "1.0"
 hex = "0.4"
 dirs = "5.0"
 base64 = "0.21"
-reqwest = { version = "0.11", features = ["blocking", "json"] }
+reqwest = { version = "0.12", features = ["blocking", "json"] }
 sha2 = "0.10"
 axum = { version = "0.7", features = ["macros", "json"] }

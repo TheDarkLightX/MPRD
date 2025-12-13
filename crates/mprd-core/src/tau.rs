@@ -1,8 +1,74 @@
-use crate::{CandidateAction, MprdError, PolicyEngine, PolicyHash, Result, RuleVerdict, StateSnapshot, Value, MAX_CANDIDATES};
-use std::io::Write;
+use crate::{
+    CandidateAction, MprdError, PolicyEngine, PolicyHash, Result, RuleVerdict, StateSnapshot,
+    Value, MAX_CANDIDATES,
+};
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+
+const TAU_MAX_OUTPUT_BYTES: usize = 64 * 1024;
+const TAU_POLL_INTERVAL_MS: u64 = 10;
+
+fn read_tau_stream<R: Read>(mut reader: R, stream_name: &'static str) -> Result<String> {
+    let mut output = Vec::new();
+    let mut total = 0usize;
+    let mut buf = [0u8; 4096];
+
+    loop {
+        let n = reader.read(&mut buf).map_err(|e| {
+            MprdError::PolicyEvaluationFailed(format!("failed to read tau {stream_name}: {e}"))
+        })?;
+
+        if n == 0 {
+            break;
+        }
+
+        total = total.saturating_add(n);
+
+        if output.len() < TAU_MAX_OUTPUT_BYTES {
+            let remaining = TAU_MAX_OUTPUT_BYTES - output.len();
+            let take = remaining.min(n);
+            output.extend_from_slice(&buf[..take]);
+        }
+    }
+
+    if total > TAU_MAX_OUTPUT_BYTES {
+        return Err(MprdError::PolicyEvaluationFailed(format!(
+            "tau {stream_name} exceeded {TAU_MAX_OUTPUT_BYTES} bytes"
+        )));
+    }
+
+    Ok(String::from_utf8_lossy(&output).into_owned())
+}
+
+fn wait_for_exit(
+    child: &mut std::process::Child,
+    timeout: Duration,
+) -> Result<std::process::ExitStatus> {
+    let start = Instant::now();
+
+    loop {
+        let status = child.try_wait().map_err(|e| {
+            MprdError::PolicyEvaluationFailed(format!("failed to poll tau status: {e}"))
+        })?;
+
+        if let Some(status) = status {
+            return Ok(status);
+        }
+
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(MprdError::PolicyEvaluationFailed(format!(
+                "tau timed out after {:?}",
+                timeout,
+            )));
+        }
+
+        thread::sleep(Duration::from_millis(TAU_POLL_INTERVAL_MS));
+    }
+}
 
 /// Configuration for interacting with Tau.
 ///
@@ -38,10 +104,7 @@ impl TauPolicyEngine {
         format!("#b{:064b}", v)
     }
 
-    fn extract_u64(
-        params: &std::collections::HashMap<String, Value>,
-        key: &str,
-    ) -> Result<u64> {
+    fn extract_u64(params: &std::collections::HashMap<String, Value>, key: &str) -> Result<u64> {
         match params.get(key) {
             Some(Value::UInt(v)) => Ok(*v),
             Some(Value::Int(v)) if *v >= 0 => Ok(*v as u64),
@@ -52,10 +115,7 @@ impl TauPolicyEngine {
         }
     }
 
-    fn build_risk_threshold_wff(
-        &self,
-        candidate: &CandidateAction,
-    ) -> Result<String> {
+    fn build_risk_threshold_wff(&self, candidate: &CandidateAction) -> Result<String> {
         let risk = Self::extract_u64(&candidate.params, "risk")?;
         let max_risk = Self::extract_u64(&candidate.params, "max_risk")?;
         let cost = Self::extract_u64(&candidate.params, "cost")?;
@@ -89,79 +149,61 @@ impl TauPolicyEngine {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| {
-                MprdError::PolicyEvaluationFailed(format!(
-                    "failed to spawn tau: {e}",
-                ))
-            })?;
+            .map_err(|e| MprdError::PolicyEvaluationFailed(format!("failed to spawn tau: {e}")))?;
+
+        let stdout_reader = child
+            .stdout
+            .take()
+            .ok_or_else(|| MprdError::PolicyEvaluationFailed("tau stdout unavailable".into()))?;
+        let stderr_reader = child
+            .stderr
+            .take()
+            .ok_or_else(|| MprdError::PolicyEvaluationFailed("tau stderr unavailable".into()))?;
+
+        let stdout_task = thread::spawn(move || read_tau_stream(stdout_reader, "stdout"));
+        let stderr_task = thread::spawn(move || read_tau_stream(stderr_reader, "stderr"));
 
         {
-            let mut stdin = child.stdin.take().ok_or_else(|| {
-                MprdError::PolicyEvaluationFailed("tau stdin unavailable".into())
-            })?;
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| MprdError::PolicyEvaluationFailed("tau stdin unavailable".into()))?;
 
-            stdin
-                .write_all(script.as_bytes())
-                .map_err(|e| {
-                    MprdError::PolicyEvaluationFailed(format!(
-                        "failed to write to tau stdin: {e}",
-                    ))
-                })?;
+            stdin.write_all(script.as_bytes()).map_err(|e| {
+                MprdError::PolicyEvaluationFailed(format!("failed to write to tau stdin: {e}"))
+            })?;
             // `stdin` is dropped here, closing the pipe and letting Tau
             // observe EOF after the script has been sent.
         }
         let timeout = Duration::from_millis(self.config.tau_timeout_ms);
-        let start = Instant::now();
+        let status = wait_for_exit(&mut child, timeout);
 
-        loop {
-            match child.try_wait().map_err(|e| {
-                MprdError::PolicyEvaluationFailed(format!(
-                    "failed to poll tau status: {e}",
-                ))
-            })? {
-                Some(_status) => {
-                    let output = child.wait_with_output().map_err(|e| {
-                        MprdError::PolicyEvaluationFailed(format!(
-                            "failed to collect tau output: {e}",
-                        ))
-                    })?;
+        let stdout = stdout_task.join().map_err(|_| {
+            MprdError::PolicyEvaluationFailed("tau stdout reader thread panicked".into())
+        })??;
+        let stderr = stderr_task.join().map_err(|_| {
+            MprdError::PolicyEvaluationFailed("tau stderr reader thread panicked".into())
+        })??;
 
-                    let stdout =
-                        String::from_utf8_lossy(&output.stdout).into_owned();
-                    let stderr =
-                        String::from_utf8_lossy(&output.stderr).into_owned();
+        let status = status?;
 
-                    if !output.status.success() {
-                        return Err(MprdError::PolicyEvaluationFailed(format!(
-                            "tau exited with error: {stderr}",
-                        )));
-                    }
-
-                    if stdout.contains("solution:") {
-                        return Ok(true);
-                    }
-
-                    if stdout.contains("no solution") {
-                        return Ok(false);
-                    }
-
-                    return Err(MprdError::PolicyEvaluationFailed(format!(
-                        "tau returned unexpected output: {stdout}",
-                    )));
-                }
-                None => {
-                    if start.elapsed() >= timeout {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err(MprdError::PolicyEvaluationFailed(format!(
-                            "tau timed out after {:?}",
-                            timeout,
-                        )));
-                    }
-                    thread::sleep(Duration::from_millis(10));
-                }
-            }
+        if !status.success() {
+            return Err(MprdError::PolicyEvaluationFailed(format!(
+                "tau exited with error: {stderr}",
+            )));
         }
+
+        if stdout.contains("solution:") {
+            return Ok(true);
+        }
+
+        if stdout.contains("no solution") {
+            return Ok(false);
+        }
+
+        Err(MprdError::PolicyEvaluationFailed(format!(
+            "tau returned unexpected output: {stdout}",
+        )))
     }
 }
 
@@ -267,7 +309,10 @@ mod tests {
         );
 
         if !Path::new(&tau_path).exists() {
-            eprintln!("skipping real Tau integration test; binary not found at {}", tau_path);
+            eprintln!(
+                "skipping real Tau integration test; binary not found at {}",
+                tau_path
+            );
             return;
         }
 
@@ -293,7 +338,10 @@ mod tests {
         );
 
         if !Path::new(&tau_path).exists() {
-            eprintln!("skipping real Tau integration test; binary not found at {}", tau_path);
+            eprintln!(
+                "skipping real Tau integration test; binary not found at {}",
+                tau_path
+            );
             return;
         }
 
@@ -322,6 +370,7 @@ mod tests {
         assert!(matches!(result, Err(MprdError::PolicyEvaluationFailed(_))));
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn pid_allowed(
         setpoint: i64,
         measured: i64,

@@ -2,7 +2,7 @@
 //!
 //! Enforces invariant S4: No `DecisionToken` can be validly used more than once.
 
-use crate::{DecisionToken, Hash32, MprdError, NonceHash, PolicyHash, Result};
+use crate::{DecisionToken, MprdError, NonceHash, PolicyHash, Result};
 use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,14 +18,17 @@ pub struct AntiReplayConfig {
 
     /// Maximum allowed clock skew (future timestamps).
     pub max_future_skew_ms: i64,
+
+    pub max_tracked_nonces: usize,
 }
 
 impl Default for AntiReplayConfig {
     fn default() -> Self {
         Self {
-            max_token_age_ms: 60_000,       // 1 minute
-            nonce_retention_ms: 3_600_000,  // 1 hour
-            max_future_skew_ms: 5_000,      // 5 seconds
+            max_token_age_ms: 60_000,      // 1 minute
+            nonce_retention_ms: 3_600_000, // 1 hour
+            max_future_skew_ms: 5_000,     // 5 seconds
+            max_tracked_nonces: 100_000,
         }
     }
 }
@@ -71,11 +74,15 @@ impl InMemoryNonceTracker {
         }
     }
 
-    fn current_time_ms() -> i64 {
-        SystemTime::now()
+    fn current_time_ms() -> Result<i64> {
+        let ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64
+            .map_err(|_| MprdError::ExecutionError("System clock error".into()))?
+            .as_millis();
+        let ms: i64 = ms
+            .try_into()
+            .map_err(|_| MprdError::ExecutionError("System clock overflow".into()))?;
+        Ok(ms)
     }
 }
 
@@ -87,7 +94,7 @@ impl Default for InMemoryNonceTracker {
 
 impl NonceValidator for InMemoryNonceTracker {
     fn validate(&self, token: &DecisionToken) -> Result<()> {
-        let now_ms = Self::current_time_ms();
+        let now_ms = Self::current_time_ms()?;
         let age = now_ms - token.timestamp_ms;
 
         // Check if token is too old
@@ -103,11 +110,16 @@ impl NonceValidator for InMemoryNonceTracker {
             return Err(MprdError::TokenFromFuture { skew_ms: -age });
         }
 
-        // Check for replay - SECURITY: Handle poisoned lock gracefully
+        // SECURITY: replay check is a read-side check and therefore subject to TOCTOU.
+        // Correctness relies on re-checking inside `mark_used` under a write lock.
+        // This keeps the overall executor flow fail-closed even under concurrency.
+        // SECURITY: Handle poisoned lock gracefully.
         let key = (token.policy_hash.clone(), token.nonce_or_tx_hash.clone());
-        let used = self.used.read()
+        let used = self
+            .used
+            .read()
             .map_err(|_| MprdError::ExecutionError("Nonce tracker lock poisoned".into()))?;
-        
+
         if used.contains_key(&key) {
             return Err(MprdError::NonceReplay {
                 nonce: token.nonce_or_tx_hash.clone(),
@@ -120,19 +132,44 @@ impl NonceValidator for InMemoryNonceTracker {
     fn mark_used(&self, token: &DecisionToken) -> Result<()> {
         let key = (token.policy_hash.clone(), token.nonce_or_tx_hash.clone());
         let entry = NonceEntry {
-            used_at_ms: Self::current_time_ms(),
+            used_at_ms: Self::current_time_ms()?,
         };
 
         // SECURITY: Handle poisoned lock gracefully
-        let mut used = self.used.write()
+        let mut used = self
+            .used
+            .write()
             .map_err(|_| MprdError::ExecutionError("Nonce tracker lock poisoned".into()))?;
-        
+
+        // SECURITY: this is the authoritative replay check under an exclusive lock.
+        // If a concurrent caller validated the same token, this prevents a double-spend.
+        if used.contains_key(&key) {
+            return Err(MprdError::NonceReplay {
+                nonce: token.nonce_or_tx_hash.clone(),
+            });
+        }
+
+        if used.len() >= self.config.max_tracked_nonces {
+            // SECURITY: storage is bounded. We attempt to prune expired entries first; if still at
+            // capacity, we fail closed rather than silently dropping replay protection.
+            let cutoff = entry.used_at_ms - self.config.nonce_retention_ms;
+            used.retain(|_, existing| existing.used_at_ms > cutoff);
+
+            if used.len() >= self.config.max_tracked_nonces {
+                return Err(MprdError::ExecutionError(
+                    "Nonce tracker capacity exceeded".into(),
+                ));
+            }
+        }
+
         used.insert(key, entry);
         Ok(())
     }
 
     fn cleanup(&self) {
-        let now_ms = Self::current_time_ms();
+        let Ok(now_ms) = Self::current_time_ms() else {
+            return;
+        };
         let cutoff = now_ms - self.config.nonce_retention_ms;
 
         // Best effort cleanup - if lock is poisoned, skip cleanup
@@ -172,6 +209,14 @@ where
         token: &DecisionToken,
         proof: &crate::ProofBundle,
     ) -> Result<crate::ExecutionResult> {
+        // SECURITY: Checks-Effects-Interactions
+        // - Check: validate timestamp bounds and replay status (fail closed on any error).
+        // - Interaction: call the wrapped executor (external side effects).
+        // - Effect: consume nonce only on success to prevent attacker-induced nonce exhaustion.
+        //
+        // Invariant: a (policy_hash, nonce_or_tx_hash) tuple MUST be used at most once for a
+        // successful execution.
+
         // Pre-condition: validate nonce
         self.nonce_validator.validate(token)?;
 
@@ -194,6 +239,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Hash32;
 
     fn dummy_token(nonce_byte: u8, timestamp_ms: i64) -> DecisionToken {
         DecisionToken {
@@ -209,7 +255,7 @@ mod tests {
     #[test]
     fn valid_token_passes() {
         let tracker = InMemoryNonceTracker::new();
-        let now = InMemoryNonceTracker::current_time_ms();
+        let now = InMemoryNonceTracker::current_time_ms().expect("clock");
         let token = dummy_token(1, now);
 
         assert!(tracker.validate(&token).is_ok());
@@ -223,7 +269,7 @@ mod tests {
         };
         let tracker = InMemoryNonceTracker::with_config(config);
 
-        let old_timestamp = InMemoryNonceTracker::current_time_ms() - 200;
+        let old_timestamp = InMemoryNonceTracker::current_time_ms().expect("clock") - 200;
         let token = dummy_token(1, old_timestamp);
 
         let result = tracker.validate(&token);
@@ -238,7 +284,7 @@ mod tests {
         };
         let tracker = InMemoryNonceTracker::with_config(config);
 
-        let future_timestamp = InMemoryNonceTracker::current_time_ms() + 200;
+        let future_timestamp = InMemoryNonceTracker::current_time_ms().expect("clock") + 200;
         let token = dummy_token(1, future_timestamp);
 
         let result = tracker.validate(&token);
@@ -248,7 +294,7 @@ mod tests {
     #[test]
     fn replay_rejected() {
         let tracker = InMemoryNonceTracker::new();
-        let now = InMemoryNonceTracker::current_time_ms();
+        let now = InMemoryNonceTracker::current_time_ms().expect("clock");
         let token = dummy_token(1, now);
 
         // First use succeeds
@@ -263,7 +309,7 @@ mod tests {
     #[test]
     fn different_nonces_allowed() {
         let tracker = InMemoryNonceTracker::new();
-        let now = InMemoryNonceTracker::current_time_ms();
+        let now = InMemoryNonceTracker::current_time_ms().expect("clock");
 
         let token1 = dummy_token(1, now);
         let token2 = dummy_token(2, now);
@@ -273,5 +319,25 @@ mod tests {
 
         // Different nonce should work
         assert!(tracker.validate(&token2).is_ok());
+    }
+
+    #[test]
+    fn capacity_exhaustion_rejected() {
+        let config = AntiReplayConfig {
+            max_tracked_nonces: 1,
+            nonce_retention_ms: 60_000,
+            ..Default::default()
+        };
+        let tracker = InMemoryNonceTracker::with_config(config);
+        let now = InMemoryNonceTracker::current_time_ms().expect("clock");
+
+        let token1 = dummy_token(1, now);
+        tracker.validate(&token1).unwrap();
+        tracker.mark_used(&token1).unwrap();
+
+        let token2 = dummy_token(2, now);
+        tracker.validate(&token2).unwrap();
+        let result = tracker.mark_used(&token2);
+        assert!(matches!(result, Err(MprdError::ExecutionError(_))));
     }
 }

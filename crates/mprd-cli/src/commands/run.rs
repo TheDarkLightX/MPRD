@@ -1,16 +1,36 @@
 //! `mprd run` command implementation
 
 use anyhow::{Context, Result};
-use std::path::PathBuf;
-use std::fs;
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 
 use super::load_config;
+use mprd_core::hash::{hash_candidate, hash_state};
 use mprd_core::{
-    CandidateAction, DefaultSelector, Hash32, PolicyEngine, RuleVerdict,
-    Score, Selector, StateSnapshot, Value,
+    CandidateAction, DefaultSelector, Hash32, RuleVerdict, Score, Selector, StateSnapshot, Value,
 };
-use mprd_adapters::storage::{LocalPolicyStorage, PolicyStorage};
+
+fn json_number_to_value(n: &serde_json::Number) -> Option<Value> {
+    let Some(i) = n.as_i64() else {
+        return n.as_u64().map(Value::UInt);
+    };
+
+    if i < 0 {
+        return Some(Value::Int(i));
+    }
+
+    n.as_u64().map(Value::UInt)
+}
+
+fn json_to_value(v: serde_json::Value) -> Option<Value> {
+    match v {
+        serde_json::Value::Bool(b) => Some(Value::Bool(b)),
+        serde_json::Value::Number(n) => json_number_to_value(&n),
+        serde_json::Value::String(s) => Some(Value::String(s)),
+        _ => None,
+    }
+}
 
 pub fn run(
     policy_hex: String,
@@ -18,97 +38,84 @@ pub fn run(
     candidates_path: PathBuf,
     execute: bool,
     format: String,
+    insecure_demo: bool,
     config_path: Option<PathBuf>,
 ) -> Result<()> {
-    let config = load_config(config_path)?;
-    
+    let _config = load_config(config_path)?;
+
+    if !insecure_demo {
+        anyhow::bail!(
+            "Refusing to run: `mprd run` currently uses allow-all policy evaluation. Re-run with --insecure-demo to acknowledge demo-only behavior."
+        );
+    }
+
     // Parse policy hash
-    let hash_bytes = hex::decode(&policy_hex)
-        .context("Invalid policy hash hex")?;
+    let hash_bytes = hex::decode(&policy_hex).context("Invalid policy hash hex")?;
     if hash_bytes.len() != 32 {
         anyhow::bail!("Policy hash must be 32 bytes (64 hex characters)");
     }
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&hash_bytes);
     let policy_hash = Hash32(arr);
-    
+
     // Load state
     let state_json = fs::read_to_string(&state_path)
         .with_context(|| format!("Failed to read state file: {}", state_path.display()))?;
-    let state_fields: HashMap<String, serde_json::Value> = serde_json::from_str(&state_json)
-        .context("Failed to parse state JSON")?;
-    
-    let fields: HashMap<String, Value> = state_fields.into_iter()
-        .filter_map(|(k, v)| {
-            let value = match v {
-                serde_json::Value::Bool(b) => Some(Value::Bool(b)),
-                serde_json::Value::Number(n) => {
-                    if let Some(i) = n.as_i64() {
-                        Some(Value::Int(i))
-                    } else if let Some(u) = n.as_u64() {
-                        Some(Value::UInt(u))
-                    } else {
-                        None
-                    }
-                }
-                serde_json::Value::String(s) => Some(Value::String(s)),
-                _ => None,
-            };
-            value.map(|v| (k, v))
-        })
+    let state_fields: HashMap<String, serde_json::Value> =
+        serde_json::from_str(&state_json).context("Failed to parse state JSON")?;
+
+    let fields: HashMap<String, Value> = state_fields
+        .into_iter()
+        .filter_map(|(key, value)| json_to_value(value).map(|v| (key, v)))
         .collect();
-    
+
     let state = StateSnapshot {
         fields,
         policy_inputs: HashMap::new(),
-        state_hash: Hash32([0u8; 32]), // Will be computed
+        state_hash: Hash32([0u8; 32]),
     };
-    
+
+    let mut state = state;
+    state.state_hash = hash_state(&state);
+
     // Load candidates
-    let candidates_json = fs::read_to_string(&candidates_path)
-        .with_context(|| format!("Failed to read candidates file: {}", candidates_path.display()))?;
-    
+    let candidates_json = fs::read_to_string(&candidates_path).with_context(|| {
+        format!(
+            "Failed to read candidates file: {}",
+            candidates_path.display()
+        )
+    })?;
+
     #[derive(serde::Deserialize)]
     struct CandidateInput {
         action_type: String,
         params: HashMap<String, serde_json::Value>,
         score: i64,
     }
-    
-    let candidate_inputs: Vec<CandidateInput> = serde_json::from_str(&candidates_json)
-        .context("Failed to parse candidates JSON")?;
-    
-    let candidates: Vec<CandidateAction> = candidate_inputs.into_iter()
+
+    let candidate_inputs: Vec<CandidateInput> =
+        serde_json::from_str(&candidates_json).context("Failed to parse candidates JSON")?;
+
+    let candidates: Vec<CandidateAction> = candidate_inputs
+        .into_iter()
         .map(|c| {
-            let params: HashMap<String, Value> = c.params.into_iter()
-                .filter_map(|(k, v)| {
-                    let value = match v {
-                        serde_json::Value::Bool(b) => Some(Value::Bool(b)),
-                        serde_json::Value::Number(n) => {
-                            if let Some(i) = n.as_i64() {
-                                Some(Value::Int(i))
-                            } else if let Some(u) = n.as_u64() {
-                                Some(Value::UInt(u))
-                            } else {
-                                None
-                            }
-                        }
-                        serde_json::Value::String(s) => Some(Value::String(s)),
-                        _ => None,
-                    };
-                    value.map(|v| (k, v))
-                })
+            let params: HashMap<String, Value> = c
+                .params
+                .into_iter()
+                .filter_map(|(key, value)| json_to_value(value).map(|v| (key, v)))
                 .collect();
-            
-            CandidateAction {
+
+            let mut candidate = CandidateAction {
                 action_type: c.action_type,
                 params,
                 score: Score(c.score),
-                candidate_hash: Hash32([0u8; 32]), // Will be computed
-            }
+                candidate_hash: Hash32([0u8; 32]),
+            };
+            candidate.candidate_hash = hash_candidate(&candidate);
+            candidate
         })
         .collect();
-    
+
     if format == "human" {
         println!("🚀 MPRD Pipeline");
         println!();
@@ -117,39 +124,46 @@ pub fn run(
         println!("   Candidates: {}", candidates.len());
         println!();
     }
-    
+
     // For now, use a simple allow-all policy engine for demonstration
     // In production, this would use TauPolicyEngine
-    let verdicts: Vec<RuleVerdict> = candidates.iter()
+    let verdicts: Vec<RuleVerdict> = candidates
+        .iter()
         .map(|_| RuleVerdict {
             allowed: true,
             reasons: vec![],
             limits: HashMap::new(),
         })
         .collect();
-    
+
     // Run selector
     let selector = DefaultSelector;
-    let decision = selector.select(&policy_hash, &state, &candidates, &verdicts)
+    let decision = selector
+        .select(&policy_hash, &state, &candidates, &verdicts)
         .context("Selector failed")?;
-    
+
     if format == "json" {
-        println!("{}", serde_json::json!({
-            "chosen_index": decision.chosen_index,
-            "chosen_action_type": decision.chosen_action.action_type,
-            "chosen_action_score": decision.chosen_action.score.0,
-            "policy_hash": policy_hex,
-            "execute": execute,
-        }));
+        println!(
+            "{}",
+            serde_json::json!({
+                "chosen_index": decision.chosen_index,
+                "chosen_action_type": decision.chosen_action.action_type,
+                "chosen_action_score": decision.chosen_action.score.0,
+                "policy_hash": policy_hex,
+                "execute": execute,
+            })
+        );
     } else {
         println!("📊 Decision");
         println!();
-        println!("   Chosen: [{}] {} (score: {})", 
+        println!(
+            "   Chosen: [{}] {} (score: {})",
             decision.chosen_index,
             decision.chosen_action.action_type,
-            decision.chosen_action.score.0);
+            decision.chosen_action.score.0
+        );
         println!();
-        
+
         if execute {
             println!("⚡ Executing action...");
             println!();
@@ -158,6 +172,6 @@ pub fn run(
             println!("💡 Dry run - use --execute to perform the action");
         }
     }
-    
+
     Ok(())
 }

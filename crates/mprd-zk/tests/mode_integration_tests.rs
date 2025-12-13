@@ -6,16 +6,17 @@
 //! - Mode B-Full: Cryptographic ZK (Risc0) - infrastructure only
 //! - Mode C: Private (encryption + ZK) - infrastructure only
 
+#![allow(deprecated)]
+
 use mprd_core::{
     components::{SimpleProposer, SimpleStateProvider},
-    orchestrator::run_once,
-    DefaultSelector, Hash32, PolicyEngine, PolicyHash, Proposer, RuleVerdict, Result,
-    StateSnapshot, CandidateAction, Value,
+    orchestrator::{run_once, RunOnceInputs},
+    CandidateAction, DefaultSelector, Hash32, PolicyEngine, PolicyHash, Result, RuleVerdict,
+    StateSnapshot, Value,
 };
 use mprd_zk::{
-    DeploymentMode, ModeConfig, MpbTrustlessAttestor, MpbTrustlessVerifier,
-    ExternalVerifier, VerificationRequest,
-    create_attestor, create_verifier,
+    create_attestor, create_verifier, DeploymentMode, ExternalVerifier, ModeConfig,
+    MpbTrustlessAttestor, MpbTrustlessVerifier, VerificationRequest,
 };
 use std::collections::HashMap;
 
@@ -58,9 +59,8 @@ fn setup_components() -> (
     DefaultSelector,
     Hash32,
 ) {
-    let state_provider = SimpleStateProvider::new(HashMap::from([
-        ("balance".into(), Value::UInt(10000)),
-    ]));
+    let state_provider =
+        SimpleStateProvider::new(HashMap::from([("balance".into(), Value::UInt(10000))]));
 
     let proposer = SimpleProposer::single(
         "ACTION",
@@ -72,7 +72,13 @@ fn setup_components() -> (
     let selector = DefaultSelector;
     let policy_hash = dummy_hash(1);
 
-    (state_provider, proposer, policy_engine, selector, policy_hash)
+    (
+        state_provider,
+        proposer,
+        policy_engine,
+        selector,
+        policy_hash,
+    )
 }
 
 // =============================================================================
@@ -89,17 +95,17 @@ fn mode_a_local_trusted_flow() {
     let verifier = mprd_core::components::StubZkLocalVerifier::new();
     let executor = mprd_core::components::LoggingExecutorAdapter::new();
 
-    let result = run_once(
-        &state_provider,
-        &proposer,
-        &policy_engine,
-        &selector,
-        &token_factory,
-        &attestor,
-        &verifier,
-        &executor,
-        &policy_hash,
-    );
+    let result = run_once(RunOnceInputs {
+        state_provider: &state_provider,
+        proposer: &proposer,
+        policy_engine: &policy_engine,
+        selector: &selector,
+        token_factory: &token_factory,
+        attestor: &attestor,
+        verifier: &verifier,
+        executor: &executor,
+        policy_hash: &policy_hash,
+    });
 
     assert!(result.is_ok(), "Mode A should succeed");
     assert_eq!(executor.get_log().len(), 1);
@@ -119,17 +125,17 @@ fn mode_b_lite_attestation_flow() {
     let verifier = MpbTrustlessVerifier::default_config();
     let executor = mprd_core::components::LoggingExecutorAdapter::new();
 
-    let result = run_once(
-        &state_provider,
-        &proposer,
-        &policy_engine,
-        &selector,
-        &token_factory,
-        &attestor,
-        &verifier,
-        &executor,
-        &policy_hash,
-    );
+    let result = run_once(RunOnceInputs {
+        state_provider: &state_provider,
+        proposer: &proposer,
+        policy_engine: &policy_engine,
+        selector: &selector,
+        token_factory: &token_factory,
+        attestor: &attestor,
+        verifier: &verifier,
+        executor: &executor,
+        policy_hash: &policy_hash,
+    });
 
     assert!(result.is_ok(), "Mode B-Lite should succeed");
     assert_eq!(executor.get_log().len(), 1);
@@ -153,7 +159,12 @@ fn mode_b_lite_external_verification() {
     };
 
     let response = verifier.verify(&request);
-    assert!(response.valid, "External verification should succeed for B-Lite");
+    assert!(!response.valid, "External verification must fail-closed for B-Lite until MPB proof verification is implemented");
+    assert!(response
+        .error
+        .as_ref()
+        .expect("error")
+        .contains("not implemented"));
 }
 
 // =============================================================================
@@ -291,6 +302,7 @@ fn mode_config_serialization() {
     let json = serde_json::to_string(&config).expect("Serialization should succeed");
     assert!(json.contains("TrustlessLite"));
 
-    let deserialized: ModeConfig = serde_json::from_str(&json).expect("Deserialization should succeed");
+    let deserialized: ModeConfig =
+        serde_json::from_str(&json).expect("Deserialization should succeed");
     assert_eq!(deserialized.mode, DeploymentMode::TrustlessLite);
 }

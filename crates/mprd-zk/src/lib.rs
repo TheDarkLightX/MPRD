@@ -53,60 +53,60 @@ pub mod risc0_host;
 pub mod security;
 
 // Re-export legacy modes for backwards compatibility
+#[allow(deprecated)]
 pub use modes::{
-    DeploymentMode, ModeConfig, ExtendedProofBundle, ExtendedVerificationResult,
-    MpbTrustlessAttestor, MpbTrustlessVerifier,
-    Risc0TrustlessAttestor, Risc0TrustlessVerifier,
-    PrivateAttestor, PrivateVerifier,
-    create_attestor, create_verifier,
+    create_attestor, create_verifier, DeploymentMode, ExtendedProofBundle,
+    ExtendedVerificationResult, ModeConfig, MpbTrustlessAttestor, MpbTrustlessVerifier,
+    PrivateAttestor, PrivateVerifier, Risc0TrustlessAttestor, Risc0TrustlessVerifier,
 };
 
 // Re-export robust implementations (v2)
 pub use modes_v2::{
-    RobustMpbAttestor, RobustMpbVerifier,
-    RobustRisc0Attestor, RobustRisc0Verifier,
-    RobustPrivateAttestor, RobustPrivateVerifier,
-    create_robust_attestor, create_robust_verifier,
-    compute_candidate_set_hash,
+    compute_candidate_set_hash, create_robust_attestor, create_robust_verifier, RobustMpbAttestor,
+    RobustMpbVerifier, RobustPrivateAttestor, RobustPrivateVerifier, RobustRisc0Attestor,
+    RobustRisc0Verifier,
 };
 
 // Re-export error types
 pub use error::{ModeError, ModeResult};
 
 // Re-export security utilities
-pub use security::{SecurityChecker, Invariant, validate_decision_allowed, validate_timestamp};
+pub use security::{validate_decision_allowed, validate_timestamp, Invariant, SecurityChecker};
 
 // Re-export external verifier
-pub use external_verifier::{
-    ExternalVerifier, VerificationRequest, VerificationResponse,
-};
+pub use external_verifier::{ExternalVerifier, VerificationRequest, VerificationResponse};
 
 // Re-export decentralization primitives
 pub use decentralization::{
-    ThresholdConfig, MultiAttestor, ThresholdVerifier,
-    AggregatedAttestation, ThresholdVerificationResult,
-    DistributedPolicyStore, IpfsPolicyStore,
-    CommitmentAnchor, AnchorType,
-    // Governance profile types
-    UpdateKind, GovernanceMode, ProfileConfig,
-    GovernanceProfile, GovernanceGateInput,
+    AggregatedAttestation,
+    AnchorType,
+    CommitmentAnchor,
+    DistributedPolicyStore,
+    GovernanceGateInput,
+    GovernanceMode,
+    GovernanceProfile,
+    IpfsPolicyStore,
+    MultiAttestor,
+    ProfileConfig,
     TauGovernanceRunner,
+    ThresholdConfig,
+    ThresholdVerificationResult,
+    ThresholdVerifier,
+    // Governance profile types
+    UpdateKind,
 };
 
 // Re-export privacy primitives
 pub use privacy::{
-    Commitment, CommitmentScheme, CommitmentOpening, CommitmentGenerator,
-    EncryptedState, StateEncryptor, EncryptionConfig, EncryptionWitness,
-    SelectiveDisclosure, SelectiveDisclosureBuilder, Property, PropertyProof,
-    PrivateAttestationConfig, PrivateAttestationResult,
+    Commitment, CommitmentGenerator, CommitmentOpening, CommitmentScheme, EncryptedState,
+    EncryptionConfig, EncryptionWitness, PrivateAttestationConfig, PrivateAttestationResult,
+    Property, PropertyProof, SelectiveDisclosure, SelectiveDisclosureBuilder, StateEncryptor,
 };
 
 // Re-export Risc0 host integration (real proofs only)
 pub use risc0_host::{
-    Risc0Attestor, Risc0Verifier,
-    Risc0HostConfig, GuestInput, GuestOutput,
-    create_risc0_attestor, create_risc0_verifier,
-    compute_expected_hashes,
+    compute_expected_hashes, create_risc0_attestor, create_risc0_verifier, GuestInput, GuestOutput,
+    Risc0Attestor, Risc0HostConfig, Risc0Verifier,
 };
 
 // =============================================================================
@@ -166,6 +166,7 @@ impl ProductionConfig {
 
     /// Create an experimental MPB config (NOT for production).
     #[deprecated(note = "MPB is experimental. Use risc0_default() for production.")]
+    #[allow(deprecated)]
     pub fn experimental_mpb() -> Self {
         Self {
             backend: ProductionBackend::MpbExperimental,
@@ -178,6 +179,7 @@ impl ProductionConfig {
 
     /// Create a local testing config (NO trustless guarantees).
     #[deprecated(note = "Local mode provides no trustless guarantees.")]
+    #[allow(deprecated)]
     pub fn local_testing() -> Self {
         Self {
             backend: ProductionBackend::LocalTesting,
@@ -202,8 +204,7 @@ impl ProductionConfig {
 
     /// Check if this is a production-ready config.
     pub fn is_production_ready(&self) -> bool {
-        matches!(self.backend, ProductionBackend::Risc0)
-            && self.risc0_image_id.is_some()
+        matches!(self.backend, ProductionBackend::Risc0) && self.risc0_image_id.is_some()
     }
 
     /// Get warnings for non-production configs.
@@ -246,9 +247,19 @@ pub fn create_production_attestor(
     #[allow(deprecated)]
     match config.backend {
         ProductionBackend::Risc0 => {
-            let mode_config = modes_v2::ModeConfig::mode_b_full(
-                config.risc0_image_id.unwrap_or([0u8; 32])
-            );
+            let Some(image_id) = config.risc0_image_id else {
+                return Err(mprd_core::MprdError::ZkError(
+                    "Risc0 backend requires risc0_image_id; refusing to default to an unspecified guest".into(),
+                ));
+            };
+
+            if image_id == [0u8; 32] {
+                return Err(mprd_core::MprdError::ZkError(
+                    "Risc0 backend configured with all-zero risc0_image_id; refusing to run with an unspecified guest".into(),
+                ));
+            }
+
+            let mode_config = modes_v2::ModeConfig::mode_b_full(image_id);
             create_robust_attestor(&mode_config)
         }
         ProductionBackend::MpbExperimental => {
@@ -259,7 +270,8 @@ pub fn create_production_attestor(
         }
         ProductionBackend::LocalTesting => {
             tracing::warn!("Using LOCAL testing mode - NO trustless guarantees!");
-            let mode_config = modes_v2::ModeConfig::mode_a();
+            let mut mode_config = modes_v2::ModeConfig::mode_a();
+            mode_config.strict_security = false;
             create_robust_attestor(&mode_config)
         }
     }
@@ -276,9 +288,19 @@ pub fn create_production_verifier(
     #[allow(deprecated)]
     match config.backend {
         ProductionBackend::Risc0 => {
-            let mode_config = modes_v2::ModeConfig::mode_b_full(
-                config.risc0_image_id.unwrap_or([0u8; 32])
-            );
+            let Some(image_id) = config.risc0_image_id else {
+                return Err(mprd_core::MprdError::ZkError(
+                    "Risc0 backend requires risc0_image_id; refusing to default to an unspecified guest".into(),
+                ));
+            };
+
+            if image_id == [0u8; 32] {
+                return Err(mprd_core::MprdError::ZkError(
+                    "Risc0 backend configured with all-zero risc0_image_id; refusing to run with an unspecified guest".into(),
+                ));
+            }
+
+            let mode_config = modes_v2::ModeConfig::mode_b_full(image_id);
             create_robust_verifier(&mode_config)
         }
         ProductionBackend::MpbExperimental => {
@@ -287,7 +309,8 @@ pub fn create_production_verifier(
             create_robust_verifier(&mode_config)
         }
         ProductionBackend::LocalTesting => {
-            let mode_config = modes_v2::ModeConfig::mode_a();
+            let mut mode_config = modes_v2::ModeConfig::mode_a();
+            mode_config.strict_security = false;
             create_robust_verifier(&mode_config)
         }
     }
@@ -308,6 +331,7 @@ pub struct Risc0Config {
 }
 
 pub struct Risc0ZkAttestor {
+    #[allow(dead_code)]
     config: Risc0Config,
 }
 
@@ -337,6 +361,7 @@ impl ZkAttestor for Risc0ZkAttestor {
 
 /// Local verifier backed by Risc0 receipts.
 pub struct Risc0ZkLocalVerifier {
+    #[allow(dead_code)]
     config: Risc0Config,
 }
 
@@ -363,7 +388,7 @@ impl ZkLocalVerifier for Risc0ZkLocalVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mprd_core::{Hash32, PolicyHash, StateHash};
+    use mprd_core::Hash32;
     use std::collections::HashMap;
 
     fn dummy_hash(byte: u8) -> Hash32 {
@@ -426,4 +451,3 @@ mod tests {
         assert!(matches!(status, VerificationStatus::Failure(_)));
     }
 }
-

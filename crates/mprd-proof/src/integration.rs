@@ -33,9 +33,9 @@ pub struct MpbProofBundle {
 
 impl MpbProofBundle {
     /// Serialize to bytes for transmission.
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>, bincode::Error> {
         // Use bincode for efficient serialization
-        bincode::serialize(self).unwrap_or_default()
+        bincode::serialize(self)
     }
 
     /// Deserialize from bytes.
@@ -121,7 +121,10 @@ impl MpbAttestor {
         };
 
         // Generate proof
-        let proof = self.prover.prove(&trace);
+        let proof = self
+            .prover
+            .prove(&trace)
+            .map_err(|e| AttestationError::InvalidBytecode(format!("{:?}", e)))?;
 
         Ok(MpbProofBundle {
             proof,
@@ -145,7 +148,10 @@ impl MpbAttestor {
             }
         };
 
-        let proof = self.prover.prove(&trace);
+        let proof = self
+            .prover
+            .prove(&trace)
+            .map_err(|e| AttestationError::InvalidBytecode(format!("{:?}", e)))?;
 
         Ok((
             result,
@@ -290,8 +296,8 @@ mod tests {
         vec![
             0x10, 0x00, // LOAD_REG 0
             0x10, 0x01, // LOAD_REG 1
-            0x33,       // LE
-            0xFF,       // HALT
+            0x33, // LE
+            0xFF, // HALT
         ]
     }
 
@@ -326,9 +332,7 @@ mod tests {
 
         // Risk = 50, Max = 100 -> allowed (50 <= 100)
         let registers = [50, 100];
-        let (output, bundle) = attestor
-            .attest_with_output(&bytecode, &registers)
-            .unwrap();
+        let (output, bundle) = attestor.attest_with_output(&bytecode, &registers).unwrap();
 
         assert_eq!(output, 1); // Allowed
         assert_eq!(verifier.verify(&bundle), LocalVerificationResult::Success);
@@ -342,9 +346,7 @@ mod tests {
 
         // Risk = 150, Max = 100 -> denied (150 > 100)
         let registers = [150, 100];
-        let (output, bundle) = attestor
-            .attest_with_output(&bytecode, &registers)
-            .unwrap();
+        let (output, bundle) = attestor.attest_with_output(&bytecode, &registers).unwrap();
 
         assert_eq!(output, 0); // Denied
         assert_eq!(verifier.verify(&bundle), LocalVerificationResult::Success);
@@ -381,12 +383,12 @@ mod tests {
     }
 
     #[test]
-    fn bundle_serialization_roundtrip() {
+    fn proof_bundle_serialization_roundtrip() {
         let attestor = MpbAttestor::new();
         let bytecode = build_simple_program();
 
         let bundle = attestor.attest(&bytecode, &[]).unwrap();
-        let bytes = bundle.to_bytes();
+        let bytes = bundle.to_bytes().expect("serialize");
         let restored = MpbProofBundle::from_bytes(&bytes).expect("Should deserialize");
 
         assert_eq!(bundle.proof.output, restored.proof.output);

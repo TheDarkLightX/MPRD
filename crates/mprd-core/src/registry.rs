@@ -115,7 +115,10 @@ impl Default for InMemoryPolicyRegistry {
 
 impl PolicyRegistry for InMemoryPolicyRegistry {
     fn register(&self, spec: TauSpec) -> Result<PolicyHash> {
-        let mut specs = self.specs.write().unwrap();
+        let mut specs = self
+            .specs
+            .write()
+            .map_err(|_| MprdError::ExecutionError("Policy registry lock poisoned".into()))?;
 
         // Check for collision with different content
         if let Some(existing) = specs.get(&spec.policy_hash) {
@@ -134,17 +137,23 @@ impl PolicyRegistry for InMemoryPolicyRegistry {
     }
 
     fn get(&self, policy_hash: &PolicyHash) -> Option<TauSpec> {
-        let specs = self.specs.read().unwrap();
+        let specs = self.specs.read().ok()?;
         specs.get(policy_hash).cloned()
     }
 
     fn contains(&self, policy_hash: &PolicyHash) -> bool {
-        let specs = self.specs.read().unwrap();
+        let specs = match self.specs.read() {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
         specs.contains_key(policy_hash)
     }
 
     fn list(&self) -> Vec<PolicyHash> {
-        let specs = self.specs.read().unwrap();
+        let specs = match self.specs.read() {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
         specs.keys().cloned().collect()
     }
 }
