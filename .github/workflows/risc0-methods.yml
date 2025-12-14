@@ -20,46 +20,11 @@ jobs:
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Cache Risc0 toolchain
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/cargo-risczero
-            ~/.cargo/bin/r0vm
-            ~/.risc0
-          key: ${{ runner.os }}-risc0-tools-1.2.6-v1
-
       - name: Install Risc0 toolchain
         run: |
           set -euo pipefail
-
-          if command -v cargo-risczero >/dev/null 2>&1 && cargo risczero --version | grep -q "cargo-risczero 1.2.6"; then
-            echo "cargo-risczero 1.2.6 already installed"
-          else
-            cargo install cargo-risczero --version 1.2.6 --locked --verbose --force &
-            install_pid=$!
-
-            i=0
-            while kill -0 "${install_pid}" 2>/dev/null; do
-              i=$((i + 1))
-              if [ "${i}" -gt 90 ]; then
-                echo "Timed out waiting for cargo-risczero install to finish"
-                kill -9 "${install_pid}" || true
-                exit 1
-              fi
-
-              echo "cargo-risczero install still running... (heartbeat ${i}/90)"
-              sleep 60
-            done
-
-            wait "${install_pid}"
-          fi
-
-          if command -v r0vm >/dev/null 2>&1 && r0vm --version | grep -q "risc0-r0vm 1.2.6"; then
-            echo "r0vm 1.2.6 already installed"
-          else
-            cargo risczero install
-          fi
+          cargo install cargo-risczero --version 1.2.6 --locked
+          cargo risczero install
 
       - name: Build methods
         run: cargo build -p mprd-risc0-methods
