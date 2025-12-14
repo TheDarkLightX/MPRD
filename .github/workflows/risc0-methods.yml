@@ -24,7 +24,6 @@ jobs:
         run: |
           cargo install cargo-risczero --version 1.2.6 --locked
           cargo risczero install
-          rustup target add riscv32im-risc0-zkvm-elf
 
       - name: Build methods
         run: cargo build -p mprd-risc0-methods
