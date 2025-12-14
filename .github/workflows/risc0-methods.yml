@@ -22,7 +22,24 @@ jobs:
 
       - name: Install Risc0 toolchain
         run: |
-          cargo install cargo-risczero --version 1.2.6 --locked
+          set -euo pipefail
+          cargo install cargo-risczero --version 1.2.6 --locked --verbose &
+          install_pid=$!
+
+          i=0
+          while kill -0 "${install_pid}" 2>/dev/null; do
+            i=$((i + 1))
+            if [ "${i}" -gt 90 ]; then
+              echo "Timed out waiting for cargo-risczero install to finish"
+              kill -9 "${install_pid}" || true
+              exit 1
+            fi
+
+            echo "cargo-risczero install still running... (heartbeat ${i}/90)"
+            sleep 60
+          done
+
+          wait "${install_pid}"
           cargo risczero install
 
       - name: Build methods
