@@ -14,16 +14,16 @@ use serde::{Deserialize, Serialize};
 pub struct GuestInput {
     /// The policy being evaluated (serialized).
     pub policy_bytes: Vec<u8>,
-    
+
     /// The state snapshot (serialized).
     pub state_bytes: Vec<u8>,
-    
+
     /// All candidate actions (serialized).
     pub candidates_bytes: Vec<u8>,
-    
+
     /// Index of the chosen action in candidates.
     pub chosen_index: usize,
-    
+
     /// The verdict for the chosen action (must be allowed=true).
     pub chosen_verdict_allowed: bool,
 }
@@ -38,21 +38,21 @@ pub struct GuestInput {
 pub struct GuestOutput {
     /// Hash of the policy.
     pub policy_hash: [u8; 32],
-    
+
     /// Hash of the state.
     pub state_hash: [u8; 32],
-    
+
     /// Hash of the entire candidate set.
     pub candidate_set_hash: [u8; 32],
-    
+
     /// Hash of the chosen action.
     pub chosen_action_hash: [u8; 32],
-    
+
     /// The decision commitment binding all of the above.
     pub decision_commitment: [u8; 32],
-    
+
     /// Whether the selector contract was satisfied.
-    /// 
+    ///
     /// Invariant: This is true iff:
     /// - chosen_index is within bounds
     /// - Allowed(policy, state, candidates[chosen_index]) = true
@@ -81,10 +81,10 @@ mod tests {
             chosen_index: 0,
             chosen_verdict_allowed: true,
         };
-        
+
         let serialized = bincode::serialize(&input).unwrap();
         let deserialized: GuestInput = bincode::deserialize(&serialized).unwrap();
-        
+
         assert_eq!(input.chosen_index, deserialized.chosen_index);
     }
 }

@@ -10,7 +10,7 @@
 
 use crate::{DecisionToken, Hash32, MprdError, Result};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use tracing::{debug, instrument, warn};
 
 /// 64-byte ed25519 signature.
@@ -127,7 +127,9 @@ impl TokenVerifyingKey {
     pub fn verify_token(&self, token: &DecisionToken, signature: &[u8]) -> Result<()> {
         if signature.len() != 64 {
             warn!("Invalid signature length: {}", signature.len());
-            return Err(MprdError::SignatureInvalid("Invalid signature length".into()));
+            return Err(MprdError::SignatureInvalid(
+                "Invalid signature length".into(),
+            ));
         }
 
         let mut sig_bytes = [0u8; 64];

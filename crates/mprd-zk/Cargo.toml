@@ -14,7 +14,7 @@ sha2 = "0.10"
 hex = "0.4"
 thiserror = "1.0"
 tracing = "0.1"
-reqwest = { version = "0.11", features = ["blocking", "json", "multipart"] }
+reqwest = { version = "0.12", features = ["blocking", "json", "multipart"] }
 aes-gcm = "0.10"
 
 # Risc0 dependencies (zkVM backend)

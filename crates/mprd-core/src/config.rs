@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Complete MPRD configuration.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct MprdConfig {
     /// Cryptographic configuration.
     pub crypto: CryptoConfig,
@@ -41,18 +41,6 @@ pub struct MprdConfig {
 
     /// Logging configuration.
     pub logging: LoggingConfig,
-}
-
-impl Default for MprdConfig {
-    fn default() -> Self {
-        Self {
-            crypto: CryptoConfig::default(),
-            anti_replay: AntiReplayConfig::default(),
-            policy: PolicyConfig::default(),
-            execution: ExecutionConfig::default(),
-            logging: LoggingConfig::default(),
-        }
-    }
 }
 
 impl MprdConfig {
@@ -76,15 +64,15 @@ impl MprdConfig {
         }
 
         if let Ok(age) = std::env::var("MPRD_MAX_TOKEN_AGE_MS") {
-            config.anti_replay.max_token_age_ms = age
-                .parse()
-                .map_err(|e| MprdError::ConfigError(format!("Invalid MPRD_MAX_TOKEN_AGE_MS: {}", e)))?;
+            config.anti_replay.max_token_age_ms = age.parse().map_err(|e| {
+                MprdError::ConfigError(format!("Invalid MPRD_MAX_TOKEN_AGE_MS: {}", e))
+            })?;
         }
 
         if let Ok(max) = std::env::var("MPRD_MAX_CANDIDATES") {
-            config.policy.max_candidates = max
-                .parse()
-                .map_err(|e| MprdError::ConfigError(format!("Invalid MPRD_MAX_CANDIDATES: {}", e)))?;
+            config.policy.max_candidates = max.parse().map_err(|e| {
+                MprdError::ConfigError(format!("Invalid MPRD_MAX_CANDIDATES: {}", e))
+            })?;
         }
 
         if let Ok(level) = std::env::var("MPRD_LOG_LEVEL") {
@@ -351,9 +339,7 @@ mod tests {
 
     #[test]
     fn invalid_signing_key_rejected() {
-        let result = MprdConfig::builder()
-            .signing_key_hex("invalid")
-            .build();
+        let result = MprdConfig::builder().signing_key_hex("invalid").build();
 
         assert!(result.is_err());
     }
@@ -361,27 +347,21 @@ mod tests {
     #[test]
     fn valid_signing_key_accepted() {
         let hex_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        let result = MprdConfig::builder()
-            .signing_key_hex(hex_key)
-            .build();
+        let result = MprdConfig::builder().signing_key_hex(hex_key).build();
 
         assert!(result.is_ok());
     }
 
     #[test]
     fn zero_candidates_rejected() {
-        let result = MprdConfig::builder()
-            .max_candidates(0)
-            .build();
+        let result = MprdConfig::builder().max_candidates(0).build();
 
         assert!(result.is_err());
     }
 
     #[test]
     fn too_many_candidates_rejected() {
-        let result = MprdConfig::builder()
-            .max_candidates(10000)
-            .build();
+        let result = MprdConfig::builder().max_candidates(10000).build();
 
         assert!(result.is_err());
     }

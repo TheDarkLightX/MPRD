@@ -19,7 +19,8 @@ use crate::{
     trace::{ExecutionTrace, TraceStep},
     Hash256,
 };
-use rand::{Rng, SeedableRng};
+use rand::seq::index;
+use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for proof generation.
@@ -93,6 +94,12 @@ pub struct MpbProver {
     config: ProverConfig,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProverError {
+    EmptyTrace,
+    MissingMerkleProof { index: usize },
+}
+
 impl MpbProver {
     /// Create a new prover with default config.
     pub fn new() -> Self {
@@ -110,9 +117,9 @@ impl MpbProver {
     ///
     /// Time: O(n) for Merkle tree construction
     /// Proof size: O(k * log n) where k = num_spot_checks
-    pub fn prove(&self, trace: &ExecutionTrace) -> MpbProof {
+    pub fn prove(&self, trace: &ExecutionTrace) -> std::result::Result<MpbProof, ProverError> {
         if trace.is_empty() {
-            panic!("Cannot prove empty trace");
+            return Err(ProverError::EmptyTrace);
         }
 
         // Build Merkle tree of step hashes
@@ -120,15 +127,23 @@ impl MpbProver {
         let merkle_tree = MerkleTree::build(step_hashes);
 
         // Always include first and last step
-        let first_step = trace.steps.first().unwrap().clone();
-        let last_step = trace.steps.last().unwrap().clone();
-        let first_step_proof = merkle_tree.prove(0).unwrap();
-        let last_step_proof = merkle_tree.prove(trace.steps.len() - 1).unwrap();
+        let first_step = trace.steps.first().ok_or(ProverError::EmptyTrace)?.clone();
+        let last_step_index = trace.steps.len() - 1;
+        let last_step = trace.steps.last().ok_or(ProverError::EmptyTrace)?.clone();
+        let first_step_proof = merkle_tree
+            .prove(0)
+            .ok_or(ProverError::MissingMerkleProof { index: 0 })?;
+        let last_step_proof =
+            merkle_tree
+                .prove(last_step_index)
+                .ok_or(ProverError::MissingMerkleProof {
+                    index: last_step_index,
+                })?;
 
         // Select random steps for spot checking
-        let spot_checks = self.select_spot_checks(trace, &merkle_tree);
+        let spot_checks = self.select_spot_checks(trace, &merkle_tree)?;
 
-        MpbProof {
+        Ok(MpbProof {
             bytecode_hash: trace.bytecode_hash,
             input_hash: trace.input_hash,
             output: trace.final_result,
@@ -140,48 +155,51 @@ impl MpbProver {
             last_step,
             first_step_proof,
             last_step_proof,
-        }
+        })
     }
 
     /// Select random steps for spot checking.
-    fn select_spot_checks(&self, trace: &ExecutionTrace, tree: &MerkleTree) -> Vec<SpotCheck> {
+    fn select_spot_checks(
+        &self,
+        trace: &ExecutionTrace,
+        tree: &MerkleTree,
+    ) -> std::result::Result<Vec<SpotCheck>, ProverError> {
         let n = trace.steps.len();
         if n <= 2 {
-            return vec![]; // First and last already included
+            return Ok(vec![]);
         }
 
         let num_checks = self.config.num_spot_checks.min(n - 2);
+        if num_checks == 0 {
+            return Ok(vec![]);
+        }
+
         let mut rng = match self.config.seed {
             Some(seed) => rand::rngs::StdRng::seed_from_u64(seed),
             None => rand::rngs::StdRng::from_entropy(),
         };
 
-        // Select random indices (excluding first and last)
-        let mut indices: Vec<usize> = Vec::new();
-        while indices.len() < num_checks {
-            let idx = rng.gen_range(1..n - 1);
-            if !indices.contains(&idx) {
-                indices.push(idx);
-            }
+        let sample = index::sample(&mut rng, n - 2, num_checks);
+        let mut indices: Vec<usize> = sample.into_iter().map(|i| i + 1).collect();
+        indices.sort_unstable();
+
+        let mut spot_checks: Vec<SpotCheck> = Vec::with_capacity(indices.len());
+        for idx in indices {
+            let step = trace.steps[idx].clone();
+            let proof = tree
+                .prove(idx)
+                .ok_or(ProverError::MissingMerkleProof { index: idx })?;
+            spot_checks.push(SpotCheck { step, proof });
         }
 
-        indices.sort();
-
-        indices
-            .into_iter()
-            .filter_map(|idx| {
-                let step = trace.steps[idx].clone();
-                let proof = tree.prove(idx)?;
-                Some(SpotCheck { step, proof })
-            })
-            .collect()
+        Ok(spot_checks)
     }
 
     /// Estimate proof size in bytes.
     pub fn estimate_proof_size(&self, num_steps: usize) -> usize {
         let log_n = (num_steps as f64).log2().ceil() as usize;
         let sibling_size = 33; // hash + bool
-        let step_size = 64;    // rough estimate per step
+        let step_size = 64; // rough estimate per step
 
         // Fixed parts
         let fixed = 32 + 32 + 8 + 8 + 4 + 32; // hashes + output + steps + fuel + root
@@ -258,7 +276,7 @@ mod tests {
     fn prove_simple_trace() {
         let trace = make_dummy_trace(10);
         let prover = MpbProver::new();
-        let proof = prover.prove(&trace);
+        let proof = prover.prove(&trace).expect("prove");
 
         assert_eq!(proof.bytecode_hash, trace.bytecode_hash);
         assert_eq!(proof.input_hash, trace.input_hash);
@@ -270,7 +288,7 @@ mod tests {
     fn proof_includes_boundary_steps() {
         let trace = make_dummy_trace(100);
         let prover = MpbProver::new();
-        let proof = prover.prove(&trace);
+        let proof = prover.prove(&trace).expect("prove");
 
         assert_eq!(proof.first_step.step, 0);
         assert_eq!(proof.last_step.step, 99);
@@ -285,11 +303,11 @@ mod tests {
 
         // 100 steps
         let trace100 = make_dummy_trace(100);
-        let proof100 = prover.prove(&trace100);
+        let proof100 = prover.prove(&trace100).expect("prove");
 
         // 10000 steps
         let trace10k = make_dummy_trace(10000);
-        let proof10k = prover.prove(&trace10k);
+        let proof10k = prover.prove(&trace10k).expect("prove");
 
         // Proof for 10000 steps should NOT be 100x larger
         let ratio = proof10k.size_bytes() as f64 / proof100.size_bytes() as f64;
@@ -300,7 +318,10 @@ mod tests {
             ratio
         );
 
-        assert!(ratio < 2.0, "Proof size should be sublinear in trace length");
+        assert!(
+            ratio < 2.0,
+            "Proof size should be sublinear in trace length"
+        );
     }
 
     #[test]
@@ -311,13 +332,24 @@ mod tests {
             seed: Some(12345),
         });
 
-        let proof1 = prover.prove(&trace);
-        let proof2 = prover.prove(&trace);
+        let proof1 = prover.prove(&trace).expect("prove");
+        let proof2 = prover.prove(&trace).expect("prove");
 
         // Same seed should give same spot checks
         assert_eq!(proof1.spot_checks.len(), proof2.spot_checks.len());
         for (c1, c2) in proof1.spot_checks.iter().zip(proof2.spot_checks.iter()) {
             assert_eq!(c1.step.step, c2.step.step);
         }
+    }
+
+    #[test]
+    fn empty_trace_rejected() {
+        let bytecode_hash = sha256(b"test bytecode");
+        let input_hash = sha256(b"test inputs");
+        let trace = ExecutionTrace::new(bytecode_hash, input_hash);
+
+        let prover = MpbProver::new();
+        let result = prover.prove(&trace);
+        assert!(matches!(result, Err(ProverError::EmptyTrace)));
     }
 }

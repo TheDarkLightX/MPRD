@@ -3,7 +3,10 @@
 //! This wraps the MPB VM execution and captures a full trace
 //! that can be used for proof generation.
 
-use crate::{sha256, trace::{ExecutionTrace, TraceStep}};
+use crate::{
+    sha256,
+    trace::{ExecutionTrace, TraceStep},
+};
 
 /// A tracing wrapper for MPB VM execution.
 ///
@@ -29,10 +32,7 @@ pub struct TracingVm {
 #[derive(Debug)]
 pub enum TracingResult {
     /// Execution completed successfully.
-    Success {
-        result: i64,
-        trace: ExecutionTrace,
-    },
+    Success { result: i64, trace: ExecutionTrace },
     /// Execution failed.
     Error {
         status: TracingError,
@@ -60,7 +60,7 @@ impl TracingVm {
     pub fn new(bytecode: &[u8], registers: &[i64]) -> Self {
         let bytecode_hash = sha256(bytecode);
         let input_hash = sha256(&registers_to_bytes(registers));
-        
+
         let mut vm = Self {
             stack: [0; Self::MAX_STACK],
             stack_ptr: 0,
@@ -100,10 +100,10 @@ impl TracingVm {
 
             let opcode = bytecode[ip];
             let sp_before = self.stack_ptr as u8;
-            
+
             // Execute and capture operands/result
             let exec_result = self.execute_instruction(bytecode, &mut ip, opcode);
-            
+
             match exec_result {
                 Ok(step_info) => {
                     let step = TraceStep {
@@ -118,7 +118,7 @@ impl TracingVm {
                         reg_index: step_info.reg_index,
                         fuel_remaining: self.fuel,
                     };
-                    
+
                     self.trace.push(step);
                     self.step_num += 1;
                     self.fuel -= 1;
@@ -148,7 +148,7 @@ impl TracingVm {
             0
         };
         self.trace.finalize(result);
-        
+
         TracingResult::Success {
             result,
             trace: self.trace,
@@ -163,14 +163,16 @@ impl TracingVm {
         opcode: u8,
     ) -> Result<StepInfo, TracingError> {
         *ip += 1; // Advance past opcode
-        
+
         match opcode {
             // PUSH
             0x01 => {
                 if *ip + 8 > bytecode.len() {
                     return Err(TracingError::UnexpectedEnd);
                 }
-                let bytes: [u8; 8] = bytecode[*ip..*ip + 8].try_into().unwrap();
+                let bytes: [u8; 8] = bytecode[*ip..*ip + 8]
+                    .try_into()
+                    .map_err(|_| TracingError::UnexpectedEnd)?;
                 let value = i64::from_le_bytes(bytes);
                 *ip += 8;
                 self.push(value)?;
@@ -182,7 +184,7 @@ impl TracingVm {
                     ip_advance: 9,
                 })
             }
-            
+
             // POP
             0x02 => {
                 let value = self.pop()?;
@@ -194,7 +196,7 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             // DUP
             0x03 => {
                 let value = self.peek()?;
@@ -207,7 +209,7 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             // SWAP
             0x04 => {
                 let a = self.pop()?;
@@ -222,7 +224,7 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             // LOAD_REG
             0x10 => {
                 if *ip >= bytecode.len() {
@@ -240,7 +242,7 @@ impl TracingVm {
                     ip_advance: 2,
                 })
             }
-            
+
             // ADD
             0x20 => {
                 let b = self.pop()?;
@@ -255,7 +257,7 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             // SUB
             0x21 => {
                 let b = self.pop()?;
@@ -270,7 +272,7 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             // MUL
             0x22 => {
                 let b = self.pop()?;
@@ -285,7 +287,7 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             // DIV
             0x23 => {
                 let b = self.pop()?;
@@ -303,7 +305,7 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             // MOD
             0x24 => {
                 let b = self.pop()?;
@@ -321,7 +323,7 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             // NEG
             0x25 => {
                 let a = self.pop()?;
@@ -335,7 +337,7 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             // ABS
             0x26 => {
                 let a = self.pop()?;
@@ -349,31 +351,31 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             // EQ
             0x30 => self.binary_cmp(|a, b| if a == b { 1 } else { 0 }),
-            
+
             // NE
             0x31 => self.binary_cmp(|a, b| if a != b { 1 } else { 0 }),
-            
+
             // LT
             0x32 => self.binary_cmp(|a, b| if a < b { 1 } else { 0 }),
-            
+
             // LE
             0x33 => self.binary_cmp(|a, b| if a <= b { 1 } else { 0 }),
-            
+
             // GT
             0x34 => self.binary_cmp(|a, b| if a > b { 1 } else { 0 }),
-            
+
             // GE
             0x35 => self.binary_cmp(|a, b| if a >= b { 1 } else { 0 }),
-            
+
             // AND
             0x40 => self.binary_cmp(|a, b| if a != 0 && b != 0 { 1 } else { 0 }),
-            
+
             // OR
             0x41 => self.binary_cmp(|a, b| if a != 0 || b != 0 { 1 } else { 0 }),
-            
+
             // NOT
             0x42 => {
                 let a = self.pop()?;
@@ -387,16 +389,16 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             // BIT_AND
             0x50 => self.binary_cmp(|a, b| a & b),
-            
+
             // BIT_OR
             0x51 => self.binary_cmp(|a, b| a | b),
-            
+
             // BIT_XOR
             0x52 => self.binary_cmp(|a, b| a ^ b),
-            
+
             // BIT_NOT
             0x53 => {
                 let a = self.pop()?;
@@ -410,7 +412,7 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             // SHL
             0x54 => {
                 let b = self.pop()?;
@@ -426,7 +428,7 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             // SHR
             0x55 => {
                 let b = self.pop()?;
@@ -442,7 +444,7 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             // HALT
             0xFF => {
                 let result = self.pop().unwrap_or(0);
@@ -454,7 +456,7 @@ impl TracingVm {
                     ip_advance: 1,
                 })
             }
-            
+
             _ => Err(TracingError::InvalidOpcode { opcode }),
         }
     }
@@ -538,7 +540,7 @@ mod tests {
     fn trace_simple_add() {
         let bytecode = build_simple_add();
         let vm = TracingVm::new(&bytecode, &[]);
-        
+
         match vm.execute(&bytecode) {
             TracingResult::Success { result, trace } => {
                 assert_eq!(result, 30);
@@ -555,18 +557,18 @@ mod tests {
         let bytecode = vec![
             0x10, 0x00, // LOAD_REG 0
             0x10, 0x01, // LOAD_REG 1
-            0x33,       // LE
-            0xFF,       // HALT
+            0x33, // LE
+            0xFF, // HALT
         ];
-        
+
         let registers = [50, 100]; // risk=50, max=100
         let vm = TracingVm::new(&bytecode, &registers);
-        
+
         match vm.execute(&bytecode) {
             TracingResult::Success { result, trace } => {
                 assert_eq!(result, 1); // 50 <= 100
                 assert_eq!(trace.len(), 4);
-                
+
                 // Verify trace captures register loads
                 assert_eq!(trace.steps[0].opcode, 0x10);
                 assert_eq!(trace.steps[0].result, 50);
@@ -581,7 +583,7 @@ mod tests {
     fn trace_captures_arithmetic() {
         let bytecode = build_simple_add();
         let vm = TracingVm::new(&bytecode, &[]);
-        
+
         match vm.execute(&bytecode) {
             TracingResult::Success { trace, .. } => {
                 // Find the ADD step

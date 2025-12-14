@@ -23,16 +23,16 @@ use tracing::{debug, warn};
 pub enum Invariant {
     /// S1: Rule-obedience - every executed action is allowed by policy.
     RuleObedience,
-    
+
     /// S2: Single execution path - all side effects via ExecutorAdapter.
     SinglePath,
-    
+
     /// S3: Determinism - same inputs produce same decision.
     Determinism,
-    
+
     /// S4: Anti-replay - no token can be used twice.
     AntiReplay,
-    
+
     /// S5: Binding - proof cryptographically binds all commitments.
     Binding,
 }
@@ -165,10 +165,10 @@ impl SecurityChecker {
         chosen_action_hash: &Hash32,
     ) -> Hash32 {
         let mut hasher = Sha256::new();
-        hasher.update(&policy_hash.0);
-        hasher.update(&state_hash.0);
-        hasher.update(&candidate_set_hash.0);
-        hasher.update(&chosen_action_hash.0);
+        hasher.update(policy_hash.0);
+        hasher.update(state_hash.0);
+        hasher.update(candidate_set_hash.0);
+        hasher.update(chosen_action_hash.0);
         Hash32(hasher.finalize().into())
     }
 }
@@ -201,7 +201,11 @@ pub fn validate_decision_allowed(
 }
 
 /// Validate timestamp is within acceptable bounds.
-pub fn validate_timestamp(timestamp_ms: i64, max_age_ms: i64, max_future_ms: i64) -> ModeResult<()> {
+pub fn validate_timestamp(
+    timestamp_ms: i64,
+    max_age_ms: i64,
+    max_future_ms: i64,
+) -> ModeResult<()> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

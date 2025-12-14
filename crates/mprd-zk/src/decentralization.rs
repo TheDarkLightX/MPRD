@@ -41,164 +41,174 @@
 //! ```
 
 use crate::error::{ModeError, ModeResult};
-use mprd_core::{
-    DecisionToken, Hash32, ProofBundle, Result, MprdError,
-    VerificationStatus, ZkAttestor, ZkLocalVerifier,
-    Decision, StateSnapshot, CandidateAction,
-};
+use mprd_core::egress;
 use mprd_core::orchestrator::DecisionRecorder;
-use serde::{Deserialize, Serialize};
+use mprd_core::{
+    CandidateAction, Decision, DecisionToken, Hash32, MprdError, ProofBundle, Result,
+    StateSnapshot, VerificationStatus, ZkAttestor, ZkLocalVerifier,
+};
 use reqwest::blocking::Client;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::RwLock;
+use std::thread;
+use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
- #[derive(Clone, Copy, Debug, PartialEq, Eq)]
- pub enum GovernanceOpcode {
-     RulesUpdate,
-     CommitteeUpdate,
- }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GovernanceOpcode {
+    RulesUpdate,
+    CommitteeUpdate,
+}
 
- #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
- pub struct RulesUpdateTx {
-     pub prev_rules_hash: Hash32,
-     pub rules_text: String,
-     pub update_seq: u64,
- }
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RulesUpdateTx {
+    pub prev_rules_hash: Hash32,
+    pub rules_text: String,
+    pub update_seq: u64,
+}
 
- #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
- pub struct CommitteeUpdateTx {
-     pub prev_committee_hash: Hash32,
-     pub new_threshold: u16,
-     pub new_members: Vec<Vec<u8>>,
-     pub committee_seq: u64,
- }
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CommitteeUpdateTx {
+    pub prev_committee_hash: Hash32,
+    pub new_threshold: u16,
+    pub new_members: Vec<Vec<u8>>,
+    pub committee_seq: u64,
+}
 
- #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
- pub struct GovernanceState {
-     pub rules_hash: Hash32,
-     pub rules_seq: u64,
-     pub committee_hash: Hash32,
-     pub committee_seq: u64,
- }
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GovernanceState {
+    pub rules_hash: Hash32,
+    pub rules_seq: u64,
+    pub committee_hash: Hash32,
+    pub committee_seq: u64,
+}
 
- impl GovernanceState {
-     pub fn apply_committee_update(
-         &mut self,
-         tx: &CommitteeUpdateTx,
-         threshold_ok: bool,
-     ) -> Result<Hash32> {
-         if !threshold_ok {
-             return Err(MprdError::ZkError("Committee threshold authorization failed".into()));
-         }
-         if tx.prev_committee_hash != self.committee_hash {
-             return Err(MprdError::ZkError("Committee prev hash mismatch".into()));
-         }
-         if tx.committee_seq != self.committee_seq.saturating_add(1) {
-             return Err(MprdError::ZkError("Committee seq mismatch".into()));
-         }
+impl GovernanceState {
+    pub fn apply_committee_update(
+        &mut self,
+        tx: &CommitteeUpdateTx,
+        threshold_ok: bool,
+    ) -> Result<Hash32> {
+        if !threshold_ok {
+            return Err(MprdError::ZkError(
+                "Committee threshold authorization failed".into(),
+            ));
+        }
+        if tx.prev_committee_hash != self.committee_hash {
+            return Err(MprdError::ZkError("Committee prev hash mismatch".into()));
+        }
+        if tx.committee_seq != self.committee_seq.saturating_add(1) {
+            return Err(MprdError::ZkError("Committee seq mismatch".into()));
+        }
 
-         let computed = compute_committee_hash(tx.new_threshold, &tx.new_members)?;
-         self.committee_hash = computed.clone();
-         self.committee_seq = tx.committee_seq;
-         Ok(computed)
-     }
+        let computed = compute_committee_hash(tx.new_threshold, &tx.new_members)?;
+        self.committee_hash = computed.clone();
+        self.committee_seq = tx.committee_seq;
+        Ok(computed)
+    }
 
-     pub fn apply_rules_update(&mut self, tx: &RulesUpdateTx, threshold_ok: bool) -> Result<Hash32> {
-         if !threshold_ok {
-             return Err(MprdError::ZkError("Rules update threshold authorization failed".into()));
-         }
-         if tx.prev_rules_hash != self.rules_hash {
-             return Err(MprdError::ZkError("Rules prev hash mismatch".into()));
-         }
-         if tx.update_seq != self.rules_seq.saturating_add(1) {
-             return Err(MprdError::ZkError("Rules seq mismatch".into()));
-         }
+    pub fn apply_rules_update(&mut self, tx: &RulesUpdateTx, threshold_ok: bool) -> Result<Hash32> {
+        if !threshold_ok {
+            return Err(MprdError::ZkError(
+                "Rules update threshold authorization failed".into(),
+            ));
+        }
+        if tx.prev_rules_hash != self.rules_hash {
+            return Err(MprdError::ZkError("Rules prev hash mismatch".into()));
+        }
+        if tx.update_seq != self.rules_seq.saturating_add(1) {
+            return Err(MprdError::ZkError("Rules seq mismatch".into()));
+        }
 
-         let new_hash = compute_rules_hash(&tx.rules_text);
-         self.rules_hash = new_hash.clone();
-         self.rules_seq = tx.update_seq;
-         Ok(new_hash)
-     }
- }
+        let new_hash = compute_rules_hash(&tx.rules_text);
+        self.rules_hash = new_hash.clone();
+        self.rules_seq = tx.update_seq;
+        Ok(new_hash)
+    }
+}
 
- pub fn compute_rules_hash(rules_text: &str) -> Hash32 {
-     let mut hasher = Sha256::new();
-     hasher.update(rules_text.as_bytes());
-     Hash32(hasher.finalize().into())
- }
+pub fn compute_rules_hash(rules_text: &str) -> Hash32 {
+    let mut hasher = Sha256::new();
+    hasher.update(rules_text.as_bytes());
+    Hash32(hasher.finalize().into())
+}
 
- pub fn compute_committee_hash(threshold: u16, members: &[Vec<u8>]) -> Result<Hash32> {
-     if threshold == 0 {
-         return Err(MprdError::ZkError("Committee threshold must be > 0".into()));
-     }
-     if members.is_empty() {
-         return Err(MprdError::ZkError("Committee members must be non-empty".into()));
-     }
-     if usize::from(threshold) > members.len() {
-         return Err(MprdError::ZkError(
-             "Committee threshold cannot exceed member count".into(),
-         ));
-     }
+pub fn compute_committee_hash(threshold: u16, members: &[Vec<u8>]) -> Result<Hash32> {
+    if threshold == 0 {
+        return Err(MprdError::ZkError("Committee threshold must be > 0".into()));
+    }
+    if members.is_empty() {
+        return Err(MprdError::ZkError(
+            "Committee members must be non-empty".into(),
+        ));
+    }
+    if usize::from(threshold) > members.len() {
+        return Err(MprdError::ZkError(
+            "Committee threshold cannot exceed member count".into(),
+        ));
+    }
 
-     let mut sorted: Vec<&[u8]> = members.iter().map(|m| m.as_slice()).collect();
-     sorted.sort_unstable();
+    let mut sorted: Vec<&[u8]> = members.iter().map(|m| m.as_slice()).collect();
+    sorted.sort_unstable();
 
-     let mut hasher = Sha256::new();
-     hasher.update(b"MPRD_COMMITTEE_V1");
-     hasher.update([0u8]);
-     hasher.update(threshold.to_be_bytes());
-     hasher.update((members.len() as u16).to_be_bytes());
-     for m in sorted {
-         hasher.update(m);
-     }
-     Ok(Hash32(hasher.finalize().into()))
- }
+    let mut hasher = Sha256::new();
+    hasher.update(b"MPRD_COMMITTEE_V1");
+    hasher.update([0u8]);
+    hasher.update(threshold.to_be_bytes());
+    hasher.update((members.len() as u16).to_be_bytes());
+    for m in sorted {
+        hasher.update(m);
+    }
+    Ok(Hash32(hasher.finalize().into()))
+}
 
- pub fn compute_rules_update_payload_hash(
-     chain_id: &str,
-     app_id: &str,
-     rules_hash: &Hash32,
-     prev_rules_hash: &Hash32,
-     update_seq: u64,
- ) -> Hash32 {
-     let mut hasher = Sha256::new();
-     hasher.update(b"MPRD_RULES_UPDATE_V1");
-     hasher.update([0u8]);
-     hasher.update(chain_id.as_bytes());
-     hasher.update([0u8]);
-     hasher.update(app_id.as_bytes());
-     hasher.update([0u8]);
-     hasher.update(&rules_hash.0);
-     hasher.update(&prev_rules_hash.0);
-     hasher.update(update_seq.to_be_bytes());
-     Hash32(hasher.finalize().into())
- }
+pub fn compute_rules_update_payload_hash(
+    chain_id: &str,
+    app_id: &str,
+    rules_hash: &Hash32,
+    prev_rules_hash: &Hash32,
+    update_seq: u64,
+) -> Hash32 {
+    let mut hasher = Sha256::new();
+    hasher.update(b"MPRD_RULES_UPDATE_V1");
+    hasher.update([0u8]);
+    hasher.update(chain_id.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(app_id.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(rules_hash.0);
+    hasher.update(prev_rules_hash.0);
+    hasher.update(update_seq.to_be_bytes());
+    Hash32(hasher.finalize().into())
+}
 
- pub fn compute_committee_update_payload_hash(
-     chain_id: &str,
-     app_id: &str,
-     prev_committee_hash: &Hash32,
-     new_committee_hash: &Hash32,
-     new_threshold: u16,
-     committee_seq: u64,
- ) -> Hash32 {
-     let mut hasher = Sha256::new();
-     hasher.update(b"MPRD_COMMITTEE_UPDATE_V1");
-     hasher.update([0u8]);
-     hasher.update(chain_id.as_bytes());
-     hasher.update([0u8]);
-     hasher.update(app_id.as_bytes());
-     hasher.update([0u8]);
-     hasher.update(&prev_committee_hash.0);
-     hasher.update(&new_committee_hash.0);
-     hasher.update(new_threshold.to_be_bytes());
-     hasher.update(committee_seq.to_be_bytes());
-     Hash32(hasher.finalize().into())
- }
+pub fn compute_committee_update_payload_hash(
+    chain_id: &str,
+    app_id: &str,
+    prev_committee_hash: &Hash32,
+    new_committee_hash: &Hash32,
+    new_threshold: u16,
+    committee_seq: u64,
+) -> Hash32 {
+    let mut hasher = Sha256::new();
+    hasher.update(b"MPRD_COMMITTEE_UPDATE_V1");
+    hasher.update([0u8]);
+    hasher.update(chain_id.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(app_id.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(prev_committee_hash.0);
+    hasher.update(new_committee_hash.0);
+    hasher.update(new_threshold.to_be_bytes());
+    hasher.update(committee_seq.to_be_bytes());
+    Hash32(hasher.finalize().into())
+}
 
 // =============================================================================
 // Governance Profile System
@@ -236,9 +246,7 @@ impl UpdateKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GovernanceMode {
     /// Single owner controls all profiles (development/testing)
-    SingleOwner {
-        owner_pubkey: Vec<u8>,
-    },
+    SingleOwner { owner_pubkey: Vec<u8> },
     /// Committee-based M-of-N threshold for all profiles
     Committee {
         threshold: u16,
@@ -432,8 +440,8 @@ impl GovernanceProfile {
         hasher.update([0u8]);
         hasher.update(self.app_id.as_bytes());
         hasher.update([0u8]);
-        hasher.update(&self.app_profile.profile_hash.0);
-        hasher.update(&self.safety_profile.profile_hash.0);
+        hasher.update(self.app_profile.profile_hash.0);
+        hasher.update(self.safety_profile.profile_hash.0);
         Hash32(hasher.finalize().into())
     }
 }
@@ -441,6 +449,66 @@ impl GovernanceProfile {
 // =============================================================================
 // Tau Governance Runner
 // =============================================================================
+
+const TAU_RUNNER_MAX_OUTPUT_BYTES: usize = 64 * 1024;
+const TAU_RUNNER_POLL_INTERVAL_MS: u64 = 10;
+
+fn read_tau_runner_stream<R: Read>(mut reader: R, stream_name: &'static str) -> io::Result<String> {
+    let mut output = Vec::new();
+    let mut total = 0usize;
+    let mut buf = [0u8; 4096];
+
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| io::Error::other(format!("failed to read tau {stream_name}: {e}")))?;
+
+        if n == 0 {
+            break;
+        }
+
+        total = total.saturating_add(n);
+
+        if output.len() < TAU_RUNNER_MAX_OUTPUT_BYTES {
+            let remaining = TAU_RUNNER_MAX_OUTPUT_BYTES - output.len();
+            let take = remaining.min(n);
+            output.extend_from_slice(&buf[..take]);
+        }
+    }
+
+    if total > TAU_RUNNER_MAX_OUTPUT_BYTES {
+        return Err(io::Error::other(format!(
+            "tau {stream_name} exceeded {TAU_RUNNER_MAX_OUTPUT_BYTES} bytes"
+        )));
+    }
+
+    Ok(String::from_utf8_lossy(&output).into_owned())
+}
+
+fn wait_for_tau_runner_exit(
+    child: &mut std::process::Child,
+    timeout: Duration,
+) -> io::Result<std::process::ExitStatus> {
+    let start = Instant::now();
+
+    loop {
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("tau timed out after {:?}", timeout),
+            ));
+        }
+
+        let status = child.try_wait()?;
+        if let Some(status) = status {
+            return Ok(status);
+        }
+
+        thread::sleep(Duration::from_millis(TAU_RUNNER_POLL_INTERVAL_MS));
+    }
+}
 
 /// Runner for executing governance decisions through Tau specs.
 /// Provides integration between GovernanceProfile and Tau execution.
@@ -456,7 +524,10 @@ pub struct TauGovernanceRunner {
 
 impl TauGovernanceRunner {
     /// Create a new runner with the specified Tau binary path.
-    pub fn new(tau_binary: impl Into<std::path::PathBuf>, work_dir: impl Into<std::path::PathBuf>) -> Self {
+    pub fn new(
+        tau_binary: impl Into<std::path::PathBuf>,
+        work_dir: impl Into<std::path::PathBuf>,
+    ) -> Self {
         Self {
             tau_binary: tau_binary.into(),
             work_dir: work_dir.into(),
@@ -465,7 +536,7 @@ impl TauGovernanceRunner {
     }
 
     /// Write governance gate inputs to files for Tau execution.
-    /// 
+    ///
     /// Converts GovernanceGateInput to one-hot sbf files:
     /// - inputs/is_policy_tweak.in
     /// - inputs/is_safety_change.in
@@ -477,32 +548,157 @@ impl TauGovernanceRunner {
         let inputs_dir = self.work_dir.join("inputs");
         std::fs::create_dir_all(&inputs_dir)?;
 
+        // Ensure outputs directory exists for Tau file outputs.
+        let outputs_dir = self.work_dir.join("outputs");
+        std::fs::create_dir_all(&outputs_dir)?;
+
         let kind = UpdateKind::from_u8(input.update_kind);
         let is_policy_tweak = matches!(kind, Some(UpdateKind::PolicyTweak));
         let is_safety_change = matches!(kind, Some(UpdateKind::SafetyRuleChange));
         let is_cap_expand = matches!(kind, Some(UpdateKind::AgentCapabilityExpand));
 
         // Write sbf input files (init line + step-0 value)
-        std::fs::write(inputs_dir.join("is_policy_tweak.in"), format!("0\n{}\n", is_policy_tweak as u8))?;
-        std::fs::write(inputs_dir.join("is_safety_change.in"), format!("0\n{}\n", is_safety_change as u8))?;
-        std::fs::write(inputs_dir.join("is_cap_expand.in"), format!("0\n{}\n", is_cap_expand as u8))?;
-        std::fs::write(inputs_dir.join("profile_app_ok.in"), format!("0\n{}\n", input.profile_app_ok as u8))?;
-        std::fs::write(inputs_dir.join("profile_safety_ok.in"), format!("0\n{}\n", input.profile_safety_ok as u8))?;
-        std::fs::write(inputs_dir.join("link_ok.in"), format!("0\n{}\n", input.link_ok as u8))?;
+        std::fs::write(
+            inputs_dir.join("is_policy_tweak.in"),
+            format!("0\n{}\n", is_policy_tweak as u8),
+        )?;
+        std::fs::write(
+            inputs_dir.join("is_safety_change.in"),
+            format!("0\n{}\n", is_safety_change as u8),
+        )?;
+        std::fs::write(
+            inputs_dir.join("is_cap_expand.in"),
+            format!("0\n{}\n", is_cap_expand as u8),
+        )?;
+        std::fs::write(
+            inputs_dir.join("profile_app_ok.in"),
+            format!("0\n{}\n", input.profile_app_ok as u8),
+        )?;
+        std::fs::write(
+            inputs_dir.join("profile_safety_ok.in"),
+            format!("0\n{}\n", input.profile_safety_ok as u8),
+        )?;
+        std::fs::write(
+            inputs_dir.join("link_ok.in"),
+            format!("0\n{}\n", input.link_ok as u8),
+        )?;
 
         Ok(())
+    }
+
+    fn canonical_gate_spec_path() -> std::io::Result<PathBuf> {
+        // Workspace root is two directories above this crate's manifest directory:
+        // crates/mprd-zk -> crates -> <workspace-root>
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = manifest_dir
+            .parent()
+            .and_then(|p| p.parent())
+            .ok_or_else(|| {
+                io::Error::other("cannot resolve workspace root from CARGO_MANIFEST_DIR")
+            })?;
+
+        let spec = workspace_root.join("policies/governance/canonical/mprd_governance_gate.tau");
+        if !spec.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "canonical governance gate spec not found: {}",
+                    spec.display()
+                ),
+            ));
+        }
+        Ok(spec)
+    }
+
+    fn run_tau_spec_with_timeout(&self, spec_path: &Path) -> std::io::Result<()> {
+        let mut child = Command::new(&self.tau_binary)
+            .arg(spec_path)
+            .current_dir(&self.work_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let stdout_reader = child
+            .stdout
+            .take()
+            .ok_or_else(|| io::Error::other("tau stdout unavailable"))?;
+        let stderr_reader = child
+            .stderr
+            .take()
+            .ok_or_else(|| io::Error::other("tau stderr unavailable"))?;
+
+        let stdout_task = thread::spawn(move || read_tau_runner_stream(stdout_reader, "stdout"));
+        let stderr_task = thread::spawn(move || read_tau_runner_stream(stderr_reader, "stderr"));
+
+        let timeout = Duration::from_secs(self.timeout_secs);
+        let status = wait_for_tau_runner_exit(&mut child, timeout);
+
+        let stdout = stdout_task
+            .join()
+            .map_err(|_| io::Error::other("tau stdout reader thread panicked"))??;
+        let stderr = stderr_task
+            .join()
+            .map_err(|_| io::Error::other("tau stderr reader thread panicked"))??;
+
+        let status = status?;
+
+        if !status.success() {
+            return Err(io::Error::other(format!(
+                "tau exited with error. stderr: {stderr}"
+            )));
+        }
+
+        if stdout.contains("(Error)") || stderr.contains("(Error)") {
+            return Err(io::Error::other(format!(
+                "tau reported error. stdout: {stdout} stderr: {stderr}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Execute the canonical governance gate spec and return the boolean result.
+    ///
+    /// Preconditions:
+    /// - `write_inputs` has been called for the intended input.
+    /// - `tau_binary` points to a working Tau interpreter.
+    ///
+    /// Postconditions:
+    /// - Returns `Ok(true|false)` if Tau produced a concrete output.
+    /// - Returns `Err` if Tau fails, times out, or produces no output (fail-closed).
+    pub fn execute_canonical_gate(&self) -> std::io::Result<bool> {
+        let outputs_dir = self.work_dir.join("outputs");
+        std::fs::create_dir_all(&outputs_dir)?;
+        let out_path = outputs_dir.join("accept.out");
+        let _ = std::fs::remove_file(&out_path);
+
+        let spec_path = Self::canonical_gate_spec_path()?;
+        self.run_tau_spec_with_timeout(&spec_path)?;
+
+        let Some(result) = self.read_output()? else {
+            return Err(io::Error::other("tau produced no governance output"));
+        };
+        Ok(result)
     }
 
     /// Read the acceptance result from Tau output file.
     pub fn read_output(&self) -> std::io::Result<Option<bool>> {
         let output_path = self.work_dir.join("outputs/accept.out");
         let content = std::fs::read_to_string(output_path)?;
-        
+
         // Parse last non-empty line as sbf value
         for line in content.lines().rev() {
             let trimmed = line.trim();
             if !trimmed.is_empty() {
-                return Ok(Some(trimmed == "1" || trimmed == "T"));
+                return match trimmed {
+                    "1" | "T" => Ok(Some(true)),
+                    "0" | "F" => Ok(Some(false)),
+                    _ => Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("unexpected sbf output '{trimmed}'"),
+                    )),
+                };
             }
         }
         Ok(None)
@@ -518,14 +714,13 @@ impl TauGovernanceRunner {
         safety_signatures: &[(Vec<u8>, Vec<u8>)],
         link_ok: bool,
     ) -> std::io::Result<(bool, bool, bool)> {
-        let input = profile.check_authorization(update_kind, app_signatures, safety_signatures, link_ok);
+        let input =
+            profile.check_authorization(update_kind, app_signatures, safety_signatures, link_ok);
         let rust_result = GovernanceProfile::would_accept(&input);
 
         self.write_inputs(&input)?;
 
-        // Note: Actual Tau execution would be done here via subprocess
-        // For now, we trust the Rust implementation since truth tables are verified
-        let tau_result = rust_result; // Placeholder - actual execution requires subprocess
+        let tau_result = self.execute_canonical_gate()?;
 
         Ok((tau_result, rust_result, tau_result == rust_result))
     }
@@ -566,7 +761,7 @@ impl ThresholdConfig {
     pub fn supermajority(total: usize) -> Self {
         Self {
             total_attestors: total,
-            required_quorum: (total * 2 + 2) / 3, // Ceiling of 2/3
+            required_quorum: total.saturating_mul(2).div_ceil(3),
             require_uniform_proofs: false,
             max_decision_divergence: 0,
         }
@@ -585,10 +780,14 @@ impl ThresholdConfig {
     /// Validate the configuration.
     pub fn validate(&self) -> ModeResult<()> {
         if self.total_attestors == 0 {
-            return Err(ModeError::InvalidConfig("total_attestors must be > 0".into()));
+            return Err(ModeError::InvalidConfig(
+                "total_attestors must be > 0".into(),
+            ));
         }
         if self.required_quorum == 0 {
-            return Err(ModeError::InvalidConfig("required_quorum must be > 0".into()));
+            return Err(ModeError::InvalidConfig(
+                "required_quorum must be > 0".into(),
+            ));
         }
         if self.required_quorum > self.total_attestors {
             return Err(ModeError::InvalidConfig(
@@ -628,7 +827,11 @@ pub trait OnChainRegistry: Send + Sync {
     fn register_key(&self, entry: KeyRegistryEntry) -> Result<CommitmentAnchor>;
     fn get_key(&self, key_id: &str) -> Result<Option<KeyRegistryEntry>>;
 
-    fn anchor_decision(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<CommitmentAnchor>;
+    fn anchor_decision(
+        &self,
+        token: &DecisionToken,
+        proof: &ProofBundle,
+    ) -> Result<CommitmentAnchor>;
 }
 
 pub struct LocalOnChainRegistry {
@@ -648,11 +851,11 @@ impl LocalOnChainRegistry {
 
     fn compute_decision_commitment(token: &DecisionToken, proof: &ProofBundle) -> Hash32 {
         let mut hasher = Sha256::new();
-        hasher.update(&token.policy_hash.0);
-        hasher.update(&token.state_hash.0);
-        hasher.update(&proof.candidate_set_hash.0);
-        hasher.update(&token.chosen_action_hash.0);
-        hasher.update(&token.nonce_or_tx_hash.0);
+        hasher.update(token.policy_hash.0);
+        hasher.update(token.state_hash.0);
+        hasher.update(proof.candidate_set_hash.0);
+        hasher.update(token.chosen_action_hash.0);
+        hasher.update(token.nonce_or_tx_hash.0);
         Hash32(hasher.finalize().into())
     }
 }
@@ -721,7 +924,11 @@ impl OnChainRegistry for LocalOnChainRegistry {
         Ok(map.get(key_id).cloned())
     }
 
-    fn anchor_decision(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<CommitmentAnchor> {
+    fn anchor_decision(
+        &self,
+        token: &DecisionToken,
+        proof: &ProofBundle,
+    ) -> Result<CommitmentAnchor> {
         let commitment = Self::compute_decision_commitment(token, proof);
         self.anchor_store.anchor(&commitment.0)
     }
@@ -851,12 +1058,11 @@ impl MultiAttestor {
         // Compute aggregated commitment
         let aggregated_commitment = self.compute_aggregated_commitment(&proofs_for_merge);
 
-        // Merge proofs if quorum reached
-        let merged_proof = if quorum_reached {
-            Some(self.merge_proofs(&proofs_for_merge, &aggregated_commitment))
-        } else {
-            None
-        };
+        let merged_proof = quorum_reached
+            .then(|| self.merge_proofs(&proofs_for_merge, &aggregated_commitment))
+            .flatten();
+
+        let quorum_reached = quorum_reached && merged_proof.is_some();
 
         if quorum_reached {
             info!(
@@ -886,33 +1092,30 @@ impl MultiAttestor {
     fn compute_aggregated_commitment(&self, proofs: &[ProofBundle]) -> Hash32 {
         let mut hasher = Sha256::new();
         for proof in proofs {
-            hasher.update(&proof.policy_hash.0);
-            hasher.update(&proof.state_hash.0);
-            hasher.update(&proof.chosen_action_hash.0);
+            hasher.update(proof.policy_hash.0);
+            hasher.update(proof.state_hash.0);
+            hasher.update(proof.chosen_action_hash.0);
         }
         Hash32(hasher.finalize().into())
     }
 
     /// Merge multiple proofs into one.
-    fn merge_proofs(&self, proofs: &[ProofBundle], commitment: &Hash32) -> ProofBundle {
-        if proofs.is_empty() {
-            panic!("Cannot merge empty proofs");
-        }
+    fn merge_proofs(&self, proofs: &[ProofBundle], commitment: &Hash32) -> Option<ProofBundle> {
+        let first = proofs.first()?;
 
-        let first = &proofs[0];
         let mut metadata = first.attestation_metadata.clone();
         metadata.insert("multi_attestor".into(), "true".into());
         metadata.insert("attestor_count".into(), proofs.len().to_string());
-        metadata.insert("aggregated_commitment".into(), hex::encode(&commitment.0));
+        metadata.insert("aggregated_commitment".into(), hex::encode(commitment.0));
 
-        ProofBundle {
+        Some(ProofBundle {
             policy_hash: first.policy_hash.clone(),
             state_hash: first.state_hash.clone(),
             candidate_set_hash: first.candidate_set_hash.clone(),
             chosen_action_hash: first.chosen_action_hash.clone(),
             risc0_receipt: first.risc0_receipt.clone(), // Use first receipt
             attestation_metadata: metadata,
-        }
+        })
     }
 }
 
@@ -928,7 +1131,10 @@ pub struct ThresholdVerifier {
 
 impl ThresholdVerifier {
     /// Create a new threshold verifier.
-    pub fn new(config: ThresholdConfig, verifiers: Vec<Box<dyn ZkLocalVerifier>>) -> ModeResult<Self> {
+    pub fn new(
+        config: ThresholdConfig,
+        verifiers: Vec<Box<dyn ZkLocalVerifier>>,
+    ) -> ModeResult<Self> {
         config.validate()?;
 
         if verifiers.len() != config.total_attestors {
@@ -1042,7 +1248,7 @@ pub struct IpfsPolicyStore {
 }
 
 impl IpfsPolicyStore {
-    pub fn new(gateway_url: impl Into<String>) -> Self {
+    pub fn new(gateway_url: impl Into<String>) -> Result<Self> {
         let mapping_path = Self::default_mapping_path();
         let mapping = match Self::load_mapping(&mapping_path) {
             Ok(m) => m,
@@ -1052,12 +1258,15 @@ impl IpfsPolicyStore {
             }
         };
 
-        Self {
-            gateway_url: gateway_url.into(),
+        let gateway_url: String = gateway_url.into();
+        egress::validate_outbound_url(&gateway_url)?;
+
+        Ok(Self {
+            gateway_url,
             client: Client::new(),
             hash_to_cid: RwLock::new(mapping),
             mapping_path,
-        }
+        })
     }
 
     fn default_mapping_path() -> PathBuf {
@@ -1082,11 +1291,14 @@ impl IpfsPolicyStore {
         let mut mapping = HashMap::new();
 
         for (hex_hash, cid) in raw {
-            let bytes = hex::decode(&hex_hash)
-                .map_err(|e| MprdError::ZkError(format!("Invalid hash in IPFS mapping file: {}", e)))?;
+            let bytes = hex::decode(&hex_hash).map_err(|e| {
+                MprdError::ZkError(format!("Invalid hash in IPFS mapping file: {}", e))
+            })?;
 
             if bytes.len() != 32 {
-                return Err(MprdError::ZkError("Invalid hash length in IPFS mapping file".into()));
+                return Err(MprdError::ZkError(
+                    "Invalid hash length in IPFS mapping file".into(),
+                ));
             }
 
             let mut arr = [0u8; 32];
@@ -1101,7 +1313,7 @@ impl IpfsPolicyStore {
         let mut raw = HashMap::new();
 
         for (hash, cid) in mapping {
-            raw.insert(hex::encode(&hash.0), cid.clone());
+            raw.insert(hex::encode(hash.0), cid.clone());
         }
 
         let data = serde_json::to_string_pretty(&raw)
@@ -1109,11 +1321,13 @@ impl IpfsPolicyStore {
 
         let tmp_path = self.mapping_path.with_extension("tmp");
 
-        fs::write(&tmp_path, &data)
-            .map_err(|e| MprdError::ZkError(format!("Failed to write IPFS mapping temp file: {}", e)))?;
+        fs::write(&tmp_path, &data).map_err(|e| {
+            MprdError::ZkError(format!("Failed to write IPFS mapping temp file: {}", e))
+        })?;
 
-        fs::rename(&tmp_path, &self.mapping_path)
-            .map_err(|e| MprdError::ZkError(format!("Failed to replace IPFS mapping file: {}", e)))?;
+        fs::rename(&tmp_path, &self.mapping_path).map_err(|e| {
+            MprdError::ZkError(format!("Failed to replace IPFS mapping file: {}", e))
+        })?;
 
         Ok(())
     }
@@ -1123,6 +1337,18 @@ impl IpfsPolicyStore {
         hasher.update(b"MPRD_POLICY_V1");
         hasher.update(bytes);
         Hash32(hasher.finalize().into())
+    }
+
+    fn verify_policy_hash_matches_expected(expected: &Hash32, policy_bytes: &[u8]) -> Result<()> {
+        let computed = Self::compute_hash(policy_bytes);
+        if computed == *expected {
+            return Ok(());
+        }
+        Err(MprdError::ZkError(format!(
+            "Policy hash mismatch: expected {}, got {}",
+            hex::encode(expected.0),
+            hex::encode(computed.0)
+        )))
     }
 
     fn has_mapping(&self, policy_hash: &Hash32) -> Result<bool> {
@@ -1221,7 +1447,9 @@ impl DistributedPolicyStore for IpfsPolicyStore {
                 .ok_or_else(|| MprdError::ZkError("No CID mapping for policy hash".into()))?
         };
 
-        self.ipfs_cat(&cid)
+        let bytes = self.ipfs_cat(&cid)?;
+        Self::verify_policy_hash_matches_expected(policy_hash, &bytes)?;
+        Ok(bytes)
     }
 
     fn exists(&self, policy_hash: &Hash32) -> Result<bool> {
@@ -1299,6 +1527,12 @@ impl LocalTimestampAnchorStore {
     }
 }
 
+impl Default for LocalTimestampAnchorStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CommitmentAnchorStore for LocalTimestampAnchorStore {
     fn anchor(&self, commitment: &[u8; 32]) -> Result<CommitmentAnchor> {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -1344,108 +1578,110 @@ mod tests {
     use super::*;
     use mprd_core::components::StubZkAttestor;
     use mprd_core::Score;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::sync::{Mutex, OnceLock};
 
     fn dummy_hash(byte: u8) -> Hash32 {
         Hash32([byte; 32])
     }
 
-     #[test]
-     fn compute_committee_hash_is_order_independent() {
-         let members_a = vec![vec![3u8; 48], vec![1u8; 48], vec![2u8; 48]];
-         let members_b = vec![vec![2u8; 48], vec![3u8; 48], vec![1u8; 48]];
+    #[test]
+    fn compute_committee_hash_is_order_independent() {
+        let members_a = vec![vec![3u8; 48], vec![1u8; 48], vec![2u8; 48]];
+        let members_b = vec![vec![2u8; 48], vec![3u8; 48], vec![1u8; 48]];
 
-         let ha = compute_committee_hash(2, &members_a).expect("hash should compute");
-         let hb = compute_committee_hash(2, &members_b).expect("hash should compute");
-         assert_eq!(ha, hb);
-     }
+        let ha = compute_committee_hash(2, &members_a).expect("hash should compute");
+        let hb = compute_committee_hash(2, &members_b).expect("hash should compute");
+        assert_eq!(ha, hb);
+    }
 
-     #[test]
-     fn compute_committee_hash_validates_inputs() {
-         let members = vec![vec![1u8; 48]];
-         assert!(compute_committee_hash(0, &members).is_err());
-         assert!(compute_committee_hash(2, &members).is_err());
-         assert!(compute_committee_hash(1, &[]).is_err());
-     }
+    #[test]
+    fn compute_committee_hash_validates_inputs() {
+        let members = vec![vec![1u8; 48]];
+        assert!(compute_committee_hash(0, &members).is_err());
+        assert!(compute_committee_hash(2, &members).is_err());
+        assert!(compute_committee_hash(1, &[]).is_err());
+    }
 
-     #[test]
-     fn governance_state_rules_update_requires_hash_link_and_monotonic_seq() {
-         let mut state = GovernanceState {
-             rules_hash: dummy_hash(9),
-             rules_seq: 7,
-             committee_hash: dummy_hash(1),
-             committee_seq: 0,
-         };
+    #[test]
+    fn governance_state_rules_update_requires_hash_link_and_monotonic_seq() {
+        let mut state = GovernanceState {
+            rules_hash: dummy_hash(9),
+            rules_seq: 7,
+            committee_hash: dummy_hash(1),
+            committee_seq: 0,
+        };
 
-         let ok = RulesUpdateTx {
-             prev_rules_hash: dummy_hash(9),
-             rules_text: "rule_v2".into(),
-             update_seq: 8,
-         };
-         let new_hash = state
-             .apply_rules_update(&ok, true)
-             .expect("rules update should apply");
-         assert_eq!(state.rules_hash, new_hash);
-         assert_eq!(state.rules_seq, 8);
+        let ok = RulesUpdateTx {
+            prev_rules_hash: dummy_hash(9),
+            rules_text: "rule_v2".into(),
+            update_seq: 8,
+        };
+        let new_hash = state
+            .apply_rules_update(&ok, true)
+            .expect("rules update should apply");
+        assert_eq!(state.rules_hash, new_hash);
+        assert_eq!(state.rules_seq, 8);
 
-         let wrong_prev = RulesUpdateTx {
-             prev_rules_hash: dummy_hash(9),
-             rules_text: "rule_v3".into(),
-             update_seq: 9,
-         };
-         assert!(state.apply_rules_update(&wrong_prev, true).is_err());
+        let wrong_prev = RulesUpdateTx {
+            prev_rules_hash: dummy_hash(9),
+            rules_text: "rule_v3".into(),
+            update_seq: 9,
+        };
+        assert!(state.apply_rules_update(&wrong_prev, true).is_err());
 
-         let wrong_seq = RulesUpdateTx {
-             prev_rules_hash: state.rules_hash.clone(),
-             rules_text: "rule_v3".into(),
-             update_seq: 11,
-         };
-         assert!(state.apply_rules_update(&wrong_seq, true).is_err());
-         assert!(state.apply_rules_update(&wrong_seq, false).is_err());
-     }
+        let wrong_seq = RulesUpdateTx {
+            prev_rules_hash: state.rules_hash.clone(),
+            rules_text: "rule_v3".into(),
+            update_seq: 11,
+        };
+        assert!(state.apply_rules_update(&wrong_seq, true).is_err());
+        assert!(state.apply_rules_update(&wrong_seq, false).is_err());
+    }
 
-     #[test]
-     fn governance_state_committee_update_requires_hash_link_and_monotonic_seq() {
-         let initial_members = vec![vec![1u8; 48], vec![2u8; 48]];
-         let initial_hash = compute_committee_hash(1, &initial_members).expect("hash should compute");
-         let mut state = GovernanceState {
-             rules_hash: dummy_hash(9),
-             rules_seq: 0,
-             committee_hash: initial_hash.clone(),
-             committee_seq: 3,
-         };
+    #[test]
+    fn governance_state_committee_update_requires_hash_link_and_monotonic_seq() {
+        let initial_members = vec![vec![1u8; 48], vec![2u8; 48]];
+        let initial_hash =
+            compute_committee_hash(1, &initial_members).expect("hash should compute");
+        let mut state = GovernanceState {
+            rules_hash: dummy_hash(9),
+            rules_seq: 0,
+            committee_hash: initial_hash.clone(),
+            committee_seq: 3,
+        };
 
-         let tx_ok = CommitteeUpdateTx {
-             prev_committee_hash: initial_hash.clone(),
-             new_threshold: 2,
-             new_members: vec![vec![3u8; 48], vec![4u8; 48]],
-             committee_seq: 4,
-         };
+        let tx_ok = CommitteeUpdateTx {
+            prev_committee_hash: initial_hash.clone(),
+            new_threshold: 2,
+            new_members: vec![vec![3u8; 48], vec![4u8; 48]],
+            committee_seq: 4,
+        };
 
-         let new_hash = state
-             .apply_committee_update(&tx_ok, true)
-             .expect("committee update should apply");
-         assert_eq!(state.committee_hash, new_hash);
-         assert_eq!(state.committee_seq, 4);
+        let new_hash = state
+            .apply_committee_update(&tx_ok, true)
+            .expect("committee update should apply");
+        assert_eq!(state.committee_hash, new_hash);
+        assert_eq!(state.committee_seq, 4);
 
-         let tx_wrong_prev = CommitteeUpdateTx {
-             prev_committee_hash: initial_hash,
-             new_threshold: 1,
-             new_members: vec![vec![5u8; 48]],
-             committee_seq: 5,
-         };
-         assert!(state.apply_committee_update(&tx_wrong_prev, true).is_err());
+        let tx_wrong_prev = CommitteeUpdateTx {
+            prev_committee_hash: initial_hash,
+            new_threshold: 1,
+            new_members: vec![vec![5u8; 48]],
+            committee_seq: 5,
+        };
+        assert!(state.apply_committee_update(&tx_wrong_prev, true).is_err());
 
-         let tx_wrong_seq = CommitteeUpdateTx {
-             prev_committee_hash: state.committee_hash.clone(),
-             new_threshold: 1,
-             new_members: vec![vec![6u8; 48]],
-             committee_seq: 7,
-         };
-         assert!(state.apply_committee_update(&tx_wrong_seq, true).is_err());
-         assert!(state.apply_committee_update(&tx_wrong_seq, false).is_err());
-     }
+        let tx_wrong_seq = CommitteeUpdateTx {
+            prev_committee_hash: state.committee_hash.clone(),
+            new_threshold: 1,
+            new_members: vec![vec![6u8; 48]],
+            committee_seq: 7,
+        };
+        assert!(state.apply_committee_update(&tx_wrong_seq, true).is_err());
+        assert!(state.apply_committee_update(&tx_wrong_seq, false).is_err());
+    }
 
     #[test]
     fn local_timestamp_anchor_store_roundtrip() {
@@ -1484,12 +1720,20 @@ mod tests {
             now,
         ));
 
-        let store = IpfsPolicyStore {
-            gateway_url: "http://localhost:5001".into(),
-            client: Client::new(),
-            hash_to_cid: RwLock::new(HashMap::new()),
-            mapping_path: mapping_path.clone(),
-        };
+        static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+        let _guard = ENV_MUTEX
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env mutex poisoned");
+
+        let previous = std::env::var("MPRD_IPFS_MAPPING_FILE").ok();
+        std::env::set_var(
+            "MPRD_IPFS_MAPPING_FILE",
+            mapping_path.to_string_lossy().as_ref(),
+        );
+
+        let store = IpfsPolicyStore::new("http://localhost:5001")
+            .expect("IpfsPolicyStore::new should succeed for localhost");
 
         let mut mapping = HashMap::new();
         let hash = dummy_hash(1);
@@ -1499,12 +1743,34 @@ mod tests {
             .persist_mapping(&mapping)
             .expect("persist_mapping should succeed");
 
-        let loaded = IpfsPolicyStore::load_mapping(&mapping_path)
-            .expect("load_mapping should succeed");
+        let loaded =
+            IpfsPolicyStore::load_mapping(&mapping_path).expect("load_mapping should succeed");
 
         assert_eq!(loaded.get(&hash), Some(&"cid-test".to_string()));
 
-        let _ = fs::remove_file(&mapping_path);
+        match previous {
+            Some(value) => std::env::set_var("MPRD_IPFS_MAPPING_FILE", value),
+            None => std::env::remove_var("MPRD_IPFS_MAPPING_FILE"),
+        }
+    }
+
+    #[test]
+    fn ipfs_policy_store_new_fails_closed_on_private_gateway_ip() {
+        let err = match IpfsPolicyStore::new("https://10.0.0.1:5001") {
+            Ok(_) => panic!("expected IpfsPolicyStore::new to reject private IP"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().to_lowercase().contains("disallowed"));
+    }
+
+    #[test]
+    fn verify_policy_hash_matches_expected_fails_closed_on_mismatch() {
+        let policy_a = b"policy-a";
+        let policy_b = b"policy-b";
+
+        let hash_a = IpfsPolicyStore::compute_hash(policy_a);
+        let result = IpfsPolicyStore::verify_policy_hash_matches_expected(&hash_a, policy_b);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -1515,14 +1781,18 @@ mod tests {
         assert!(ThresholdConfig::unanimous(3).validate().is_ok());
 
         // Invalid: zero attestors
-        let mut config = ThresholdConfig::default();
-        config.total_attestors = 0;
+        let config = ThresholdConfig {
+            total_attestors: 0,
+            ..ThresholdConfig::default()
+        };
         assert!(config.validate().is_err());
 
         // Invalid: quorum > total
-        let mut config = ThresholdConfig::default();
-        config.required_quorum = 10;
-        config.total_attestors = 3;
+        let config = ThresholdConfig {
+            required_quorum: 10,
+            total_attestors: 3,
+            ..ThresholdConfig::default()
+        };
         assert!(config.validate().is_err());
     }
 
@@ -1633,7 +1903,11 @@ mod tests {
             Ok(None)
         }
 
-        fn anchor_decision(&self, _token: &DecisionToken, _proof: &ProofBundle) -> Result<CommitmentAnchor> {
+        fn anchor_decision(
+            &self,
+            _token: &DecisionToken,
+            _proof: &ProofBundle,
+        ) -> Result<CommitmentAnchor> {
             self.anchored.store(true, Ordering::SeqCst);
             Ok(Self::dummy_anchor())
         }
@@ -1709,7 +1983,10 @@ mod tests {
         assert_eq!(profile.safety_profile.threshold, 2);
 
         match &profile.mode {
-            GovernanceMode::Committee { threshold, members: m } => {
+            GovernanceMode::Committee {
+                threshold,
+                members: m,
+            } => {
                 assert_eq!(*threshold, 2);
                 assert_eq!(m.len(), 3);
             }
@@ -1722,11 +1999,8 @@ mod tests {
         let app_members = vec![test_pubkey(1), test_pubkey(2)];
         let safety_members = vec![test_pubkey(3), test_pubkey(4), test_pubkey(5)];
 
-        let profile = GovernanceProfile::hybrid(
-            1, app_members,
-            2, safety_members,
-            "chain", "app",
-        ).expect("should create hybrid profile");
+        let profile = GovernanceProfile::hybrid(1, app_members, 2, safety_members, "chain", "app")
+            .expect("should create hybrid profile");
 
         assert_eq!(profile.app_profile.threshold, 1);
         assert_eq!(profile.app_profile.members.len(), 2);
@@ -1739,8 +2013,14 @@ mod tests {
     #[test]
     fn update_kind_roundtrip() {
         assert_eq!(UpdateKind::from_u8(0x01), Some(UpdateKind::PolicyTweak));
-        assert_eq!(UpdateKind::from_u8(0x02), Some(UpdateKind::SafetyRuleChange));
-        assert_eq!(UpdateKind::from_u8(0x03), Some(UpdateKind::AgentCapabilityExpand));
+        assert_eq!(
+            UpdateKind::from_u8(0x02),
+            Some(UpdateKind::SafetyRuleChange)
+        );
+        assert_eq!(
+            UpdateKind::from_u8(0x03),
+            Some(UpdateKind::AgentCapabilityExpand)
+        );
         assert_eq!(UpdateKind::from_u8(0x00), None);
         assert_eq!(UpdateKind::from_u8(0x04), None);
 
@@ -1787,21 +2067,21 @@ mod tests {
     #[test]
     fn governance_gate_policy_tweak_requires_app_only() {
         let profile = GovernanceProfile::hybrid(
-            1, vec![test_pubkey(1)],
-            1, vec![test_pubkey(2)],
-            "chain", "app",
-        ).expect("should create");
+            1,
+            vec![test_pubkey(1)],
+            1,
+            vec![test_pubkey(2)],
+            "chain",
+            "app",
+        )
+        .expect("should create");
 
         // App signature only -> accepted for PolicyTweak
         let app_sigs = vec![(test_pubkey(1), vec![0u8; 64])];
         let safety_sigs: Vec<(Vec<u8>, Vec<u8>)> = vec![];
 
-        let input = profile.check_authorization(
-            UpdateKind::PolicyTweak,
-            &app_sigs,
-            &safety_sigs,
-            true,
-        );
+        let input =
+            profile.check_authorization(UpdateKind::PolicyTweak, &app_sigs, &safety_sigs, true);
 
         assert_eq!(input.update_kind, 0x01);
         assert!(input.profile_app_ok);
@@ -1813,10 +2093,14 @@ mod tests {
     #[test]
     fn governance_gate_safety_change_requires_safety_only() {
         let profile = GovernanceProfile::hybrid(
-            1, vec![test_pubkey(1)],
-            1, vec![test_pubkey(2)],
-            "chain", "app",
-        ).expect("should create");
+            1,
+            vec![test_pubkey(1)],
+            1,
+            vec![test_pubkey(2)],
+            "chain",
+            "app",
+        )
+        .expect("should create");
 
         // Safety signature only -> accepted for SafetyRuleChange
         let app_sigs: Vec<(Vec<u8>, Vec<u8>)> = vec![];
@@ -1838,10 +2122,14 @@ mod tests {
     #[test]
     fn governance_gate_capability_expand_requires_both() {
         let profile = GovernanceProfile::hybrid(
-            1, vec![test_pubkey(1)],
-            1, vec![test_pubkey(2)],
-            "chain", "app",
-        ).expect("should create");
+            1,
+            vec![test_pubkey(1)],
+            1,
+            vec![test_pubkey(2)],
+            "chain",
+            "app",
+        )
+        .expect("should create");
 
         // Only app -> rejected
         let app_only = profile.check_authorization(
@@ -1873,13 +2161,17 @@ mod tests {
 
     #[test]
     fn governance_gate_link_failure_rejects_all() {
-        let profile = GovernanceProfile::single_owner(test_pubkey(1), "chain", "app")
-            .expect("should create");
+        let profile =
+            GovernanceProfile::single_owner(test_pubkey(1), "chain", "app").expect("should create");
 
         let sigs = vec![(test_pubkey(1), vec![0u8; 64])];
 
         // Valid signatures but link_ok = false -> rejected
-        for kind in [UpdateKind::PolicyTweak, UpdateKind::SafetyRuleChange, UpdateKind::AgentCapabilityExpand] {
+        for kind in [
+            UpdateKind::PolicyTweak,
+            UpdateKind::SafetyRuleChange,
+            UpdateKind::AgentCapabilityExpand,
+        ] {
             let input = profile.check_authorization(kind, &sigs, &sigs, false);
             assert!(!GovernanceProfile::would_accept(&input));
         }
@@ -1888,31 +2180,49 @@ mod tests {
     #[test]
     fn governance_profile_hash_is_deterministic() {
         let profile1 = GovernanceProfile::committee(
-            2, vec![test_pubkey(1), test_pubkey(2), test_pubkey(3)],
-            "chain", "app",
-        ).expect("should create");
+            2,
+            vec![test_pubkey(1), test_pubkey(2), test_pubkey(3)],
+            "chain",
+            "app",
+        )
+        .expect("should create");
 
         let profile2 = GovernanceProfile::committee(
-            2, vec![test_pubkey(1), test_pubkey(2), test_pubkey(3)],
-            "chain", "app",
-        ).expect("should create");
+            2,
+            vec![test_pubkey(1), test_pubkey(2), test_pubkey(3)],
+            "chain",
+            "app",
+        )
+        .expect("should create");
 
-        assert_eq!(profile1.compute_profile_hash(), profile2.compute_profile_hash());
+        assert_eq!(
+            profile1.compute_profile_hash(),
+            profile2.compute_profile_hash()
+        );
     }
 
     #[test]
     fn governance_profile_hash_changes_with_config() {
         let profile1 = GovernanceProfile::committee(
-            2, vec![test_pubkey(1), test_pubkey(2), test_pubkey(3)],
-            "chain", "app",
-        ).expect("should create");
+            2,
+            vec![test_pubkey(1), test_pubkey(2), test_pubkey(3)],
+            "chain",
+            "app",
+        )
+        .expect("should create");
 
         let profile2 = GovernanceProfile::committee(
-            3, vec![test_pubkey(1), test_pubkey(2), test_pubkey(3)],
-            "chain", "app",
-        ).expect("should create");
+            3,
+            vec![test_pubkey(1), test_pubkey(2), test_pubkey(3)],
+            "chain",
+            "app",
+        )
+        .expect("should create");
 
-        assert_ne!(profile1.compute_profile_hash(), profile2.compute_profile_hash());
+        assert_ne!(
+            profile1.compute_profile_hash(),
+            profile2.compute_profile_hash()
+        );
     }
 
     #[test]
@@ -1921,7 +2231,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).expect("create temp dir");
 
-        let runner = TauGovernanceRunner::new("/usr/bin/tau", &temp_dir);
+        let runner = TauGovernanceRunner::new("tau", &temp_dir);
 
         let input = GovernanceGateInput {
             update_kind: UpdateKind::PolicyTweak.to_bv8(),
@@ -1945,11 +2255,50 @@ mod tests {
         let policy_tweak = std::fs::read_to_string(inputs_dir.join("is_policy_tweak.in")).unwrap();
         assert!(policy_tweak.contains("1"), "policy_tweak should be 1");
 
-        let safety_change = std::fs::read_to_string(inputs_dir.join("is_safety_change.in")).unwrap();
+        let safety_change =
+            std::fs::read_to_string(inputs_dir.join("is_safety_change.in")).unwrap();
         assert!(safety_change.contains("0"), "safety_change should be 0");
 
         let app_ok = std::fs::read_to_string(inputs_dir.join("profile_app_ok.in")).unwrap();
         assert!(app_ok.contains("1"), "profile_app_ok should be 1");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn tau_governance_runner_executes_canonical_gate_when_tau_available() {
+        let Some(tau_bin) = std::env::var_os("TAU_BIN") else {
+            eprintln!("Skipping: TAU_BIN not set");
+            return;
+        };
+        let tau_bin = std::path::PathBuf::from(tau_bin);
+        if !tau_bin.is_file() {
+            eprintln!("Skipping: TAU_BIN is not a file: {}", tau_bin.display());
+            return;
+        }
+
+        let temp_dir = std::env::temp_dir().join("tau_governance_exec_test");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+        let runner = TauGovernanceRunner::new(tau_bin, &temp_dir);
+
+        let owner_pubkey = b"owner".to_vec();
+        let profile =
+            GovernanceProfile::single_owner(owner_pubkey.clone(), "chain", "app").expect("profile");
+
+        let input = profile.check_authorization(
+            UpdateKind::PolicyTweak,
+            &[(b"sig".to_vec(), owner_pubkey)],
+            &[],
+            true,
+        );
+
+        let expected = GovernanceProfile::would_accept(&input);
+        runner.write_inputs(&input).expect("write inputs");
+
+        let actual = runner.execute_canonical_gate().expect("execute tau");
+        assert_eq!(expected, actual);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

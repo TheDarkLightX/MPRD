@@ -15,18 +15,13 @@
 //! - `IpfsStorage`: Store and retrieve policies from IPFS
 //! - `LocalStorage`: File-based policy storage
 
+pub mod egress;
 pub mod executors;
 pub mod storage;
 
 pub use executors::{
-    HttpExecutor, HttpExecutorConfig,
-    WebhookExecutor, FileExecutor,
-    CompositeExecutor, NoOpExecutor,
+    CompositeExecutor, FileExecutor, HttpExecutor, HttpExecutorConfig, NoOpExecutor,
+    WebhookExecutor,
 };
 
-pub use storage::{
-    PolicyStorage, LocalPolicyStorage,
-    IpfsPolicyStorage, IpfsConfig,
-};
-
-pub fn init() {}
+pub use storage::{IpfsConfig, IpfsPolicyStorage, LocalPolicyStorage};

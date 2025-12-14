@@ -34,28 +34,28 @@
 //! - Verification: O(log n) for random spot checks
 //! - Proof size: O(log n) Merkle paths
 
-pub mod trace;
+pub mod integration;
 pub mod merkle;
 pub mod prover;
-pub mod verifier;
+pub mod trace;
 pub mod tracing_vm;
-pub mod integration;
+pub mod verifier;
 
-pub use trace::{ExecutionTrace, TraceStep};
-pub use merkle::{MerkleTree, MerkleProof};
-pub use prover::{MpbProver, MpbProof};
-pub use verifier::{MpbVerifier, VerificationResult};
 pub use integration::{
-    MpbAttestor, MpbAttestorConfig, MpbProofBundle,
-    MpbLocalVerifier, LocalVerificationResult, AttestationError,
+    AttestationError, LocalVerificationResult, MpbAttestor, MpbAttestorConfig, MpbLocalVerifier,
+    MpbProofBundle,
 };
+pub use merkle::{MerkleProof, MerkleTree};
+pub use prover::{MpbProof, MpbProver};
+pub use trace::{ExecutionTrace, TraceStep};
+pub use verifier::{MpbVerifier, VerificationResult};
 
 /// 32-byte hash used throughout the proof system.
 pub type Hash256 = [u8; 32];
 
 /// Compute SHA-256 hash of arbitrary data.
 pub fn sha256(data: &[u8]) -> Hash256 {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(data);
     hasher.finalize().into()

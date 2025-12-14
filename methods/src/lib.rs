@@ -21,3 +21,26 @@
 
 // Include the generated methods
 include!(concat!(env!("OUT_DIR"), "/methods.rs"));
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn methods_are_embedded() {
+        if std::env::var("RISC0_SKIP_BUILD").as_deref() == Ok("1") {
+            eprintln!("Skipping: RISC0_SKIP_BUILD=1 (embedded guest artifacts may be absent)");
+            return;
+        }
+
+        assert!(
+            !MPRD_GUEST_ELF.is_empty(),
+            "Risc0 guest ELF is empty (methods not embedded). Ensure Risc0 toolchain is installed and build without RISC0_SKIP_BUILD=1"
+        );
+
+        assert!(
+            !MPRD_GUEST_ID.iter().all(|w| *w == 0),
+            "Risc0 guest image ID is all-zero (methods not embedded). Ensure Risc0 toolchain is installed and build without RISC0_SKIP_BUILD=1"
+        );
+    }
+}

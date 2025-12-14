@@ -3,14 +3,18 @@
 //! This module provides production-ready implementations of the core
 //! interfaces defined in lib.rs, enabling real MPRD pipelines.
 
-use crate::{
-    hash::{hash_candidate, hash_decision, hash_state},
-    CandidateAction, Decision, DecisionToken, ExecutionResult, Hash32, NonceHash,
-    ProofBundle, Result, Score, StateProvider, StateSnapshot, Value, Proposer,
-    ZkAttestor, ZkLocalVerifier, VerificationStatus, ExecutorAdapter,
+use crate::anti_replay::{
+    AntiReplayConfig as CoreAntiReplayConfig, InMemoryNonceTracker, NonceValidator,
 };
 use crate::orchestrator::DecisionTokenFactory;
+use crate::{
+    hash::{hash_candidate, hash_decision, hash_state},
+    CandidateAction, Decision, DecisionToken, ExecutionResult, ExecutorAdapter, Hash32, NonceHash,
+    ProofBundle, Proposer, Result, Score, StateProvider, StateSnapshot, Value, VerificationStatus,
+    ZkAttestor, ZkLocalVerifier,
+};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // =============================================================================
@@ -82,7 +86,11 @@ impl SimpleProposer {
     }
 
     /// Create a single candidate with the given action type and params.
-    pub fn single(action_type: impl Into<String>, params: HashMap<String, Value>, score: i64) -> Self {
+    pub fn single(
+        action_type: impl Into<String>,
+        params: HashMap<String, Value>,
+        score: i64,
+    ) -> Self {
         let mut candidate = CandidateAction {
             action_type: action_type.into(),
             params,
@@ -153,7 +161,7 @@ impl SignedDecisionTokenFactory {
         // Stub signature: HMAC-like binding of data with key
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
-        hasher.update(&self.signing_key);
+        hasher.update(self.signing_key);
         hasher.update(data);
         hasher.finalize().to_vec()
     }
@@ -164,8 +172,11 @@ impl DecisionTokenFactory for SignedDecisionTokenFactory {
         let nonce = Self::generate_nonce();
         let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
+            .map_err(|_| crate::MprdError::ExecutionError("System clock error".into()))?
+            .as_millis();
+        let timestamp_ms: i64 = timestamp_ms
+            .try_into()
+            .map_err(|_| crate::MprdError::ExecutionError("System clock overflow".into()))?;
 
         let decision_commitment = hash_decision(decision);
 
@@ -243,8 +254,11 @@ impl DecisionTokenFactory for CryptoDecisionTokenFactory {
         let nonce = Self::generate_nonce();
         let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
+            .map_err(|_| crate::MprdError::ExecutionError("System clock error".into()))?
+            .as_millis();
+        let timestamp_ms: i64 = timestamp_ms
+            .try_into()
+            .map_err(|_| crate::MprdError::ExecutionError("System clock overflow".into()))?;
 
         // Create unsigned token for signing
         let mut token = DecisionToken {
@@ -386,12 +400,18 @@ impl LoggingExecutorAdapter {
 
     /// Get a copy of the execution log.
     pub fn get_log(&self) -> Vec<ExecutedAction> {
-        self.log.lock().unwrap().clone()
+        match self.log.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
     }
 
     /// Clear the execution log.
     pub fn clear_log(&self) {
-        self.log.lock().unwrap().clear();
+        match self.log.lock() {
+            Ok(mut guard) => guard.clear(),
+            Err(poisoned) => poisoned.into_inner().clear(),
+        }
     }
 }
 
@@ -410,7 +430,11 @@ impl ExecutorAdapter for LoggingExecutorAdapter {
             timestamp_ms: token.timestamp_ms,
         };
 
-        self.log.lock().unwrap().push(action);
+        let mut log = self
+            .log
+            .lock()
+            .map_err(|_| crate::MprdError::ExecutionError("Execution log lock poisoned".into()))?;
+        log.push(action);
 
         Ok(ExecutionResult {
             success: true,
@@ -435,7 +459,10 @@ pub struct SignatureVerifyingExecutor<E: ExecutorAdapter> {
 impl<E: ExecutorAdapter> SignatureVerifyingExecutor<E> {
     /// Create a new signature-verifying executor.
     pub fn new(inner: E, verifying_key: crate::crypto::TokenVerifyingKey) -> Self {
-        Self { inner, verifying_key }
+        Self {
+            inner,
+            verifying_key,
+        }
     }
 }
 
@@ -449,6 +476,128 @@ impl<E: ExecutorAdapter> ExecutorAdapter for SignatureVerifyingExecutor<E> {
     }
 }
 
+pub struct SignatureVerifyingBoxedExecutor {
+    inner: Box<dyn ExecutorAdapter + Send + Sync>,
+    verifying_key: crate::crypto::TokenVerifyingKey,
+}
+
+impl SignatureVerifyingBoxedExecutor {
+    pub fn new(
+        inner: Box<dyn ExecutorAdapter + Send + Sync>,
+        verifying_key: crate::crypto::TokenVerifyingKey,
+    ) -> Self {
+        Self {
+            inner,
+            verifying_key,
+        }
+    }
+}
+
+impl ExecutorAdapter for SignatureVerifyingBoxedExecutor {
+    fn execute(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<ExecutionResult> {
+        // SECURITY: fail closed on invalid/missing signatures. This must run before any side
+        // effects (including nonce tracking) to prevent unauthenticated probing.
+        self.verifying_key.verify_token(token, &token.signature)?;
+        self.inner.execute(token, proof)
+    }
+}
+
+pub struct AntiReplayBoxedExecutor {
+    inner: Box<dyn ExecutorAdapter + Send + Sync>,
+    nonce_validator: Arc<dyn NonceValidator>,
+}
+
+impl AntiReplayBoxedExecutor {
+    pub fn new(
+        inner: Box<dyn ExecutorAdapter + Send + Sync>,
+        nonce_validator: Arc<dyn NonceValidator>,
+    ) -> Self {
+        Self {
+            inner,
+            nonce_validator,
+        }
+    }
+}
+
+impl ExecutorAdapter for AntiReplayBoxedExecutor {
+    fn execute(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<ExecutionResult> {
+        // SECURITY: Checks-Effects-Interactions
+        // - Check: validate that the nonce has not been replayed and timestamp is acceptable.
+        // - Interaction: execute the inner action.
+        // - Effect: only mark nonce used on success (prevents attacker-induced nonce DoS).
+        self.nonce_validator.validate(token)?;
+        let result = self.inner.execute(token, proof)?;
+
+        if !result.success {
+            return Ok(result);
+        }
+
+        self.nonce_validator.mark_used(token)?;
+        Ok(result)
+    }
+}
+
+fn nonce_tracker_from_config(config: &crate::config::AntiReplayConfig) -> Arc<dyn NonceValidator> {
+    // SECURITY: translate the user-provided anti-replay settings into the core nonce tracker.
+    // Any omitted fields use the core defaults; this must remain conservative (fail-closed)
+    // relative to replay protection.
+    let tracker_config = CoreAntiReplayConfig {
+        max_token_age_ms: config.max_token_age_ms,
+        max_future_skew_ms: config.max_future_skew_ms,
+        max_tracked_nonces: config.max_tracked_nonces,
+        ..Default::default()
+    };
+    Arc::new(InMemoryNonceTracker::with_config(tracker_config))
+}
+
+fn verifying_key_from_config(
+    config: &crate::config::CryptoConfig,
+) -> Result<crate::crypto::TokenVerifyingKey> {
+    // SECURITY: signatures are only meaningful if key material is configured correctly.
+    // This function must stay fail-closed: missing or malformed keys must produce Err.
+    let Some(ref signing_key_hex) = config.signing_key_hex else {
+        return Err(crate::MprdError::ConfigError(
+            "signing_key_hex is required when require_signatures=true".into(),
+        ));
+    };
+
+    let signing_key = crate::crypto::TokenSigningKey::from_hex(signing_key_hex)?;
+    Ok(signing_key.verifying_key())
+}
+
+pub fn wrap_executor_with_guards(
+    inner: Box<dyn ExecutorAdapter + Send + Sync>,
+    config: &crate::MprdConfig,
+) -> Result<Box<dyn ExecutorAdapter + Send + Sync>> {
+    // SECURITY BOUNDARY: this function is the canonical composition point for runtime execution
+    // guards. It must stay fail-closed: any inability to enforce configured checks returns Err.
+    //
+    // Invariants:
+    // - If `require_signatures=true`, then every accepted token MUST have a valid signature.
+    // - Every successful execution MUST be replay-protected (nonce marked used once).
+    // - Unsuccessful executions MUST NOT consume the nonce (prevents attacker-induced DoS).
+    //
+    // Guard ordering (outermost first):
+    // - Signature verification (when enabled) runs before anti-replay to avoid an attacker using
+    //   unauthenticated traffic to probe nonce-tracker state.
+    // - Anti-replay performs Checks-Effects-Interactions: validate -> execute -> mark_used.
+    let nonce_validator = nonce_tracker_from_config(&config.anti_replay);
+    let mut executor: Box<dyn ExecutorAdapter + Send + Sync> =
+        Box::new(AntiReplayBoxedExecutor::new(inner, nonce_validator));
+
+    if !config.crypto.require_signatures {
+        return Ok(executor);
+    }
+
+    // Fail closed if signatures are required but key material is not configured.
+    let verifying_key = verifying_key_from_config(&config.crypto)?;
+    executor = Box::new(SignatureVerifyingBoxedExecutor::new(
+        executor,
+        verifying_key,
+    ));
+    Ok(executor)
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -456,6 +605,8 @@ impl<E: ExecutorAdapter> ExecutorAdapter for SignatureVerifyingExecutor<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     fn dummy_hash(byte: u8) -> Hash32 {
         Hash32([byte; 32])
@@ -515,7 +666,9 @@ mod tests {
             state_hash: dummy_hash(5),
         };
 
-        let token = factory.create(&decision, &state).expect("create should succeed");
+        let token = factory
+            .create(&decision, &state)
+            .expect("create should succeed");
 
         assert_eq!(token.policy_hash, decision.policy_hash);
         assert_eq!(token.state_hash, state.state_hash);
@@ -611,7 +764,9 @@ mod tests {
             attestation_metadata: HashMap::new(),
         };
 
-        let result = executor.execute(&token, &proof).expect("execute should succeed");
+        let result = executor
+            .execute(&token, &proof)
+            .expect("execute should succeed");
         assert!(result.success);
 
         let log = executor.get_log();
@@ -642,7 +797,9 @@ mod tests {
             state_hash: dummy_hash(5),
         };
 
-        let token = factory.create(&decision, &state).expect("create should succeed");
+        let token = factory
+            .create(&decision, &state)
+            .expect("create should succeed");
 
         // Verify signature
         let result = verifying_key.verify_token(&token, &token.signature);
@@ -729,5 +886,119 @@ mod tests {
 
         let result = executor.execute(&token, &proof);
         assert!(result.is_err());
+    }
+
+    struct CountingExecutor {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl ExecutorAdapter for CountingExecutor {
+        fn execute(&self, _token: &DecisionToken, _proof: &ProofBundle) -> Result<ExecutionResult> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ExecutionResult {
+                success: true,
+                message: None,
+            })
+        }
+    }
+
+    fn now_ms_for_tests() -> i64 {
+        let ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_millis();
+        ms as i64
+    }
+
+    #[test]
+    fn wrap_executor_with_guards_rejects_invalid_signature_without_side_effects() {
+        let seed_hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+        let factory = CryptoDecisionTokenFactory::from_hex(seed_hex).expect("factory");
+        let config = crate::MprdConfig::builder()
+            .signing_key_hex(seed_hex)
+            .require_signatures(true)
+            .build()
+            .expect("config");
+
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: CandidateAction {
+                action_type: "BUY".into(),
+                params: HashMap::new(),
+                score: Score(10),
+                candidate_hash: dummy_hash(2),
+            },
+            policy_hash: dummy_hash(3),
+            decision_commitment: dummy_hash(4),
+        };
+
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(5),
+        };
+
+        let mut token = factory.create(&decision, &state).expect("token");
+        token.signature = vec![0u8; 64];
+        token.timestamp_ms = now_ms_for_tests();
+
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash.clone(),
+            state_hash: token.state_hash.clone(),
+            candidate_set_hash: dummy_hash(6),
+            chosen_action_hash: token.chosen_action_hash.clone(),
+            risc0_receipt: vec![1],
+            attestation_metadata: HashMap::new(),
+        };
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(CountingExecutor {
+            calls: calls.clone(),
+        });
+        let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
+
+        let result = guarded.execute(&token, &proof);
+        assert!(result.is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn wrap_executor_with_guards_rejects_nonce_replay() {
+        let config = crate::MprdConfig::builder()
+            .require_signatures(false)
+            .build()
+            .expect("config");
+
+        let token = DecisionToken {
+            policy_hash: dummy_hash(10),
+            state_hash: dummy_hash(11),
+            chosen_action_hash: dummy_hash(12),
+            nonce_or_tx_hash: dummy_hash(13),
+            timestamp_ms: now_ms_for_tests(),
+            signature: vec![],
+        };
+
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash.clone(),
+            state_hash: token.state_hash.clone(),
+            candidate_set_hash: dummy_hash(14),
+            chosen_action_hash: token.chosen_action_hash.clone(),
+            risc0_receipt: vec![1],
+            attestation_metadata: HashMap::new(),
+        };
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(CountingExecutor {
+            calls: calls.clone(),
+        });
+        let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
+
+        let first = guarded.execute(&token, &proof);
+        assert!(first.is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let second = guarded.execute(&token, &proof);
+        assert!(matches!(second, Err(crate::MprdError::NonceReplay { .. })));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

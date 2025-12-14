@@ -19,10 +19,7 @@
 //! For k=16, n=1000: P(cheat) < 2^-16 ≈ 0.0015%
 //! For k=32, n=1000: P(cheat) < 2^-32 ≈ 0.00000002%
 
-use crate::{
-    prover::MpbProof,
-    Hash256,
-};
+use crate::{prover::MpbProof, Hash256};
 use serde::{Deserialize, Serialize};
 
 /// Result of proof verification.
@@ -163,22 +160,18 @@ impl MpbVerifier {
             }
 
             // Arithmetic correctness
-            if self.config.require_arithmetic_check {
-                if !verify_step_arithmetic(&check.step) {
-                    return VerificationResult::Invalid(VerificationError::ArithmeticError {
-                        step: check.step.step,
-                        opcode: check.step.opcode,
-                    });
-                }
+            if self.config.require_arithmetic_check && !verify_step_arithmetic(&check.step) {
+                return VerificationResult::Invalid(VerificationError::ArithmeticError {
+                    step: check.step.step,
+                    opcode: check.step.opcode,
+                });
             }
 
             // Stack transition
-            if self.config.require_stack_check {
-                if !verify_stack_transition(&check.step) {
-                    return VerificationResult::Invalid(VerificationError::StackTransitionError {
-                        step: check.step.step,
-                    });
-                }
+            if self.config.require_stack_check && !verify_stack_transition(&check.step) {
+                return VerificationResult::Invalid(VerificationError::StackTransitionError {
+                    step: check.step.step,
+                });
             }
         }
 
@@ -249,31 +242,31 @@ fn verify_step_arithmetic(step: &crate::trace::TraceStep) -> bool {
     let r = step.result;
 
     match step.opcode {
-        0x01 => true, // PUSH: result is the pushed value
-        0x02 => true, // POP: no arithmetic
-        0x03 => true, // DUP: no arithmetic
-        0x04 => true, // SWAP: no arithmetic
-        0x10 => true, // LOAD_REG: result is register value
-        0x20 => r == a.saturating_add(b), // ADD
-        0x21 => r == a.saturating_sub(b), // SUB
-        0x22 => r == a.saturating_mul(b), // MUL
-        0x23 => b != 0 && r == a / b,     // DIV
-        0x24 => b != 0 && r == a % b,     // MOD
-        0x25 => r == a.saturating_neg(),  // NEG
-        0x26 => r == a.saturating_abs(),  // ABS
-        0x30 => r == if a == b { 1 } else { 0 }, // EQ
-        0x31 => r == if a != b { 1 } else { 0 }, // NE
-        0x32 => r == if a < b { 1 } else { 0 },  // LT
-        0x33 => r == if a <= b { 1 } else { 0 }, // LE
-        0x34 => r == if a > b { 1 } else { 0 },  // GT
-        0x35 => r == if a >= b { 1 } else { 0 }, // GE
+        0x01 => true,                                      // PUSH: result is the pushed value
+        0x02 => true,                                      // POP: no arithmetic
+        0x03 => true,                                      // DUP: no arithmetic
+        0x04 => true,                                      // SWAP: no arithmetic
+        0x10 => true,                                      // LOAD_REG: result is register value
+        0x20 => r == a.saturating_add(b),                  // ADD
+        0x21 => r == a.saturating_sub(b),                  // SUB
+        0x22 => r == a.saturating_mul(b),                  // MUL
+        0x23 => b != 0 && r == a / b,                      // DIV
+        0x24 => b != 0 && r == a % b,                      // MOD
+        0x25 => r == a.saturating_neg(),                   // NEG
+        0x26 => r == a.saturating_abs(),                   // ABS
+        0x30 => r == if a == b { 1 } else { 0 },           // EQ
+        0x31 => r == if a != b { 1 } else { 0 },           // NE
+        0x32 => r == if a < b { 1 } else { 0 },            // LT
+        0x33 => r == if a <= b { 1 } else { 0 },           // LE
+        0x34 => r == if a > b { 1 } else { 0 },            // GT
+        0x35 => r == if a >= b { 1 } else { 0 },           // GE
         0x40 => r == if a != 0 && b != 0 { 1 } else { 0 }, // AND
         0x41 => r == if a != 0 || b != 0 { 1 } else { 0 }, // OR
-        0x42 => r == if a == 0 { 1 } else { 0 }, // NOT
-        0x50 => r == (a & b),  // BIT_AND
-        0x51 => r == (a | b),  // BIT_OR
-        0x52 => r == (a ^ b),  // BIT_XOR
-        0x53 => r == !a,       // BIT_NOT
+        0x42 => r == if a == 0 { 1 } else { 0 },           // NOT
+        0x50 => r == (a & b),                              // BIT_AND
+        0x51 => r == (a | b),                              // BIT_OR
+        0x52 => r == (a ^ b),                              // BIT_XOR
+        0x53 => r == !a,                                   // BIT_NOT
         0x54 => {
             let shift = (b as u32).min(63);
             r == a.wrapping_shl(shift)
@@ -282,8 +275,8 @@ fn verify_step_arithmetic(step: &crate::trace::TraceStep) -> bool {
             let shift = (b as u32).min(63);
             r == a.wrapping_shr(shift)
         } // SHR
-        0xFF => true, // HALT: result is popped value
-        _ => false,   // Unknown opcode
+        0xFF => true,                                      // HALT: result is popped value
+        _ => false,                                        // Unknown opcode
     }
 }
 
@@ -292,11 +285,11 @@ fn verify_stack_transition(step: &crate::trace::TraceStep) -> bool {
     let delta = step.sp_after as i16 - step.sp_before as i16;
 
     match step.opcode {
-        0x01 => delta == 1,  // PUSH: +1
-        0x02 => delta == -1, // POP: -1
-        0x03 => delta == 1,  // DUP: +1
-        0x04 => delta == 0,  // SWAP: 0
-        0x10 => delta == 1,  // LOAD_REG: +1
+        0x01 => delta == 1,         // PUSH: +1
+        0x02 => delta == -1,        // POP: -1
+        0x03 => delta == 1,         // DUP: +1
+        0x04 => delta == 0,         // SWAP: 0
+        0x10 => delta == 1,         // LOAD_REG: +1
         0x20..=0x24 => delta == -1, // Binary arithmetic: -1
         0x25 | 0x26 => delta == 0,  // Unary arithmetic: 0
         0x30..=0x35 => delta == -1, // Comparison: -1
@@ -359,7 +352,7 @@ mod tests {
     fn verify_valid_proof() {
         let trace = make_valid_trace(100);
         let prover = MpbProver::new();
-        let proof = prover.prove(&trace);
+        let proof = prover.prove(&trace).expect("prove");
 
         let verifier = MpbVerifier::new();
         let result = verifier.verify(&proof);
@@ -371,7 +364,7 @@ mod tests {
     fn verify_tampered_output_fails() {
         let trace = make_valid_trace(100);
         let prover = MpbProver::new();
-        let mut proof = prover.prove(&trace);
+        let mut proof = prover.prove(&trace).expect("prove");
 
         // Tamper with output
         proof.output = 999;
@@ -389,7 +382,7 @@ mod tests {
     fn verify_tampered_first_step_fails() {
         let trace = make_valid_trace(100);
         let prover = MpbProver::new();
-        let mut proof = prover.prove(&trace);
+        let mut proof = prover.prove(&trace).expect("prove");
 
         // Tamper with first step
         proof.first_step.ip = 99;
@@ -407,7 +400,7 @@ mod tests {
     fn verify_non_halt_last_step_fails() {
         let trace = make_valid_trace(100);
         let prover = MpbProver::new();
-        let mut proof = prover.prove(&trace);
+        let mut proof = prover.prove(&trace).expect("prove");
 
         // Change last step opcode (not HALT)
         proof.last_step.opcode = 0x20;
@@ -435,8 +428,8 @@ mod tests {
             seed: Some(42),
         });
 
-        let proof_few = prover_few.prove(&trace);
-        let proof_many = prover_many.prove(&trace);
+        let proof_few = prover_few.prove(&trace).expect("prove");
+        let proof_many = prover_many.prove(&trace).expect("prove");
 
         let verifier = MpbVerifier::new();
         let bits_few = verifier.security_bits(&proof_few);

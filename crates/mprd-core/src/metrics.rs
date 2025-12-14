@@ -17,8 +17,8 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::sync::RwLock;
+use std::time::Instant;
 
 // =============================================================================
 // Metric Types
@@ -32,17 +32,19 @@ pub struct Counter {
 
 impl Counter {
     pub fn new() -> Self {
-        Self { value: AtomicU64::new(0) }
+        Self {
+            value: AtomicU64::new(0),
+        }
     }
-    
+
     pub fn inc(&self) {
         self.value.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     pub fn inc_by(&self, n: u64) {
         self.value.fetch_add(n, Ordering::Relaxed);
     }
-    
+
     pub fn get(&self) -> u64 {
         self.value.load(Ordering::Relaxed)
     }
@@ -56,21 +58,23 @@ pub struct Gauge {
 
 impl Gauge {
     pub fn new() -> Self {
-        Self { value: AtomicU64::new(0) }
+        Self {
+            value: AtomicU64::new(0),
+        }
     }
-    
+
     pub fn set(&self, v: u64) {
         self.value.store(v, Ordering::Relaxed);
     }
-    
+
     pub fn inc(&self) {
         self.value.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     pub fn dec(&self) {
         self.value.fetch_sub(1, Ordering::Relaxed);
     }
-    
+
     pub fn get(&self) -> u64 {
         self.value.load(Ordering::Relaxed)
     }
@@ -87,14 +91,16 @@ pub struct Histogram {
 impl Histogram {
     /// Create with default buckets suitable for latencies (in milliseconds).
     pub fn new_latency() -> Self {
-        Self::new(vec![1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 5000.0])
+        Self::new(vec![
+            1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 5000.0,
+        ])
     }
-    
+
     pub fn new(bucket_bounds: Vec<f64>) -> Self {
         let buckets = (0..=bucket_bounds.len())
             .map(|_| AtomicU64::new(0))
             .collect();
-        
+
         Self {
             buckets,
             bucket_bounds,
@@ -102,7 +108,7 @@ impl Histogram {
             count: AtomicU64::new(0),
         }
     }
-    
+
     pub fn observe(&self, value: f64) {
         // Find bucket
         let mut bucket_idx = self.bucket_bounds.len();
@@ -112,20 +118,21 @@ impl Histogram {
                 break;
             }
         }
-        
+
         self.buckets[bucket_idx].fetch_add(1, Ordering::Relaxed);
-        self.sum.fetch_add((value * 1000.0) as u64, Ordering::Relaxed); // Store as micros
+        self.sum
+            .fetch_add((value * 1000.0) as u64, Ordering::Relaxed); // Store as micros
         self.count.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     pub fn get_count(&self) -> u64 {
         self.count.load(Ordering::Relaxed)
     }
-    
+
     pub fn get_sum(&self) -> f64 {
         self.sum.load(Ordering::Relaxed) as f64 / 1000.0
     }
-    
+
     pub fn get_mean(&self) -> f64 {
         let count = self.get_count();
         if count == 0 {
@@ -149,17 +156,17 @@ pub struct MprdMetrics {
     pub attestations_total: Counter,
     pub verifications_total: Counter,
     pub executions_total: Counter,
-    
+
     pub actions_allowed: Counter,
     pub actions_denied: Counter,
     pub selection_failures: Counter,
     pub verification_failures: Counter,
     pub execution_failures: Counter,
-    
+
     // Gauges
     pub active_policies: Gauge,
     pub pending_executions: Gauge,
-    
+
     // Histograms (latencies in ms)
     pub proposal_latency: Histogram,
     pub evaluation_latency: Histogram,
@@ -168,7 +175,7 @@ pub struct MprdMetrics {
     pub verification_latency: Histogram,
     pub execution_latency: Histogram,
     pub total_pipeline_latency: Histogram,
-    
+
     // Per-policy counters
     policy_decisions: RwLock<HashMap<String, Counter>>,
 }
@@ -182,16 +189,16 @@ impl MprdMetrics {
             attestations_total: Counter::new(),
             verifications_total: Counter::new(),
             executions_total: Counter::new(),
-            
+
             actions_allowed: Counter::new(),
             actions_denied: Counter::new(),
             selection_failures: Counter::new(),
             verification_failures: Counter::new(),
             execution_failures: Counter::new(),
-            
+
             active_policies: Gauge::new(),
             pending_executions: Gauge::new(),
-            
+
             proposal_latency: Histogram::new_latency(),
             evaluation_latency: Histogram::new_latency(),
             selection_latency: Histogram::new_latency(),
@@ -199,11 +206,11 @@ impl MprdMetrics {
             verification_latency: Histogram::new_latency(),
             execution_latency: Histogram::new_latency(),
             total_pipeline_latency: Histogram::new_latency(),
-            
+
             policy_decisions: RwLock::new(HashMap::new()),
         }
     }
-    
+
     /// Record a decision for a specific policy.
     pub fn record_policy_decision(&self, policy_hash: &str) {
         if let Ok(mut map) = self.policy_decisions.write() {
@@ -212,7 +219,7 @@ impl MprdMetrics {
                 .inc();
         }
     }
-    
+
     /// Get decision count for a policy.
     pub fn get_policy_decisions(&self, policy_hash: &str) -> u64 {
         if let Ok(map) = self.policy_decisions.read() {
@@ -221,7 +228,7 @@ impl MprdMetrics {
             0
         }
     }
-    
+
     /// Export metrics as JSON.
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
@@ -358,69 +365,69 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn counter_increments() {
         let counter = Counter::new();
         assert_eq!(counter.get(), 0);
-        
+
         counter.inc();
         assert_eq!(counter.get(), 1);
-        
+
         counter.inc_by(5);
         assert_eq!(counter.get(), 6);
     }
-    
+
     #[test]
     fn gauge_goes_up_and_down() {
         let gauge = Gauge::new();
-        
+
         gauge.set(100);
         assert_eq!(gauge.get(), 100);
-        
+
         gauge.inc();
         assert_eq!(gauge.get(), 101);
-        
+
         gauge.dec();
         assert_eq!(gauge.get(), 100);
     }
-    
+
     #[test]
     fn histogram_tracks_distribution() {
         let hist = Histogram::new_latency();
-        
+
         hist.observe(5.0);
         hist.observe(10.0);
         hist.observe(15.0);
-        
+
         assert_eq!(hist.get_count(), 3);
         assert!((hist.get_mean() - 10.0).abs() < 0.1);
     }
-    
+
     #[test]
     fn metrics_export_to_json() {
         let metrics = MprdMetrics::new();
-        
+
         metrics.proposals_total.inc();
         metrics.evaluations_total.inc();
         metrics.actions_allowed.inc();
-        
+
         let json = metrics.to_json();
-        
+
         assert_eq!(json["counters"]["proposals_total"], 1);
         assert_eq!(json["counters"]["evaluations_total"], 1);
         assert_eq!(json["counters"]["actions_allowed"], 1);
     }
-    
+
     #[test]
     fn timed_functions_record_latency() {
         let metrics = MprdMetrics::new();
-        
+
         let result = timed_propose(&metrics, || {
             std::thread::sleep(std::time::Duration::from_millis(10));
             42
         });
-        
+
         assert_eq!(result, 42);
         assert_eq!(metrics.proposals_total.get(), 1);
         assert!(metrics.proposal_latency.get_mean() >= 10.0);

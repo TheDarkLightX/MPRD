@@ -5,17 +5,18 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use axum::{routing::{get, post}, Json, Router};
+use axum::{
+    routing::{get, post},
+    Json, Router,
+};
 use serde::{Deserialize, Serialize};
 
-use mprd_core::{
-    DefaultSelector, PolicyEngine, PolicyHash, RuleVerdict, StateSnapshot, Value,
-};
 use mprd_core::components::{
-    SimpleStateProvider, SimpleProposer, SignedDecisionTokenFactory,
-    StubZkAttestor, StubZkLocalVerifier, LoggingExecutorAdapter,
+    LoggingExecutorAdapter, SignedDecisionTokenFactory, SimpleProposer, SimpleStateProvider,
+    StubZkAttestor, StubZkLocalVerifier,
 };
 use mprd_core::orchestrator::{self};
+use mprd_core::{DefaultSelector, PolicyEngine, PolicyHash, RuleVerdict, StateSnapshot, Value};
 use mprd_zk::decentralization::{
     LocalOnChainRegistry, LocalTimestampAnchorStore, RegistryRecorder,
 };
@@ -55,21 +56,22 @@ struct RunResponse {
     message: Option<String>,
 }
 
+fn json_number_to_value(n: &serde_json::Number) -> Option<Value> {
+    let Some(i) = n.as_i64() else {
+        return n.as_u64().map(Value::UInt);
+    };
+
+    if i < 0 {
+        return Some(Value::Int(i));
+    }
+
+    n.as_u64().map(Value::UInt)
+}
+
 fn json_to_value(v: serde_json::Value) -> Option<Value> {
     match v {
         serde_json::Value::Bool(b) => Some(Value::Bool(b)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                if i < 0 {
-                    return Some(Value::Int(i));
-                }
-                if let Some(u) = n.as_u64() {
-                    return Some(Value::UInt(u));
-                }
-                return Some(Value::Int(i));
-            }
-            n.as_u64().map(Value::UInt)
-        }
+        serde_json::Value::Number(n) => json_number_to_value(&n),
         serde_json::Value::String(s) => Some(Value::String(s)),
         _ => None,
     }
@@ -110,14 +112,14 @@ fn build_state_fields(
     Ok(fields)
 }
 
-fn run_anchored_demo(demo_fields: HashMap<String, Value>) -> CoreResult<mprd_core::ExecutionResult> {
+fn run_anchored_demo(
+    demo_fields: HashMap<String, Value>,
+) -> CoreResult<mprd_core::ExecutionResult> {
     let state_provider = SimpleStateProvider::new(demo_fields);
 
     let proposer = SimpleProposer::single(
         "DEMO_ACTION",
-        HashMap::from([
-            ("amount".into(), Value::UInt(10)),
-        ]),
+        HashMap::from([("amount".into(), Value::UInt(10))]),
         100,
     );
 
@@ -134,18 +136,20 @@ fn run_anchored_demo(demo_fields: HashMap<String, Value>) -> CoreResult<mprd_cor
 
     let policy_hash = mprd_core::Hash32([1u8; 32]);
 
-    orchestrator::run_once_with_recorder(
-        &state_provider,
-        &proposer,
-        &policy_engine,
-        &selector,
-        &token_factory,
-        &attestor,
-        &verifier,
-        &executor,
-        &recorder,
-        &policy_hash,
-    )
+    orchestrator::run_once_with_recorder(orchestrator::RunOnceInputsWithRecorder {
+        inputs: orchestrator::RunOnceInputs {
+            state_provider: &state_provider,
+            proposer: &proposer,
+            policy_engine: &policy_engine,
+            selector: &selector,
+            token_factory: &token_factory,
+            attestor: &attestor,
+            verifier: &verifier,
+            executor: &executor,
+            policy_hash: &policy_hash,
+        },
+        recorder: &recorder,
+    })
 }
 
 async fn health() -> Json<serde_json::Value> {
@@ -200,8 +204,15 @@ async fn start_server(addr: SocketAddr) -> anyhow::Result<()> {
 pub fn run(
     bind: String,
     policy_dir: Option<PathBuf>,
+    insecure_demo: bool,
     config_path: Option<PathBuf>,
 ) -> Result<()> {
+    if !insecure_demo {
+        anyhow::bail!(
+            "Refusing to serve: `mprd serve` currently exposes demo-only endpoints (allow-all policy engine and stub ZK). Re-run with --insecure-demo to acknowledge demo-only behavior."
+        );
+    }
+
     println!("🌐 MPRD HTTP Server");
     println!();
     println!("   Bind: {}", bind);
@@ -209,7 +220,7 @@ pub fn run(
         println!("   Policy dir: {}", dir.display());
     }
     println!();
-    
+
     // For now, just print the planned API
     println!("📡 API Endpoints (planned):");
     println!();
@@ -240,7 +251,7 @@ pub fn run(
     println!("   GET  /health");
     println!("        Health check");
     println!();
-    
+
     println!("⚠️  HTTP server not yet implemented.");
     println!("    This will be added in a future update.");
     println!();
@@ -266,7 +277,10 @@ mod tests {
 
     #[test]
     fn json_to_value_supports_bool_int_uint_and_string() {
-        assert_eq!(json_to_value(serde_json::json!(true)), Some(Value::Bool(true)));
+        assert_eq!(
+            json_to_value(serde_json::json!(true)),
+            Some(Value::Bool(true))
+        );
         assert_eq!(json_to_value(serde_json::json!(-1)), Some(Value::Int(-1)));
         assert_eq!(json_to_value(serde_json::json!(1)), Some(Value::UInt(1)));
         assert_eq!(
@@ -287,7 +301,9 @@ mod tests {
         let mut input = HashMap::new();
         input.insert("nested".to_string(), serde_json::json!({"x": 1}));
         let err = build_state_fields(Some(input)).expect_err("should fail closed");
-        assert!(err.to_string().contains("All provided state fields were invalid"));
+        assert!(err
+            .to_string()
+            .contains("All provided state fields were invalid"));
     }
 
     #[test]
@@ -297,5 +313,12 @@ mod tests {
         input.insert("nested".to_string(), serde_json::json!({"x": 1}));
         let fields = build_state_fields(Some(input)).expect("should succeed");
         assert_eq!(fields.get("balance"), Some(&Value::UInt(7)));
+    }
+
+    #[test]
+    fn serve_fails_closed_without_insecure_demo_flag() {
+        let err = super::run("127.0.0.1:0".to_string(), None, false, None)
+            .expect_err("should refuse to start without explicit insecure_demo");
+        assert!(err.to_string().contains("Refusing to serve"));
     }
 }

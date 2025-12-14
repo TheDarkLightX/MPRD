@@ -43,13 +43,13 @@
 //! ```
 
 use crate::error::{ModeError, ModeResult};
-use mprd_core::{Hash32, StateSnapshot, Value};
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Key, Nonce};
+use mprd_core::{StateSnapshot, Value};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use tracing::{debug, info};
-use aes_gcm::{Aes256Gcm, Key, Nonce};
-use aes_gcm::aead::{Aead, KeyInit};
 
 // =============================================================================
 // Commitment Schemes
@@ -176,7 +176,7 @@ impl CommitmentGenerator {
             .unwrap_or_default()
             .as_nanos();
         let mut hasher = Sha256::new();
-        hasher.update(&now.to_le_bytes());
+        hasher.update(now.to_le_bytes());
         hasher.update(b"mprd_blinding_fallback_v1");
         blinding.copy_from_slice(&hasher.finalize());
         blinding
@@ -275,7 +275,10 @@ impl StateEncryptor {
     }
 
     /// Encrypt a state snapshot.
-    pub fn encrypt(&self, state: &StateSnapshot) -> ModeResult<(EncryptedState, EncryptionWitness)> {
+    pub fn encrypt(
+        &self,
+        state: &StateSnapshot,
+    ) -> ModeResult<(EncryptedState, EncryptionWitness)> {
         info!(key_id = %self.config.key_id, "Encrypting state");
 
         // Serialize state
@@ -323,18 +326,21 @@ impl StateEncryptor {
     }
 
     /// Verify encrypted state matches commitment.
-    pub fn verify_commitment(&self, encrypted: &EncryptedState, opening: &CommitmentOpening) -> bool {
-        self.commitment_gen.verify(&encrypted.state_commitment, opening)
+    pub fn verify_commitment(
+        &self,
+        encrypted: &EncryptedState,
+        opening: &CommitmentOpening,
+    ) -> bool {
+        self.commitment_gen
+            .verify(&encrypted.state_commitment, opening)
     }
 
     fn serialize_state(&self, state: &StateSnapshot) -> ModeResult<Vec<u8>> {
-        serde_json::to_vec(state)
-            .map_err(|e| ModeError::SerializationError(e.to_string()))
+        serde_json::to_vec(state).map_err(|e| ModeError::SerializationError(e.to_string()))
     }
 
     fn serialize_value(&self, value: &Value) -> ModeResult<Vec<u8>> {
-        serde_json::to_vec(value)
-            .map_err(|e| ModeError::SerializationError(e.to_string()))
+        serde_json::to_vec(value).map_err(|e| ModeError::SerializationError(e.to_string()))
     }
 
     fn derive_key(&self) -> [u8; 32] {
@@ -542,6 +548,7 @@ pub struct PrivateAttestationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mprd_core::Hash32;
 
     #[test]
     fn commitment_hiding_and_binding() {
@@ -640,10 +647,13 @@ mod tests {
     fn selective_disclosure_builder() {
         let disclosure = SelectiveDisclosureBuilder::new()
             .disclose("public_field", Value::Int(100))
-            .hide("private_field", Commitment {
-                hash: [1u8; 32],
-                scheme: CommitmentScheme::Sha256,
-            })
+            .hide(
+                "private_field",
+                Commitment {
+                    hash: [1u8; 32],
+                    scheme: CommitmentScheme::Sha256,
+                },
+            )
             .prove_property(PropertyProof {
                 field: "private_field".into(),
                 property: Property::LessOrEqual { bound: 1000 },

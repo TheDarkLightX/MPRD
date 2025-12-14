@@ -9,9 +9,9 @@ use mprd_core::{
         SimpleProposer, SimpleStateProvider, StubZkAttestor, StubZkLocalVerifier,
     },
     config::MprdConfig,
-    orchestrator::run_once,
-    DefaultSelector, Hash32, PolicyEngine, PolicyHash, Proposer, RuleVerdict, StateSnapshot,
-    CandidateAction, Result, Value,
+    orchestrator::{run_once, RunOnceInputs},
+    CandidateAction, DefaultSelector, Hash32, PolicyEngine, PolicyHash, Proposer, Result,
+    RuleVerdict, StateSnapshot, Value,
 };
 use std::collections::HashMap;
 
@@ -51,7 +51,10 @@ impl PolicyEngine for RiskThresholdPolicyEngine {
             .map(|_| RuleVerdict {
                 allowed: risk <= self.threshold,
                 reasons: if risk > self.threshold {
-                    vec![format!("risk {} exceeds threshold {}", risk, self.threshold)]
+                    vec![format!(
+                        "risk {} exceeds threshold {}",
+                        risk, self.threshold
+                    )]
                 } else {
                     vec![]
                 },
@@ -106,17 +109,17 @@ fn end_to_end_with_crypto_signatures() {
     let policy_hash = dummy_hash(1);
 
     // Execute the pipeline
-    let result = run_once(
-        &state_provider,
-        &proposer,
-        &policy_engine,
-        &selector,
-        &token_factory,
-        &attestor,
-        &verifier,
-        &executor,
-        &policy_hash,
-    );
+    let result = run_once(RunOnceInputs {
+        state_provider: &state_provider,
+        proposer: &proposer,
+        policy_engine: &policy_engine,
+        selector: &selector,
+        token_factory: &token_factory,
+        attestor: &attestor,
+        verifier: &verifier,
+        executor: &executor,
+        policy_hash: &policy_hash,
+    });
 
     assert!(result.is_ok(), "Pipeline should succeed");
     let execution_result = result.unwrap();
@@ -146,19 +149,22 @@ fn end_to_end_policy_denial() {
     let policy_hash = dummy_hash(1);
 
     // Execute the pipeline - should fail because no candidates are allowed
-    let result = run_once(
-        &state_provider,
-        &proposer,
-        &policy_engine,
-        &selector,
-        &token_factory,
-        &attestor,
-        &verifier,
-        &executor,
-        &policy_hash,
-    );
+    let result = run_once(RunOnceInputs {
+        state_provider: &state_provider,
+        proposer: &proposer,
+        policy_engine: &policy_engine,
+        selector: &selector,
+        token_factory: &token_factory,
+        attestor: &attestor,
+        verifier: &verifier,
+        executor: &executor,
+        policy_hash: &policy_hash,
+    });
 
-    assert!(result.is_err(), "Pipeline should fail when all candidates denied");
+    assert!(
+        result.is_err(),
+        "Pipeline should fail when all candidates denied"
+    );
 }
 
 #[test]
@@ -175,9 +181,7 @@ fn signature_verification_prevents_tampering() {
     let executor = SignatureVerifyingExecutor::new(inner_executor, factory2.verifying_key());
 
     // Create a token signed by factory1
-    let state_provider = SimpleStateProvider::new(HashMap::from([
-        ("risk".into(), Value::Int(50)),
-    ]));
+    let state_provider = SimpleStateProvider::new(HashMap::from([("risk".into(), Value::Int(50))]));
 
     let proposer = SimpleProposer::single("TRADE", HashMap::new(), 10);
     let policy_engine = RiskThresholdPolicyEngine::new(100);
@@ -188,29 +192,27 @@ fn signature_verification_prevents_tampering() {
     let policy_hash = dummy_hash(1);
 
     // Run with factory1 (wrong signer)
-    let result = run_once(
-        &state_provider,
-        &proposer,
-        &policy_engine,
-        &selector,
-        &factory1, // Signed by wrong key
-        &attestor,
-        &verifier,
-        &executor, // Verifies with factory2's key
-        &policy_hash,
-    );
+    let result = run_once(RunOnceInputs {
+        state_provider: &state_provider,
+        proposer: &proposer,
+        policy_engine: &policy_engine,
+        selector: &selector,
+        token_factory: &factory1,
+        attestor: &attestor,
+        verifier: &verifier,
+        executor: &executor,
+        policy_hash: &policy_hash,
+    });
 
     assert!(result.is_err(), "Should reject token signed with wrong key");
 }
 
 #[test]
 fn multiple_candidates_highest_score_selected() {
-    let state_provider = SimpleStateProvider::new(HashMap::from([
-        ("risk".into(), Value::Int(50)),
-    ]));
+    let state_provider = SimpleStateProvider::new(HashMap::from([("risk".into(), Value::Int(50))]));
 
     // Multiple candidates with different scores
-    let candidates = vec![
+    let candidates = [
         ("LOW_TRADE", 5),
         ("MED_TRADE", 15),
         ("HIGH_TRADE", 25), // Highest score, should be selected
@@ -220,17 +222,13 @@ fn multiple_candidates_highest_score_selected() {
         candidates
             .iter()
             .map(|(name, score)| {
-                let mut action = SimpleProposer::single(
-                    *name,
-                    HashMap::new(),
-                    *score,
-                )
-                .propose(&StateSnapshot {
-                    fields: HashMap::new(),
-                    policy_inputs: HashMap::new(),
-                    state_hash: dummy_hash(0),
-                })
-                .unwrap();
+                let mut action = SimpleProposer::single(*name, HashMap::new(), *score)
+                    .propose(&StateSnapshot {
+                        fields: HashMap::new(),
+                        policy_inputs: HashMap::new(),
+                        state_hash: dummy_hash(0),
+                    })
+                    .unwrap();
                 action.pop().unwrap()
             })
             .collect(),
@@ -245,17 +243,17 @@ fn multiple_candidates_highest_score_selected() {
 
     let policy_hash = dummy_hash(1);
 
-    let result = run_once(
-        &state_provider,
-        &proposer,
-        &policy_engine,
-        &selector,
-        &token_factory,
-        &attestor,
-        &verifier,
-        &executor,
-        &policy_hash,
-    );
+    let result = run_once(RunOnceInputs {
+        state_provider: &state_provider,
+        proposer: &proposer,
+        policy_engine: &policy_engine,
+        selector: &selector,
+        token_factory: &token_factory,
+        attestor: &attestor,
+        verifier: &verifier,
+        executor: &executor,
+        policy_hash: &policy_hash,
+    });
 
     assert!(result.is_ok());
 
@@ -274,9 +272,7 @@ fn config_validation_works() {
     assert!(config.is_ok());
 
     // Invalid: zero candidates
-    let config = MprdConfig::builder()
-        .max_candidates(0)
-        .build();
+    let config = MprdConfig::builder().max_candidates(0).build();
     assert!(config.is_err());
 
     // Invalid: bad signing key

@@ -21,8 +21,8 @@
 //! - Uses Risc0 zkVM receipts; no simulated proofs are compiled into this module
 
 use mprd_core::{
-    CandidateAction, Decision, DecisionToken, Hash32, MprdError, ProofBundle,
-    RuleVerdict, Result, StateSnapshot, VerificationStatus, ZkAttestor, ZkLocalVerifier,
+    CandidateAction, Decision, DecisionToken, Hash32, MprdError, ProofBundle, Result, RuleVerdict,
+    StateSnapshot, VerificationStatus, ZkLocalVerifier,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -34,13 +34,29 @@ use risc0_zkvm::{default_prover, ExecutorEnv, Receipt};
 // Configuration
 // =============================================================================
 
+fn validate_embedded_methods(guest_elf: &'static [u8], image_id: [u8; 32]) -> Result<()> {
+    if guest_elf.is_empty() {
+        return Err(MprdError::ZkError(
+            "Risc0 guest ELF is empty (methods not embedded). Rebuild without RISC0_SKIP_BUILD=1 and ensure the Risc0 toolchain/guest target are installed".into(),
+        ));
+    }
+
+    if image_id == [0u8; 32] {
+        return Err(MprdError::ZkError(
+            "Risc0 image_id is all-zero (methods not embedded). Rebuild without RISC0_SKIP_BUILD=1 and ensure the Risc0 toolchain/guest target are installed".into(),
+        ));
+    }
+
+    Ok(())
+}
+
 /// Configuration for the Risc0 host.
 #[derive(Clone, Debug)]
 pub struct Risc0HostConfig {
     /// The image ID of the guest program.
     /// This is a cryptographic commitment to the guest code.
     pub image_id: [u8; 32],
-    
+
     /// Maximum proving time in seconds.
     pub max_prove_time_secs: u64,
 }
@@ -106,16 +122,21 @@ pub fn compute_expected_hashes(
     let policy_hash = Hash32(hash_with_domain(b"MPRD_POLICY_V1", policy_bytes));
     let state_hash = Hash32(hash_with_domain(b"MPRD_STATE_V1", state_bytes));
     let candidate_set_hash = Hash32(hash_with_domain(b"MPRD_CANDIDATES_V1", candidates_bytes));
-    
+
     let chosen_action_hash = {
         let mut hasher = Sha256::new();
         hasher.update(b"MPRD_CHOSEN_V1");
         hasher.update(candidates_bytes);
-        hasher.update(&chosen_index.to_le_bytes());
+        hasher.update(chosen_index.to_le_bytes());
         Hash32(hasher.finalize().into())
     };
-    
-    (policy_hash, state_hash, candidate_set_hash, chosen_action_hash)
+
+    (
+        policy_hash,
+        state_hash,
+        candidate_set_hash,
+        chosen_action_hash,
+    )
 }
 
 // =============================================================================
@@ -152,9 +173,12 @@ impl Risc0Attestor {
     /// * `guest_elf` - Compiled guest program (from mprd-risc0-methods)
     /// * `image_id` - Cryptographic hash of guest program
     pub fn new(guest_elf: &'static [u8], image_id: [u8; 32]) -> Self {
-        Self { guest_elf, image_id }
+        Self {
+            guest_elf,
+            image_id,
+        }
     }
-    
+
     /// Prepare guest input from MPRD types.
     ///
     /// # Preconditions
@@ -171,23 +195,27 @@ impl Risc0Attestor {
         if decision.chosen_index >= candidates.len() {
             return Err(MprdError::InvalidInput(format!(
                 "chosen_index {} out of bounds for {} candidates",
-                decision.chosen_index, candidates.len()
+                decision.chosen_index,
+                candidates.len()
             )));
         }
-        
+
         // Serialize policy
         let policy_bytes = decision.policy_hash.0.to_vec();
-        
+
         // Serialize state
         let state_bytes = serde_json::to_vec(&state.fields)
             .map_err(|e| MprdError::ZkError(format!("Failed to serialize state: {}", e)))?;
-        
+
         // Serialize candidates
-        let candidates_bytes = serde_json::to_vec(&candidates.iter().map(|c| {
-            (&c.action_type, &c.params, c.score.0)
-        }).collect::<Vec<_>>())
-            .map_err(|e| MprdError::ZkError(format!("Failed to serialize candidates: {}", e)))?;
-        
+        let candidates_bytes = serde_json::to_vec(
+            &candidates
+                .iter()
+                .map(|c| (&c.action_type, &c.params, c.score.0))
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|e| MprdError::ZkError(format!("Failed to serialize candidates: {}", e)))?;
+
         Ok(GuestInput {
             policy_bytes,
             state_bytes,
@@ -197,7 +225,7 @@ impl Risc0Attestor {
             chosen_verdict_allowed: verdict.allowed, // Use actual verdict, not hardcoded
         })
     }
-    
+
     /// Generate a real ZK proof for the decision.
     ///
     /// # Arguments
@@ -212,43 +240,48 @@ impl Risc0Attestor {
         candidates: &[CandidateAction],
         verdict: &RuleVerdict,
     ) -> Result<ProofBundle> {
+        validate_embedded_methods(self.guest_elf, self.image_id)?;
+
         let input = self.prepare_input(decision, state, candidates, verdict)?;
-        
+
         // Build execution environment with input
         let env = ExecutorEnv::builder()
             .write(&input)
             .map_err(|e| MprdError::ZkError(format!("Failed to write input: {}", e)))?
             .build()
             .map_err(|e| MprdError::ZkError(format!("Failed to build env: {}", e)))?;
-        
+
         // Create prover and generate proof
         let prover = default_prover();
-        let prove_info = prover.prove(env, self.guest_elf)
+        let prove_info = prover
+            .prove(env, self.guest_elf)
             .map_err(|e| MprdError::ZkError(format!("Proving failed: {}", e)))?;
-        
+
         let receipt = prove_info.receipt;
-        
+
         // Serialize receipt for storage
         let receipt_bytes = bincode::serialize(&receipt)
             .map_err(|e| MprdError::ZkError(format!("Failed to serialize receipt: {}", e)))?;
-        
+
         // Extract journal output
-        let output: GuestOutput = receipt.journal.decode()
+        let output: GuestOutput = receipt
+            .journal
+            .decode()
             .map_err(|e| MprdError::ZkError(format!("Failed to decode journal: {}", e)))?;
-        
+
         // Verify the selector contract was satisfied
         if !output.selector_contract_satisfied {
             return Err(MprdError::ZkError(
-                "Guest reported selector contract not satisfied".into()
+                "Guest reported selector contract not satisfied".into(),
             ));
         }
-        
+
         let mut metadata = HashMap::new();
         metadata.insert("zk_backend".into(), "risc0".into());
         metadata.insert("image_id".into(), hex::encode(self.image_id));
         metadata.insert("version".into(), "1.2.0".into());
         metadata.insert("receipt_size".into(), receipt_bytes.len().to_string());
-        
+
         Ok(ProofBundle {
             policy_hash: Hash32(output.policy_hash),
             state_hash: Hash32(output.state_hash),
@@ -285,52 +318,56 @@ impl Risc0Verifier {
 
 impl ZkLocalVerifier for Risc0Verifier {
     fn verify(&self, token: &DecisionToken, proof: &ProofBundle) -> VerificationStatus {
+        if self.image_id == [0u8; 32] {
+            return VerificationStatus::Failure(
+                "Invalid (all-zero) image_id: refusing verification to avoid accepting proofs for an unspecified guest".into(),
+            );
+        }
+
         // Deserialize the receipt
         let receipt: Receipt = match bincode::deserialize(&proof.risc0_receipt) {
             Ok(r) => r,
-            Err(e) => return VerificationStatus::Failure(
-                format!("Failed to deserialize receipt: {}", e)
-            ),
+            Err(e) => {
+                return VerificationStatus::Failure(format!("Failed to deserialize receipt: {}", e))
+            }
         };
-        
+
         // Convert image_id to Risc0 Digest format
         let image_id = risc0_zkvm::sha::Digest::from_bytes(self.image_id);
-        
+
         // Cryptographically verify the receipt against the image ID
         if let Err(e) = receipt.verify(image_id) {
-            return VerificationStatus::Failure(
-                format!("Receipt verification failed: {}", e)
-            );
+            return VerificationStatus::Failure(format!("Receipt verification failed: {}", e));
         }
-        
+
         // Decode the journal to get the guest output
         let output: GuestOutput = match receipt.journal.decode() {
             Ok(o) => o,
-            Err(e) => return VerificationStatus::Failure(
-                format!("Failed to decode journal: {}", e)
-            ),
+            Err(e) => {
+                return VerificationStatus::Failure(format!("Failed to decode journal: {}", e))
+            }
         };
-        
+
         // Verify hash consistency with token
         if Hash32(output.policy_hash) != token.policy_hash {
             return VerificationStatus::Failure("Policy hash mismatch".into());
         }
-        
+
         if Hash32(output.state_hash) != token.state_hash {
             return VerificationStatus::Failure("State hash mismatch".into());
         }
-        
+
         if Hash32(output.chosen_action_hash) != token.chosen_action_hash {
             return VerificationStatus::Failure("Chosen action hash mismatch".into());
         }
-        
+
         // Verify selector contract was satisfied
         if !output.selector_contract_satisfied {
             return VerificationStatus::Failure(
-                "Selector contract not satisfied - action not allowed".into()
+                "Selector contract not satisfied - action not allowed".into(),
             );
         }
-        
+
         VerificationStatus::Success
     }
 }
@@ -357,15 +394,15 @@ pub fn create_risc0_verifier(image_id: [u8; 32]) -> Risc0Verifier {
 mod tests {
     use super::*;
     use mprd_core::Score;
-    
+
     fn dummy_hash(b: u8) -> Hash32 {
         Hash32([b; 32])
     }
-    
+
     #[test]
     fn guest_input_validation_rejects_out_of_bounds() {
         let attestor = Risc0Attestor::new(&[], [0u8; 32]);
-        
+
         let decision = Decision {
             chosen_index: 5, // Out of bounds!
             chosen_action: CandidateAction {
@@ -377,28 +414,28 @@ mod tests {
             policy_hash: dummy_hash(2),
             decision_commitment: dummy_hash(3),
         };
-        
+
         let state = StateSnapshot {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(4),
         };
-        
+
         let candidates = vec![decision.chosen_action.clone()]; // Only 1 candidate
         let verdict = RuleVerdict {
             allowed: true,
             reasons: vec![],
             limits: HashMap::new(),
         };
-        
+
         let result = attestor.prepare_input(&decision, &state, &candidates, &verdict);
         assert!(result.is_err());
     }
-    
+
     #[test]
     fn guest_input_uses_actual_verdict() {
         let attestor = Risc0Attestor::new(&[], [0u8; 32]);
-        
+
         let decision = Decision {
             chosen_index: 0,
             chosen_action: CandidateAction {
@@ -410,46 +447,85 @@ mod tests {
             policy_hash: dummy_hash(2),
             decision_commitment: dummy_hash(3),
         };
-        
+
         let state = StateSnapshot {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(4),
         };
-        
+
         let candidates = vec![decision.chosen_action.clone()];
-        
+
         // Test with allowed=true
         let verdict_allowed = RuleVerdict {
             allowed: true,
             reasons: vec![],
             limits: HashMap::new(),
         };
-        let input = attestor.prepare_input(&decision, &state, &candidates, &verdict_allowed).unwrap();
+        let input = attestor
+            .prepare_input(&decision, &state, &candidates, &verdict_allowed)
+            .unwrap();
         assert!(input.chosen_verdict_allowed);
-        
+
         // Test with allowed=false
         let verdict_denied = RuleVerdict {
             allowed: false,
             reasons: vec!["denied".into()],
             limits: HashMap::new(),
         };
-        let input = attestor.prepare_input(&decision, &state, &candidates, &verdict_denied).unwrap();
+        let input = attestor
+            .prepare_input(&decision, &state, &candidates, &verdict_denied)
+            .unwrap();
         assert!(!input.chosen_verdict_allowed);
     }
-    
+
     #[test]
     fn hash_computation_is_deterministic() {
         let policy = b"test policy";
         let state = b"test state";
         let candidates = b"test candidates";
-        
+
         let (h1, h2, h3, h4) = compute_expected_hashes(policy, state, candidates, 0);
         let (h1b, h2b, h3b, h4b) = compute_expected_hashes(policy, state, candidates, 0);
-        
+
         assert_eq!(h1, h1b);
         assert_eq!(h2, h2b);
         assert_eq!(h3, h3b);
         assert_eq!(h4, h4b);
+    }
+
+    #[test]
+    fn attest_with_verdict_fails_closed_when_methods_not_embedded() {
+        let attestor = Risc0Attestor::new(&[], [0u8; 32]);
+
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: CandidateAction {
+                action_type: "TEST".into(),
+                params: HashMap::new(),
+                score: Score(100),
+                candidate_hash: dummy_hash(1),
+            },
+            policy_hash: dummy_hash(2),
+            decision_commitment: dummy_hash(3),
+        };
+
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(4),
+        };
+
+        let candidates = vec![decision.chosen_action.clone()];
+        let verdict = RuleVerdict {
+            allowed: true,
+            reasons: vec![],
+            limits: HashMap::new(),
+        };
+
+        let err = attestor
+            .attest_with_verdict(&decision, &state, &candidates, &verdict)
+            .expect_err("should fail closed when ELF/image_id are not embedded");
+        assert!(err.to_string().contains("methods not embedded"));
     }
 }

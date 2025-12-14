@@ -16,11 +16,11 @@
 //!
 //! // Mode B-Lite: Fast computational proofs
 //! let config = ModeConfig::mode_b_lite();
-//! let attestor = config.create_attestor();
-//! let verifier = config.create_verifier();
 //! ```
 
-use crate::abi::{GovernorInput, GovernorJournal, GovernorWitness};
+#![allow(deprecated)]
+
+use crate::abi::GovernorJournal;
 use mprd_core::{
     CandidateAction, Decision, DecisionToken, Hash32, MprdError, ProofBundle, Result,
     StateSnapshot, VerificationStatus, ZkAttestor, ZkLocalVerifier,
@@ -209,7 +209,11 @@ impl ExtendedVerificationResult {
     }
 
     /// Create a failed result.
-    pub fn failure(mode: DeploymentMode, error: impl Into<String>, steps: Vec<VerificationStep>) -> Self {
+    pub fn failure(
+        mode: DeploymentMode,
+        error: impl Into<String>,
+        steps: Vec<VerificationStep>,
+    ) -> Self {
         Self {
             status: false,
             mode,
@@ -228,14 +232,15 @@ impl ExtendedVerificationResult {
 /// This provides execution trace verification without the overhead of
 /// full cryptographic ZK proofs. Suitable for high-frequency internal
 /// operations where computational security is sufficient.
-#[deprecated(note = "Legacy test-only attestor; use RobustMpbAttestor in mprd_zk::modes_v2 for production.")]
+#[deprecated(
+    note = "Legacy test-only attestor; use RobustMpbAttestor in mprd_zk::modes_v2 for production."
+)]
 pub struct MpbTrustlessAttestor {
     config: ModeConfig,
 }
 
 impl MpbTrustlessAttestor {
     pub fn new(config: ModeConfig) -> Self {
-        assert_eq!(config.mode, DeploymentMode::TrustlessLite);
         Self { config }
     }
 
@@ -251,6 +256,12 @@ impl ZkAttestor for MpbTrustlessAttestor {
         state: &StateSnapshot,
         candidates: &[CandidateAction],
     ) -> Result<ProofBundle> {
+        if self.config.mode != DeploymentMode::TrustlessLite {
+            return Err(MprdError::ZkError(
+                "MpbTrustlessAttestor requires TrustlessLite mode".into(),
+            ));
+        }
+
         // For Mode B-Lite, we use the MPB proof system
         // This is a placeholder - the actual implementation would use mprd-proof
 
@@ -260,7 +271,10 @@ impl ZkAttestor for MpbTrustlessAttestor {
         let mut metadata = HashMap::new();
         metadata.insert("mode".into(), "B-Lite".into());
         metadata.insert("proof_type".into(), "MPB".into());
-        metadata.insert("spot_checks".into(), self.config.mpb_spot_checks.to_string());
+        metadata.insert(
+            "spot_checks".into(),
+            self.config.mpb_spot_checks.to_string(),
+        );
 
         Ok(ProofBundle {
             policy_hash: decision.policy_hash.clone(),
@@ -274,14 +288,15 @@ impl ZkAttestor for MpbTrustlessAttestor {
 }
 
 /// Verifier for MPB computational proofs.
-#[deprecated(note = "Legacy test-only verifier; use RobustMpbVerifier in mprd_zk::modes_v2 for production.")]
+#[deprecated(
+    note = "Legacy test-only verifier; use RobustMpbVerifier in mprd_zk::modes_v2 for production."
+)]
 pub struct MpbTrustlessVerifier {
     config: ModeConfig,
 }
 
 impl MpbTrustlessVerifier {
     pub fn new(config: ModeConfig) -> Self {
-        assert_eq!(config.mode, DeploymentMode::TrustlessLite);
         Self { config }
     }
 
@@ -292,6 +307,12 @@ impl MpbTrustlessVerifier {
 
 impl ZkLocalVerifier for MpbTrustlessVerifier {
     fn verify(&self, token: &DecisionToken, proof: &ProofBundle) -> VerificationStatus {
+        if self.config.mode != DeploymentMode::TrustlessLite {
+            return VerificationStatus::Failure(
+                "MpbTrustlessVerifier requires TrustlessLite mode".into(),
+            );
+        }
+
         // Verify structural consistency
         if token.policy_hash != proof.policy_hash {
             return VerificationStatus::Failure("policy_hash mismatch".into());
@@ -321,7 +342,9 @@ impl ZkLocalVerifier for MpbTrustlessVerifier {
 ///
 /// This provides trustless verification by any third party.
 /// Requires Risc0 toolchain and guest program.
-#[deprecated(note = "Legacy infrastructure-only attestor; use RobustRisc0Attestor in mprd_zk::modes_v2 or create_production_attestor for production.")]
+#[deprecated(
+    note = "Legacy infrastructure-only attestor; use RobustRisc0Attestor in mprd_zk::modes_v2 or create_production_attestor for production."
+)]
 pub struct Risc0TrustlessAttestor {
     config: ModeConfig,
     #[allow(dead_code)]
@@ -330,7 +353,6 @@ pub struct Risc0TrustlessAttestor {
 
 impl Risc0TrustlessAttestor {
     pub fn new(config: ModeConfig, method_elf: Option<&'static [u8]>) -> Self {
-        assert_eq!(config.mode, DeploymentMode::TrustlessFull);
         Self { config, method_elf }
     }
 
@@ -343,10 +365,16 @@ impl Risc0TrustlessAttestor {
 impl ZkAttestor for Risc0TrustlessAttestor {
     fn attest(
         &self,
-        decision: &Decision,
-        state: &StateSnapshot,
+        _decision: &Decision,
+        _state: &StateSnapshot,
         candidates: &[CandidateAction],
     ) -> Result<ProofBundle> {
+        if self.config.mode != DeploymentMode::TrustlessFull {
+            return Err(MprdError::ZkError(
+                "Risc0TrustlessAttestor requires TrustlessFull mode".into(),
+            ));
+        }
+
         if !self.is_risc0_available() {
             return Err(MprdError::ZkError(
                 "Risc0 not configured. Set method_elf and image_id.".into(),
@@ -369,19 +397,24 @@ impl ZkAttestor for Risc0TrustlessAttestor {
 }
 
 /// Verifier for Risc0 cryptographic proofs.
-#[deprecated(note = "Legacy infrastructure-only verifier; use RobustRisc0Verifier in mprd_zk::modes_v2 or create_production_verifier for production.")]
+#[deprecated(
+    note = "Legacy infrastructure-only verifier; use RobustRisc0Verifier in mprd_zk::modes_v2 or create_production_verifier for production."
+)]
 pub struct Risc0TrustlessVerifier {
     config: ModeConfig,
 }
 
 impl Risc0TrustlessVerifier {
     pub fn new(config: ModeConfig) -> Self {
-        assert_eq!(config.mode, DeploymentMode::TrustlessFull);
         Self { config }
     }
 
     /// Verify a Risc0 receipt.
-    pub fn verify_receipt(&self, receipt: &[u8], _expected_journal: &GovernorJournal) -> Result<bool> {
+    pub fn verify_receipt(
+        &self,
+        receipt: &[u8],
+        _expected_journal: &GovernorJournal,
+    ) -> Result<bool> {
         if receipt.is_empty() {
             return Err(MprdError::ZkError("Empty receipt".into()));
         }
@@ -399,6 +432,12 @@ impl Risc0TrustlessVerifier {
 
 impl ZkLocalVerifier for Risc0TrustlessVerifier {
     fn verify(&self, token: &DecisionToken, proof: &ProofBundle) -> VerificationStatus {
+        if self.config.mode != DeploymentMode::TrustlessFull {
+            return VerificationStatus::Failure(
+                "Risc0TrustlessVerifier requires TrustlessFull mode".into(),
+            );
+        }
+
         // Structural checks
         if token.policy_hash != proof.policy_hash {
             return VerificationStatus::Failure("policy_hash mismatch".into());
@@ -462,15 +501,18 @@ pub struct EncryptedWitness {
 /// Attestor for Mode C (Private).
 ///
 /// Encrypts inputs before proving, ensuring only commitments are revealed.
-#[deprecated(note = "Legacy placeholder for Mode C; use RobustPrivateAttestor in mprd_zk::modes_v2 for production.")]
+#[deprecated(
+    note = "Legacy placeholder for Mode C; use RobustPrivateAttestor in mprd_zk::modes_v2 for production."
+)]
 pub struct PrivateAttestor {
+    #[allow(dead_code)]
     config: ModeConfig,
+    #[allow(dead_code)]
     encryption_config: EncryptionConfig,
 }
 
 impl PrivateAttestor {
     pub fn new(config: ModeConfig, encryption_config: EncryptionConfig) -> Self {
-        assert_eq!(config.mode, DeploymentMode::Private);
         Self {
             config,
             encryption_config,
@@ -499,14 +541,16 @@ impl ZkAttestor for PrivateAttestor {
 }
 
 /// Verifier for Mode C (Private).
-#[deprecated(note = "Legacy placeholder for Mode C; use RobustPrivateVerifier in mprd_zk::modes_v2 for production.")]
+#[deprecated(
+    note = "Legacy placeholder for Mode C; use RobustPrivateVerifier in mprd_zk::modes_v2 for production."
+)]
 pub struct PrivateVerifier {
+    #[allow(dead_code)]
     config: ModeConfig,
 }
 
 impl PrivateVerifier {
     pub fn new(config: ModeConfig) -> Self {
-        assert_eq!(config.mode, DeploymentMode::Private);
         Self { config }
     }
 }
@@ -522,41 +566,58 @@ impl ZkLocalVerifier for PrivateVerifier {
 // =============================================================================
 
 /// Create an attestor for the specified mode.
-#[deprecated(note = "Legacy factory; use create_robust_attestor or create_production_attestor instead.")]
+#[deprecated(
+    note = "Legacy factory; use create_robust_attestor or create_production_attestor instead."
+)]
 pub fn create_attestor(config: &ModeConfig) -> Box<dyn ZkAttestor> {
     match config.mode {
-        DeploymentMode::LocalTrusted => {
-            // Mode A uses stub attestor from mprd-core
-            Box::new(MpbTrustlessAttestor::new(ModeConfig::mode_b_lite()))
-        }
-        DeploymentMode::TrustlessLite => {
-            Box::new(MpbTrustlessAttestor::new(config.clone()))
-        }
+        DeploymentMode::LocalTrusted => Box::new(LegacyLocalTrustedAttestorDisabled),
+        DeploymentMode::TrustlessLite => Box::new(MpbTrustlessAttestor::new(config.clone())),
         DeploymentMode::TrustlessFull => {
             Box::new(Risc0TrustlessAttestor::new(config.clone(), None))
         }
-        DeploymentMode::Private => {
-            Box::new(PrivateAttestor::new(config.clone(), EncryptionConfig::default()))
-        }
+        DeploymentMode::Private => Box::new(PrivateAttestor::new(
+            config.clone(),
+            EncryptionConfig::default(),
+        )),
     }
 }
 
 /// Create a verifier for the specified mode.
-#[deprecated(note = "Legacy factory; use create_robust_verifier or create_production_verifier instead.")]
+#[deprecated(
+    note = "Legacy factory; use create_robust_verifier or create_production_verifier instead."
+)]
 pub fn create_verifier(config: &ModeConfig) -> Box<dyn ZkLocalVerifier> {
     match config.mode {
-        DeploymentMode::LocalTrusted => {
-            Box::new(MpbTrustlessVerifier::new(ModeConfig::mode_b_lite()))
-        }
-        DeploymentMode::TrustlessLite => {
-            Box::new(MpbTrustlessVerifier::new(config.clone()))
-        }
-        DeploymentMode::TrustlessFull => {
-            Box::new(Risc0TrustlessVerifier::new(config.clone()))
-        }
-        DeploymentMode::Private => {
-            Box::new(PrivateVerifier::new(config.clone()))
-        }
+        DeploymentMode::LocalTrusted => Box::new(LegacyLocalTrustedVerifierDisabled),
+        DeploymentMode::TrustlessLite => Box::new(MpbTrustlessVerifier::new(config.clone())),
+        DeploymentMode::TrustlessFull => Box::new(Risc0TrustlessVerifier::new(config.clone())),
+        DeploymentMode::Private => Box::new(PrivateVerifier::new(config.clone())),
+    }
+}
+
+struct LegacyLocalTrustedAttestorDisabled;
+
+impl ZkAttestor for LegacyLocalTrustedAttestorDisabled {
+    fn attest(
+        &self,
+        _decision: &Decision,
+        _state: &StateSnapshot,
+        _candidates: &[CandidateAction],
+    ) -> Result<ProofBundle> {
+        Err(MprdError::ZkError(
+            "LocalTrusted is disabled in legacy factory; use mprd-core stub components explicitly for local demos/tests, or use mprd_zk::modes_v2 with an explicit strict_security opt-out".into(),
+        ))
+    }
+}
+
+struct LegacyLocalTrustedVerifierDisabled;
+
+impl ZkLocalVerifier for LegacyLocalTrustedVerifierDisabled {
+    fn verify(&self, _token: &DecisionToken, _proof: &ProofBundle) -> VerificationStatus {
+        VerificationStatus::Failure(
+            "LocalTrusted is disabled in legacy factory; use mprd-core stub components explicitly for local demos/tests, or use mprd_zk::modes_v2 with an explicit strict_security opt-out".into(),
+        )
     }
 }
 
@@ -565,11 +626,11 @@ pub fn create_verifier(config: &ModeConfig) -> Box<dyn ZkLocalVerifier> {
 // =============================================================================
 
 fn compute_candidate_set_hash(candidates: &[CandidateAction]) -> Hash32 {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
 
     let mut hasher = Sha256::new();
     for candidate in candidates {
-        hasher.update(&candidate.candidate_hash.0);
+        hasher.update(candidate.candidate_hash.0);
     }
     Hash32(hasher.finalize().into())
 }
@@ -591,6 +652,54 @@ mod tests {
         let mode_b_lite = ModeConfig::mode_b_lite();
         assert_eq!(mode_b_lite.mode, DeploymentMode::TrustlessLite);
         assert_eq!(mode_b_lite.mpb_spot_checks, 64);
+    }
+
+    #[test]
+    fn legacy_factory_fails_closed_for_local_trusted() {
+        let config = ModeConfig::mode_a();
+        let attestor = create_attestor(&config);
+        let verifier = create_verifier(&config);
+
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: CandidateAction {
+                action_type: "TEST".into(),
+                params: HashMap::new(),
+                score: Score(10),
+                candidate_hash: dummy_hash(2),
+            },
+            policy_hash: dummy_hash(3),
+            decision_commitment: dummy_hash(4),
+        };
+
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(1),
+        };
+
+        assert!(attestor.attest(&decision, &state, &[]).is_err());
+
+        let token = DecisionToken {
+            policy_hash: dummy_hash(1),
+            state_hash: dummy_hash(2),
+            chosen_action_hash: dummy_hash(3),
+            nonce_or_tx_hash: dummy_hash(4),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: dummy_hash(1),
+            state_hash: dummy_hash(2),
+            candidate_set_hash: dummy_hash(5),
+            chosen_action_hash: dummy_hash(3),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        assert!(matches!(
+            verifier.verify(&token, &proof),
+            VerificationStatus::Failure(_)
+        ));
     }
 
     #[test]
@@ -619,7 +728,10 @@ mod tests {
         assert!(result.is_ok());
 
         let proof = result.unwrap();
-        assert_eq!(proof.attestation_metadata.get("mode"), Some(&"B-Lite".to_string()));
+        assert_eq!(
+            proof.attestation_metadata.get("mode"),
+            Some(&"B-Lite".to_string())
+        );
     }
 
     #[test]

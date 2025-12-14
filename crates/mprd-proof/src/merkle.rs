@@ -47,7 +47,13 @@ impl MerkleTree {
 
         // Pad to power of 2 for balanced tree
         while current_level.len() & (current_level.len() - 1) != 0 {
-            let last = *current_level.last().unwrap();
+            let Some(last) = current_level.last().copied() else {
+                return Self {
+                    leaves: vec![],
+                    nodes: vec![],
+                    root: [0; 32],
+                };
+            };
             current_level.push(last);
         }
 
@@ -105,7 +111,7 @@ impl MerkleTree {
         let _padded_len = self.nodes.first().map(|n| n.len()).unwrap_or(1);
 
         for level in &self.nodes {
-            let sibling_index = if current_index % 2 == 0 {
+            let sibling_index = if current_index.is_multiple_of(2) {
                 current_index + 1
             } else {
                 current_index - 1
@@ -114,7 +120,7 @@ impl MerkleTree {
             if sibling_index < level.len() {
                 siblings.push(MerkleSibling {
                     hash: level[sibling_index],
-                    is_left: current_index % 2 == 1,
+                    is_left: !current_index.is_multiple_of(2),
                 });
             }
 
@@ -182,9 +188,7 @@ mod tests {
     use crate::sha256;
 
     fn make_leaves(n: usize) -> Vec<Hash256> {
-        (0..n)
-            .map(|i| sha256(&i.to_le_bytes()))
-            .collect()
+        (0..n).map(|i| sha256(&i.to_le_bytes())).collect()
     }
 
     #[test]

@@ -2,24 +2,20 @@
 //!
 //! Tests security invariants, validation, and error handling.
 
-use mprd_core::{
-    components::{SimpleProposer, SimpleStateProvider, LoggingExecutorAdapter},
-    orchestrator::run_once,
-    DefaultSelector, Hash32, PolicyEngine, PolicyHash, Proposer, RuleVerdict, Result,
-    StateSnapshot, CandidateAction, Value, VerificationStatus,
-};
-use mprd_zk::{
-    RobustMpbAttestor, RobustMpbVerifier,
-    RobustRisc0Attestor, RobustRisc0Verifier,
-    RobustPrivateAttestor, RobustPrivateVerifier,
-    SecurityChecker,
-    create_robust_attestor,
-    ModeError,
-};
-use mprd_zk::modes_v2::{DeploymentMode, ModeConfig};
 use mprd_core::ZkAttestor;
 use mprd_core::ZkLocalVerifier;
+use mprd_core::{
+    components::{LoggingExecutorAdapter, SimpleProposer, SimpleStateProvider},
+    orchestrator::{run_once, RunOnceInputs},
+    CandidateAction, DefaultSelector, Hash32, PolicyEngine, PolicyHash, Result, RuleVerdict,
+    StateSnapshot, Value, VerificationStatus,
+};
 use mprd_risc0_methods::{MPRD_GUEST_ELF, MPRD_GUEST_ID};
+use mprd_zk::modes_v2::{DeploymentMode, ModeConfig};
+use mprd_zk::{
+    create_robust_attestor, ModeError, RobustMpbAttestor, RobustMpbVerifier, RobustPrivateAttestor,
+    RobustPrivateVerifier, RobustRisc0Attestor, RobustRisc0Verifier, SecurityChecker,
+};
 use std::collections::HashMap;
 
 // =============================================================================
@@ -52,6 +48,15 @@ impl PolicyEngine for AllowAllPolicyEngine {
 
 fn dummy_hash(byte: u8) -> Hash32 {
     Hash32([byte; 32])
+}
+
+fn should_skip_due_to_missing_risc0_methods() -> bool {
+    if !MPRD_GUEST_ELF.is_empty() {
+        return false;
+    }
+
+    eprintln!("Skipping: Risc0 guest ELF is empty (methods not embedded)");
+    true
 }
 
 fn should_skip_due_to_r0vm_mismatch(err: &dyn std::fmt::Display) -> bool {
@@ -219,7 +224,9 @@ fn robust_mpb_attestor_generates_binding_commitment() {
     let proof = result.unwrap();
 
     // Should have binding commitment
-    assert!(proof.attestation_metadata.contains_key("binding_commitment"));
+    assert!(proof
+        .attestation_metadata
+        .contains_key("binding_commitment"));
 
     // Should have security metadata
     assert!(proof.attestation_metadata.contains_key("security_bits"));
@@ -342,9 +349,8 @@ fn robust_risc0_verifier_requires_receipt() {
 
 #[test]
 fn full_pipeline_with_robust_b_lite() {
-    let state_provider = SimpleStateProvider::new(HashMap::from([
-        ("balance".into(), Value::UInt(10000)),
-    ]));
+    let state_provider =
+        SimpleStateProvider::new(HashMap::from([("balance".into(), Value::UInt(10000))]));
 
     let proposer = SimpleProposer::single(
         "ACTION",
@@ -361,27 +367,34 @@ fn full_pipeline_with_robust_b_lite() {
     let verifier = RobustMpbVerifier::default_config().expect("Should create");
     let executor = LoggingExecutorAdapter::new();
 
-    let result = run_once(
-        &state_provider,
-        &proposer,
-        &policy_engine,
-        &selector,
-        &token_factory,
-        &attestor,
-        &verifier,
-        &executor,
-        &policy_hash,
-    );
+    let result = run_once(RunOnceInputs {
+        state_provider: &state_provider,
+        proposer: &proposer,
+        policy_engine: &policy_engine,
+        selector: &selector,
+        token_factory: &token_factory,
+        attestor: &attestor,
+        verifier: &verifier,
+        executor: &executor,
+        policy_hash: &policy_hash,
+    });
 
     assert!(result.is_ok(), "Pipeline should succeed: {:?}", result);
-    assert_eq!(executor.get_log().len(), 1, "Should have executed one action");
+    assert_eq!(
+        executor.get_log().len(),
+        1,
+        "Should have executed one action"
+    );
 }
 
 #[test]
 fn full_pipeline_with_robust_b_full() {
-    let state_provider = SimpleStateProvider::new(HashMap::from([
-        ("balance".into(), Value::UInt(10000)),
-    ]));
+    if should_skip_due_to_missing_risc0_methods() {
+        return;
+    }
+
+    let state_provider =
+        SimpleStateProvider::new(HashMap::from([("balance".into(), Value::UInt(10000))]));
 
     let proposer = SimpleProposer::single(
         "ACTION",
@@ -404,22 +417,21 @@ fn full_pipeline_with_robust_b_full() {
     let config = ModeConfig::mode_b_full(image_id);
     let attestor = RobustRisc0Attestor::new(config.clone(), Some(MPRD_GUEST_ELF))
         .expect("Risc0 attestor should be created");
-    let verifier = RobustRisc0Verifier::new(config)
-        .expect("Risc0 verifier should be created");
+    let verifier = RobustRisc0Verifier::new(config).expect("Risc0 verifier should be created");
 
     let executor = LoggingExecutorAdapter::new();
 
-    let result = run_once(
-        &state_provider,
-        &proposer,
-        &policy_engine,
-        &selector,
-        &token_factory,
-        &attestor,
-        &verifier,
-        &executor,
-        &policy_hash,
-    );
+    let result = run_once(RunOnceInputs {
+        state_provider: &state_provider,
+        proposer: &proposer,
+        policy_engine: &policy_engine,
+        selector: &selector,
+        token_factory: &token_factory,
+        attestor: &attestor,
+        verifier: &verifier,
+        executor: &executor,
+        policy_hash: &policy_hash,
+    });
 
     if let Err(e) = &result {
         if should_skip_due_to_r0vm_mismatch(e) {
@@ -427,8 +439,16 @@ fn full_pipeline_with_robust_b_full() {
         }
     }
 
-    assert!(result.is_ok(), "B-Full pipeline should succeed: {:?}", result);
-    assert_eq!(executor.get_log().len(), 1, "Should have executed one action");
+    assert!(
+        result.is_ok(),
+        "B-Full pipeline should succeed: {:?}",
+        result
+    );
+    assert_eq!(
+        executor.get_log().len(),
+        1,
+        "Should have executed one action"
+    );
 }
 
 // =============================================================================
@@ -437,6 +457,10 @@ fn full_pipeline_with_robust_b_full() {
 
 #[test]
 fn robust_private_attestor_emits_mode_c_metadata() {
+    if should_skip_due_to_missing_risc0_methods() {
+        return;
+    }
+
     // Convert Risc0 guest ID to image_id bytes, same as B-Full tests
     let mut image_id = [0u8; 32];
     for (i, word) in MPRD_GUEST_ID.iter().enumerate() {
@@ -444,8 +468,11 @@ fn robust_private_attestor_emits_mode_c_metadata() {
     }
 
     let config = ModeConfig::mode_c(image_id, "test-key");
-    let attestor = RobustPrivateAttestor::new(config.clone(), mprd_zk::modes_v2::EncryptionConfig::default())
-        .expect("Private attestor should be created");
+    let attestor = RobustPrivateAttestor::new(
+        config.clone(),
+        mprd_zk::modes_v2::EncryptionConfig::default(),
+    )
+    .expect("Private attestor should be created");
 
     let state = StateSnapshot {
         fields: HashMap::new(),
@@ -483,16 +510,20 @@ fn robust_private_attestor_emits_mode_c_metadata() {
     assert_eq!(mode.as_deref(), Some(DeploymentMode::Private.as_str()));
 
     assert!(proof.attestation_metadata.contains_key("encryption_key_id"));
-    assert!(proof.attestation_metadata.contains_key("encryption_algorithm"));
+    assert!(proof
+        .attestation_metadata
+        .contains_key("encryption_algorithm"));
 
-    let enc_json = proof.attestation_metadata
+    let enc_json = proof
+        .attestation_metadata
         .get("encrypted_state")
         .expect("encrypted_state metadata should be present");
 
-    let parsed: mprd_zk::EncryptedState = serde_json::from_str(enc_json)
-        .expect("encrypted_state should be valid JSON");
+    let parsed: mprd_zk::EncryptedState =
+        serde_json::from_str(enc_json).expect("encrypted_state should be valid JSON");
 
-    let expected_key = config.encryption_key_id
+    let expected_key = config
+        .encryption_key_id
         .as_ref()
         .expect("config should contain encryption_key_id");
     assert_eq!(&parsed.key_id, expected_key);
@@ -500,16 +531,23 @@ fn robust_private_attestor_emits_mode_c_metadata() {
 
 #[test]
 fn robust_private_verifier_rejects_tampered_encrypted_state() {
+    if should_skip_due_to_missing_risc0_methods() {
+        return;
+    }
+
     let mut image_id = [0u8; 32];
     for (i, word) in MPRD_GUEST_ID.iter().enumerate() {
         image_id[i * 4..(i + 1) * 4].copy_from_slice(&word.to_le_bytes());
     }
 
     let config = ModeConfig::mode_c(image_id, "test-key");
-    let attestor = RobustPrivateAttestor::new(config.clone(), mprd_zk::modes_v2::EncryptionConfig::default())
-        .expect("Private attestor should be created");
-    let verifier = RobustPrivateVerifier::new(config.clone())
-        .expect("Private verifier should be created");
+    let attestor = RobustPrivateAttestor::new(
+        config.clone(),
+        mprd_zk::modes_v2::EncryptionConfig::default(),
+    )
+    .expect("Private attestor should be created");
+    let verifier =
+        RobustPrivateVerifier::new(config.clone()).expect("Private verifier should be created");
 
     let state = StateSnapshot {
         fields: HashMap::new(),
@@ -548,8 +586,7 @@ fn robust_private_verifier_rejects_tampered_encrypted_state() {
         let mut parsed: mprd_zk::EncryptedState = serde_json::from_str(enc_json)
             .expect("encrypted_state should be valid JSON before tampering");
         parsed.key_id = "different-key".into();
-        *enc_json = serde_json::to_string(&parsed)
-            .expect("re-serialization should succeed");
+        *enc_json = serde_json::to_string(&parsed).expect("re-serialization should succeed");
     }
 
     let token = mprd_core::DecisionToken {

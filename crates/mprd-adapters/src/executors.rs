@@ -25,15 +25,15 @@
 //! - Either the action is executed exactly once, or not at all
 //! - Execution result is recorded for audit
 
-use mprd_core::{
-    DecisionToken, ExecutionResult, ExecutorAdapter, MprdError, ProofBundle, Result,
-};
+use mprd_core::{DecisionToken, ExecutionResult, ExecutorAdapter, MprdError, ProofBundle, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+use crate::egress;
 
 // =============================================================================
 // HTTP Executor
@@ -44,13 +44,13 @@ use std::sync::{Arc, Mutex};
 pub struct HttpExecutorConfig {
     /// Base URL of the action execution service.
     pub base_url: String,
-    
+
     /// Timeout in milliseconds.
     pub timeout_ms: u64,
-    
+
     /// Optional API key header.
     pub api_key: Option<String>,
-    
+
     /// Retry count on transient failures.
     pub retry_count: u32,
 }
@@ -78,14 +78,17 @@ pub struct HttpExecutor {
 impl HttpExecutor {
     /// Create a new HTTP executor with the given config.
     pub fn new(config: HttpExecutorConfig) -> Result<Self> {
+        egress::validate_outbound_url(&config.base_url)?;
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_millis(config.timeout_ms))
             .build()
-            .map_err(|e| MprdError::ExecutionError(format!("Failed to create HTTP client: {}", e)))?;
-        
+            .map_err(|e| {
+                MprdError::ExecutionError(format!("Failed to create HTTP client: {}", e))
+            })?;
+
         Ok(Self { config, client })
     }
-    
+
     /// Create with default config pointing to localhost.
     pub fn localhost() -> Result<Self> {
         Self::new(HttpExecutorConfig::default())
@@ -98,6 +101,7 @@ struct ExecutePayload {
     policy_hash: String,
     state_hash: String,
     action_hash: String,
+    nonce_or_tx_hash: String,
     timestamp_ms: i64,
     proof_metadata: HashMap<String, String>,
 }
@@ -120,26 +124,31 @@ const MAX_SINGLE_RETRY_DELAY_MS: u64 = 2000;
 
 impl ExecutorAdapter for HttpExecutor {
     fn execute(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<ExecutionResult> {
+        // SECURITY: network execution is an external interaction. Callers should treat the remote
+        // endpoint as malicious/unreliable. Retries are enabled here; therefore the remote
+        // endpoint must be idempotent with respect to the (policy_hash, state_hash, action_hash,
+        // nonce_or_tx_hash) tuple to avoid duplicate side effects.
         let payload = ExecutePayload {
-            policy_hash: hex::encode(&token.policy_hash.0),
-            state_hash: hex::encode(&token.state_hash.0),
-            action_hash: hex::encode(&token.chosen_action_hash.0),
+            policy_hash: hex::encode(token.policy_hash.0),
+            state_hash: hex::encode(token.state_hash.0),
+            action_hash: hex::encode(token.chosen_action_hash.0),
+            nonce_or_tx_hash: hex::encode(token.nonce_or_tx_hash.0),
             timestamp_ms: token.timestamp_ms,
             proof_metadata: proof.attestation_metadata.clone(),
         };
-        
+
         let url = format!("{}/execute", self.config.base_url);
-        
+
         let mut last_error = None;
         let mut total_delay: u64 = 0;
-        
+
         for attempt in 0..=self.config.retry_count {
             let mut request = self.client.post(&url).json(&payload);
-            
+
             if let Some(ref api_key) = self.config.api_key {
                 request = request.header("X-API-Key", api_key);
             }
-            
+
             match request.send() {
                 Ok(response) => {
                     if response.status().is_success() {
@@ -151,9 +160,10 @@ impl ExecutorAdapter for HttpExecutor {
                                 });
                             }
                             Err(e) => {
-                                return Err(MprdError::ExecutionError(
-                                    format!("Failed to parse response: {}", e)
-                                ));
+                                return Err(MprdError::ExecutionError(format!(
+                                    "Failed to parse response: {}",
+                                    e
+                                )));
                             }
                         }
                     } else {
@@ -164,28 +174,30 @@ impl ExecutorAdapter for HttpExecutor {
                     last_error = Some(format!("Request failed: {}", e));
                 }
             }
-            
+
             // Exponential backoff with cap
             if attempt < self.config.retry_count {
                 // Calculate delay: base * 2^attempt, capped at MAX_SINGLE_RETRY_DELAY_MS
                 let delay = std::cmp::min(
                     BASE_RETRY_DELAY_MS * (1u64 << attempt),
-                    MAX_SINGLE_RETRY_DELAY_MS
+                    MAX_SINGLE_RETRY_DELAY_MS,
                 );
-                
+
                 // Check if total delay would exceed cap
                 if total_delay + delay > MAX_TOTAL_RETRY_DELAY_MS {
                     break; // Stop retrying to avoid excessive delay
                 }
-                
+
                 total_delay += delay;
                 std::thread::sleep(std::time::Duration::from_millis(delay));
             }
         }
-        
-        Err(MprdError::ExecutionError(
-            format!("All {} attempts failed: {:?}", self.config.retry_count + 1, last_error)
-        ))
+
+        Err(MprdError::ExecutionError(format!(
+            "All {} attempts failed: {:?}",
+            self.config.retry_count + 1,
+            last_error
+        )))
     }
 }
 
@@ -198,21 +210,21 @@ impl ExecutorAdapter for HttpExecutor {
 /// Unlike HttpExecutor, this is fire-and-forget with optional confirmation.
 pub struct WebhookExecutor {
     webhook_url: String,
-    timeout_ms: u64,
     client: reqwest::blocking::Client,
 }
 
 impl WebhookExecutor {
     /// Create a new webhook executor.
     pub fn new(webhook_url: impl Into<String>, timeout_ms: u64) -> Result<Self> {
+        let webhook_url: String = webhook_url.into();
+        egress::validate_outbound_url(&webhook_url)?;
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_millis(timeout_ms))
             .build()
             .map_err(|e| MprdError::ExecutionError(format!("Failed to create client: {}", e)))?;
-        
+
         Ok(Self {
-            webhook_url: webhook_url.into(),
-            timeout_ms,
+            webhook_url,
             client,
         })
     }
@@ -220,18 +232,22 @@ impl WebhookExecutor {
 
 impl ExecutorAdapter for WebhookExecutor {
     fn execute(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<ExecutionResult> {
+        // SECURITY: webhook is a best-effort notification channel. A 2xx/202 response is treated
+        // as acceptance; callers must not assume the remote service actually performed the side
+        // effect unless the service provides stronger guarantees.
         let payload = serde_json::json!({
             "event": "mprd_action_executed",
-            "policy_hash": hex::encode(&token.policy_hash.0),
-            "state_hash": hex::encode(&token.state_hash.0),
-            "action_hash": hex::encode(&token.chosen_action_hash.0),
+            "policy_hash": hex::encode(token.policy_hash.0),
+            "state_hash": hex::encode(token.state_hash.0),
+            "action_hash": hex::encode(token.chosen_action_hash.0),
+            "nonce_or_tx_hash": hex::encode(token.nonce_or_tx_hash.0),
             "timestamp_ms": token.timestamp_ms,
             "proof": {
-                "candidate_set_hash": hex::encode(&proof.candidate_set_hash.0),
+                "candidate_set_hash": hex::encode(proof.candidate_set_hash.0),
                 "metadata": proof.attestation_metadata,
             }
         });
-        
+
         match self.client.post(&self.webhook_url).json(&payload).send() {
             Ok(response) => {
                 if response.status().is_success() || response.status().as_u16() == 202 {
@@ -273,7 +289,7 @@ impl FileExecutor {
             .append(true)
             .open(&path)
             .map_err(|e| MprdError::ExecutionError(format!("Failed to open file: {}", e)))?;
-        
+
         Ok(Self {
             path,
             file: Arc::new(Mutex::new(file)),
@@ -288,33 +304,40 @@ struct AuditRecord {
     policy_hash: String,
     state_hash: String,
     action_hash: String,
+    nonce_or_tx_hash: String,
     token_timestamp_ms: i64,
     proof_metadata: HashMap<String, String>,
 }
 
 impl ExecutorAdapter for FileExecutor {
     fn execute(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<ExecutionResult> {
+        // SECURITY: this executor writes an append-only audit line. The file is a side-effecting
+        // sink and should be treated as untrusted storage; callers should provide a path on a
+        // durable filesystem with appropriate permissions.
         let record = AuditRecord {
             timestamp: chrono::Utc::now().to_rfc3339(),
-            policy_hash: hex::encode(&token.policy_hash.0),
-            state_hash: hex::encode(&token.state_hash.0),
-            action_hash: hex::encode(&token.chosen_action_hash.0),
+            policy_hash: hex::encode(token.policy_hash.0),
+            state_hash: hex::encode(token.state_hash.0),
+            action_hash: hex::encode(token.chosen_action_hash.0),
+            nonce_or_tx_hash: hex::encode(token.nonce_or_tx_hash.0),
             token_timestamp_ms: token.timestamp_ms,
             proof_metadata: proof.attestation_metadata.clone(),
         };
-        
+
         let json = serde_json::to_string(&record)
             .map_err(|e| MprdError::ExecutionError(format!("Failed to serialize record: {}", e)))?;
-        
-        let mut file = self.file.lock()
+
+        let mut file = self
+            .file
+            .lock()
             .map_err(|_| MprdError::ExecutionError("File lock poisoned".into()))?;
-        
+
         writeln!(file, "{}", json)
             .map_err(|e| MprdError::ExecutionError(format!("Failed to write to file: {}", e)))?;
-        
+
         file.flush()
             .map_err(|e| MprdError::ExecutionError(format!("Failed to flush file: {}", e)))?;
-        
+
         Ok(ExecutionResult {
             success: true,
             message: Some(format!("Recorded to {}", self.path.display())),
@@ -344,7 +367,7 @@ impl CompositeExecutor {
             best_effort: false,
         }
     }
-    
+
     /// Create with best-effort mode (continue on errors).
     pub fn best_effort(executors: Vec<Box<dyn ExecutorAdapter + Send + Sync>>) -> Self {
         Self {
@@ -358,7 +381,7 @@ impl ExecutorAdapter for CompositeExecutor {
     fn execute(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<ExecutionResult> {
         let mut messages = Vec::new();
         let mut all_success = true;
-        
+
         for (i, executor) in self.executors.iter().enumerate() {
             match executor.execute(token, proof) {
                 Ok(result) => {
@@ -372,14 +395,14 @@ impl ExecutorAdapter for CompositeExecutor {
                 Err(e) => {
                     all_success = false;
                     messages.push(format!("[{}] ERROR: {}", i, e));
-                    
+
                     if !self.best_effort {
                         return Err(e);
                     }
                 }
             }
         }
-        
+
         Ok(ExecutionResult {
             success: all_success,
             message: Some(messages.join("; ")),
@@ -411,11 +434,11 @@ impl ExecutorAdapter for NoOpExecutor {
 mod tests {
     use super::*;
     use mprd_core::Hash32;
-    
+
     fn dummy_hash(b: u8) -> Hash32 {
         Hash32([b; 32])
     }
-    
+
     fn dummy_token() -> DecisionToken {
         DecisionToken {
             policy_hash: dummy_hash(1),
@@ -426,7 +449,7 @@ mod tests {
             signature: vec![1, 2, 3],
         }
     }
-    
+
     fn dummy_proof() -> ProofBundle {
         ProofBundle {
             policy_hash: dummy_hash(1),
@@ -437,39 +460,37 @@ mod tests {
             attestation_metadata: HashMap::from([("test".into(), "value".into())]),
         }
     }
-    
+
     #[test]
     fn noop_executor_succeeds() {
         let executor = NoOpExecutor;
         let result = executor.execute(&dummy_token(), &dummy_proof()).unwrap();
         assert!(result.success);
     }
-    
+
     #[test]
     fn file_executor_creates_audit_record() {
         let temp_dir = std::env::temp_dir();
         let path = temp_dir.join(format!("mprd_test_{}.jsonl", std::process::id()));
-        
+
         let executor = FileExecutor::new(&path).unwrap();
         let result = executor.execute(&dummy_token(), &dummy_proof()).unwrap();
-        
+
         assert!(result.success);
         assert!(path.exists());
-        
+
         // Clean up
         let _ = std::fs::remove_file(&path);
     }
-    
+
     #[test]
     fn composite_executor_chains_multiple() {
-        let executors: Vec<Box<dyn ExecutorAdapter + Send + Sync>> = vec![
-            Box::new(NoOpExecutor),
-            Box::new(NoOpExecutor),
-        ];
-        
+        let executors: Vec<Box<dyn ExecutorAdapter + Send + Sync>> =
+            vec![Box::new(NoOpExecutor), Box::new(NoOpExecutor)];
+
         let composite = CompositeExecutor::new(executors);
         let result = composite.execute(&dummy_token(), &dummy_proof()).unwrap();
-        
+
         assert!(result.success);
     }
 }

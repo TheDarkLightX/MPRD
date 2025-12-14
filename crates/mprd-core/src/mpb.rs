@@ -46,22 +46,22 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpCode {
     // Stack manipulation
-    Push = 0x01,      // Push immediate i64 (followed by 8 bytes LE)
-    Pop = 0x02,       // Pop and discard top
-    Dup = 0x03,       // Duplicate top of stack
-    Swap = 0x04,      // Swap top two elements
+    Push = 0x01, // Push immediate i64 (followed by 8 bytes LE)
+    Pop = 0x02,  // Pop and discard top
+    Dup = 0x03,  // Duplicate top of stack
+    Swap = 0x04, // Swap top two elements
 
     // Load from registers (inputs)
-    LoadReg = 0x10,   // Push register[arg] onto stack
+    LoadReg = 0x10, // Push register[arg] onto stack
 
     // Arithmetic (checked, saturating on overflow)
     Add = 0x20,
     Sub = 0x21,
     Mul = 0x22,
-    Div = 0x23,       // Division by zero → error (fail-closed)
-    Mod = 0x24,       // Modulo by zero → error
-    Neg = 0x25,       // Negate (saturating)
-    Abs = 0x26,       // Absolute value
+    Div = 0x23, // Division by zero → error (fail-closed)
+    Mod = 0x24, // Modulo by zero → error
+    Neg = 0x25, // Negate (saturating)
+    Abs = 0x26, // Absolute value
 
     // Comparison (push 1 for true, 0 for false)
     Eq = 0x30,
@@ -81,11 +81,11 @@ pub enum OpCode {
     BitOr = 0x51,
     BitXor = 0x52,
     BitNot = 0x53,
-    Shl = 0x54,       // Shift left (capped at 63)
-    Shr = 0x55,       // Shift right (capped at 63)
+    Shl = 0x54, // Shift left (capped at 63)
+    Shr = 0x55, // Shift right (capped at 63)
 
     // Termination
-    Halt = 0xFF,      // Stop execution, return top of stack
+    Halt = 0xFF, // Stop execution, return top of stack
 }
 
 // =============================================================================
@@ -199,7 +199,13 @@ impl MpbVm {
                         self.status = VmStatus::UnexpectedEnd;
                         return Err(self.status);
                     }
-                    let bytes: [u8; 8] = bytecode[ip..ip + 8].try_into().unwrap();
+                    let bytes: [u8; 8] = match bytecode[ip..ip + 8].try_into() {
+                        Ok(b) => b,
+                        Err(_) => {
+                            self.status = VmStatus::UnexpectedEnd;
+                            return Err(self.status);
+                        }
+                    };
                     let value = i64::from_le_bytes(bytes);
                     ip += 8;
                     self.push(value)?;
@@ -672,9 +678,8 @@ impl MpbPolicyEngine {
             }
 
             // Special fields
-            match name.as_str() {
-                "score" => registers[reg] = candidate.score.0,
-                _ => {}
+            if name.as_str() == "score" {
+                registers[reg] = candidate.score.0;
             }
         }
 
@@ -895,11 +900,11 @@ mod tests {
         let bytecode = BytecodeBuilder::new()
             .load_reg(0) // risk
             .load_reg(1) // max_risk
-            .le()        // risk <= max_risk
+            .le() // risk <= max_risk
             .load_reg(2) // cost
             .load_reg(3) // max_cost
-            .le()        // cost <= max_cost
-            .and()       // both conditions
+            .le() // cost <= max_cost
+            .and() // both conditions
             .halt()
             .build();
 

@@ -11,29 +11,21 @@ pub enum ModeError {
     // =========================================================================
     // Configuration Errors
     // =========================================================================
-    
     /// Invalid mode configuration.
     #[error("Invalid mode configuration: {0}")]
     InvalidConfig(String),
 
     /// Mode not available (missing dependencies).
     #[error("Mode {mode:?} not available: {reason}")]
-    ModeNotAvailable {
-        mode: String,
-        reason: String,
-    },
+    ModeNotAvailable { mode: String, reason: String },
 
     /// Missing required configuration field.
     #[error("Missing required configuration: {field} for mode {mode:?}")]
-    MissingConfig {
-        mode: String,
-        field: String,
-    },
+    MissingConfig { mode: String, field: String },
 
     // =========================================================================
     // Attestation Errors
     // =========================================================================
-    
     /// Attestation failed.
     #[error("Attestation failed: {0}")]
     AttestationFailed(String),
@@ -53,7 +45,6 @@ pub enum ModeError {
     // =========================================================================
     // Verification Errors
     // =========================================================================
-    
     /// Verification failed.
     #[error("Verification failed: {0}")]
     VerificationFailed(String),
@@ -77,13 +68,9 @@ pub enum ModeError {
     // =========================================================================
     // Security Invariant Violations
     // =========================================================================
-    
     /// Security invariant violated.
     #[error("Security invariant violated: {invariant} - {details}")]
-    InvariantViolation {
-        invariant: String,
-        details: String,
-    },
+    InvariantViolation { invariant: String, details: String },
 
     /// Replay attack detected.
     #[error("Replay attack detected: token already used")]
@@ -96,7 +83,6 @@ pub enum ModeError {
     // =========================================================================
     // Serialization Errors
     // =========================================================================
-    
     /// Serialization error.
     #[error("Serialization error: {0}")]
     SerializationError(String),
@@ -162,7 +148,7 @@ mod tests {
         let expected = [1u8; 32];
         let actual = [2u8; 32];
         let err = ModeError::hash_mismatch("policy_hash", &expected, &actual);
-        
+
         // Should only show first 8 bytes
         let msg = err.to_string();
         assert!(msg.len() < 200);
