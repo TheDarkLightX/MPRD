@@ -942,3 +942,156 @@ html.light .keyboard-shortcuts-modal kbd {
   border-color: rgba(100, 116, 139, 0.3) !important;
   color: #334155 !important;
 }
+
+/* === Form Elements (Filter Bar, Search, Inputs, Selects) === */
+
+/* Light mode - Input and select fields */
+html.light input[type="text"],
+html.light input[type="search"],
+html.light input[type="email"],
+html.light input[type="password"],
+html.light select,
+html.light textarea {
+  background: #ffffff !important;
+  border-color: rgba(100, 116, 139, 0.3) !important;
+  color: #1e293b !important;
+}
+
+html.light input::placeholder,
+html.light textarea::placeholder {
+  color: #64748b !important;
+}
+
+/* Light mode - Date range button group */
+html.light .bg-dark-800.rounded-lg.p-1 {
+  background: #f1f5f9 !important;
+}
+
+/* Light mode - Date range buttons (active/inactive) */
+html.light .bg-dark-800.rounded-lg.p-1 button {
+  color: #475569 !important;
+}
+
+html.light .bg-dark-800.rounded-lg.p-1 button.bg-dark-700 {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1) !important;
+}
+
+html.light .bg-dark-800.rounded-lg.p-1 button:hover {
+  color: #0f172a !important;
+}
+
+/* Light mode - Select option styling */
+html.light select option {
+  background: #ffffff !important;
+  color: #1e293b !important;
+}
+
+/* === Comprehensive Light Mode Overrides === */
+/* Covers all bg-dark-* patterns across all pages and components */
+
+/* bg-dark-800 variants - convert to white/light gray */
+html.light .bg-dark-800,
+html.light .bg-dark-800\/50,
+html.light .bg-dark-800\/30,
+html.light .bg-dark-800\/70 {
+  background: #f8fafc !important;
+}
+
+/* bg-dark-700 - slightly darker for contrast */
+html.light .bg-dark-700 {
+  background: #f1f5f9 !important;
+}
+
+/* bg-dark-900 variants - main card backgrounds */
+html.light .bg-dark-900,
+html.light .bg-dark-900\/50,
+html.light .bg-dark-900\/30,
+html.light .bg-dark-900\/20 {
+  background: #ffffff !important;
+}
+
+/* border-dark-* to light gray borders */
+html.light .border-dark-700,
+html.light .border-dark-600 {
+  border-color: rgba(100, 116, 139, 0.25) !important;
+}
+
+/* text-gray-100/200 - dark text for headings */
+html.light .text-gray-100 {
+  color: #0f172a !important;
+}
+
+html.light .text-gray-200 {
+  color: #1e293b !important;
+}
+
+html.light .text-gray-300 {
+  color: #334155 !important;
+}
+
+html.light .text-gray-400 {
+  color: #475569 !important;
+}
+
+/* text-dark-* for muted text */
+html.light .text-dark-300 {
+  color: #475569 !important;
+}
+
+html.light .text-dark-400 {
+  color: #64748b !important;
+}
+
+/* Hover states */
+html.light .hover\:bg-dark-700:hover {
+  background: #e2e8f0 !important;
+}
+
+html.light .hover\:bg-dark-800\/50:hover,
+html.light .hover\:bg-dark-800\/70:hover,
+html.light .hover\:bg-dark-800:hover {
+  background: #f1f5f9 !important;
+}
+
+html.light .hover\:text-gray-100:hover,
+html.light .hover\:text-gray-200:hover {
+  color: #0f172a !important;
+}
+
+/* Loading skeletons and progress bars */
+html.light .animate-pulse.bg-dark-800 {
+  background: #e2e8f0 !important;
+}
+
+/* Table rows */
+html.light tr.bg-dark-800\/50,
+html.light tr.bg-dark-800 {
+  background: #f8fafc !important;
+}
+
+html.light tr:hover.cursor-pointer {
+  background: #f1f5f9 !important;
+}
+
+/* Progress bar backgrounds */
+html.light .bg-dark-800.rounded-full {
+  background: #e2e8f0 !important;
+}
+
+/* Badge default variant */
+html.light .bg-dark-700.text-dark-300 {
+  background: #f1f5f9 !important;
+  color: #475569 !important;
+}
+
+/* User avatar placeholder */
+html.light .bg-dark-700.rounded-full {
+  background: #e2e8f0 !important;
+}
+
+/* Pipeline connector */
+html.light .bg-dark-700.rounded-full {
+  background: #cbd5e1 !important;
+}
