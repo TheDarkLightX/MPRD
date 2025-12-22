@@ -3,12 +3,15 @@
  * 
  * Provides filtering controls for the decision list.
  * Per spec Section 6.2: Date Range, Policy, Action Type, Status filters.
+ * 
+ * @performance Uses debounced search to reduce API calls
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { DecisionFilter } from '../../api/types';
 import { Button } from '../ui';
 import { Filter, X, Search } from 'lucide-react';
+import { useDebounce } from '../../hooks';
 
 interface FilterBarProps {
     filter: DecisionFilter;
@@ -16,6 +19,9 @@ interface FilterBarProps {
     policyOptions?: { hash: string; name?: string }[];
     actionTypeOptions?: string[];
 }
+
+// Debounce delay for search input (ms)
+const SEARCH_DEBOUNCE_MS = 300;
 
 export function FilterBar({
     filter,
@@ -26,6 +32,18 @@ export function FilterBar({
     const [isExpanded, setIsExpanded] = useState(false);
     const [search, setSearch] = useState(filter.query || '');
     const [selectedRange, setSelectedRange] = useState<'all' | '24h' | '7d' | '30d'>('all');
+
+    // Debounce search to avoid excessive filter updates
+    const debouncedSearch = useDebounce(search, SEARCH_DEBOUNCE_MS);
+
+    // Apply debounced search to filter
+    useEffect(() => {
+        const trimmed = debouncedSearch.trim();
+        const newQuery = trimmed || undefined;
+        if (newQuery !== filter.query) {
+            onFilterChange({ ...filter, query: newQuery });
+        }
+    }, [debouncedSearch, filter, onFilterChange]);
 
     const hasActiveFilters = Object.values(filter).some(v => v !== undefined);
 
@@ -106,18 +124,14 @@ export function FilterBar({
                     )}
                 </div>
 
-                {/* Search placeholder */}
+                {/* Search input with debounce */}
                 <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-400" />
                     <input
                         type="text"
                         placeholder="Search decisions..."
                         value={search}
-                        onChange={(e) => {
-                            const v = e.target.value;
-                            setSearch(v);
-                            onFilterChange({ ...filter, query: v.trim() ? v : undefined });
-                        }}
+                        onChange={(e) => setSearch(e.target.value)}
                         className="pl-9 pr-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-sm text-gray-200 placeholder-dark-400 focus:outline-none focus:border-accent-500/50"
                     />
                 </div>

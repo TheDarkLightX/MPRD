@@ -14,7 +14,7 @@
  * - Escape: Close modal/dismiss
  */
 
-import { createContext, useContext, useEffect, useCallback, useState, type ReactNode } from 'react';
+import { createContext, useEffect, useCallback, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from './ThemeContext';
 
@@ -24,12 +24,6 @@ interface KeyboardShortcutsContextType {
 }
 
 const KeyboardShortcutsContext = createContext<KeyboardShortcutsContextType | null>(null);
-
-export function useKeyboardShortcuts() {
-    const ctx = useContext(KeyboardShortcutsContext);
-    if (!ctx) throw new Error('useKeyboardShortcuts must be used within KeyboardShortcutsProvider');
-    return ctx;
-}
 
 interface Props {
     children: ReactNode;

@@ -29,3 +29,9 @@ export function useOperatorIncidents(limit = 50, unacknowledgedOnly = false, inc
 }
 
 export { useMockData, useMockDecisions, useMockPolicies, useMockAlerts, useMockIncidents };
+
+// Performance utilities
+export {
+  useDebounce,
+  useIntersectionObserver,
+} from './usePerformance';
