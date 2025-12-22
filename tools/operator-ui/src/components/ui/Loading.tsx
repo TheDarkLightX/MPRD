@@ -1,5 +1,7 @@
 /**
  * Base UI Components - Loading States
+ * 
+ * Premium skeleton loaders with shimmer animation.
  */
 
 interface LoadingSpinnerProps {
@@ -51,10 +53,102 @@ export function LoadingCard({ message = 'Loading...' }: LoadingCardProps) {
     );
 }
 
+/**
+ * Basic skeleton with shimmer animation.
+ */
 export function LoadingSkeleton({ className = '' }: { className?: string }) {
     return (
         <div
-            className={`animate-pulse bg-dark-800 rounded ${className}`}
+            className={`skeleton-shimmer bg-dark-800 rounded ${className}`}
         />
+    );
+}
+
+/**
+ * Skeleton for stat/metric cards.
+ */
+export function StatCardSkeleton() {
+    return (
+        <div className="glass-card p-4 space-y-3">
+            <div className="flex items-center justify-between">
+                <div className="skeleton-shimmer w-20 h-4 bg-dark-800 rounded" />
+                <div className="skeleton-shimmer w-8 h-8 bg-dark-800 rounded-lg" />
+            </div>
+            <div className="skeleton-shimmer w-24 h-8 bg-dark-800 rounded" />
+            <div className="skeleton-shimmer w-16 h-3 bg-dark-800 rounded" />
+        </div>
+    );
+}
+
+/**
+ * Skeleton for table rows.
+ */
+export function TableRowSkeleton({ columns = 5 }: { columns?: number }) {
+    return (
+        <tr>
+            {Array.from({ length: columns }).map((_, i) => (
+                <td key={i} className="py-3 px-4">
+                    <div className="skeleton-shimmer h-4 bg-dark-800 rounded" style={{ width: `${60 + Math.random() * 40}%` }} />
+                </td>
+            ))}
+        </tr>
+    );
+}
+
+/**
+ * Skeleton for a full data table.
+ */
+export function TableSkeleton({ rows = 5, columns = 5 }: { rows?: number; columns?: number }) {
+    return (
+        <div className="glass-card overflow-hidden">
+            {/* Header skeleton */}
+            <div className="flex bg-dark-800/50 border-b border-dark-700 p-3 gap-4">
+                {Array.from({ length: columns }).map((_, i) => (
+                    <div key={i} className="skeleton-shimmer h-3 bg-dark-700 rounded flex-1" />
+                ))}
+            </div>
+            {/* Rows skeleton */}
+            <table className="w-full">
+                <tbody>
+                    {Array.from({ length: rows }).map((_, i) => (
+                        <TableRowSkeleton key={i} columns={columns} />
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+/**
+ * Full page skeleton for dashboard.
+ */
+export function DashboardSkeleton() {
+    return (
+        <div className="space-y-6 animate-fade-in">
+            {/* Header skeleton */}
+            <div className="flex items-center justify-between">
+                <div className="skeleton-shimmer w-48 h-8 bg-dark-800 rounded" />
+                <div className="skeleton-shimmer w-24 h-8 bg-dark-800 rounded" />
+            </div>
+
+            {/* Stats row */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <StatCardSkeleton />
+                <StatCardSkeleton />
+                <StatCardSkeleton />
+                <StatCardSkeleton />
+            </div>
+
+            {/* Main content */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="lg:col-span-2">
+                    <TableSkeleton rows={6} columns={5} />
+                </div>
+                <div className="space-y-4">
+                    <StatCardSkeleton />
+                    <StatCardSkeleton />
+                </div>
+            </div>
+        </div>
     );
 }

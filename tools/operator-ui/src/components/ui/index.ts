@@ -3,7 +3,7 @@ export { Badge, StatusBadge } from './Badge';
 export { Button } from './Button';
 export { Modal } from './Modal';
 export { HashDisplay, HashBadge } from './HashDisplay';
-export { LoadingSpinner, LoadingCard, LoadingSkeleton } from './Loading';
+export { LoadingSpinner, LoadingCard, LoadingSkeleton, StatCardSkeleton, TableRowSkeleton, TableSkeleton, DashboardSkeleton } from './Loading';
 export { NoticeCard } from './Notice';
 export { MetricCard } from './MetricCard';
 export type { MetricCardProps } from './MetricCard';

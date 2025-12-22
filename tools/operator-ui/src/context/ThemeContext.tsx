@@ -4,6 +4,8 @@
  * Provides theme switching with system preference detection and persistence.
  */
 
+/* eslint-disable react-refresh/only-export-components */
+
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
 export type Theme = 'dark' | 'light' | 'system';
