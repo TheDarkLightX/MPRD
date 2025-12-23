@@ -36,7 +36,7 @@ use mprd_zk::{create_real_risc0_attestor, create_real_risc0_verifier};
 let attestor = create_real_risc0_attestor(MPRD_GUEST_ELF, MPRD_GUEST_ID);
 
 // Generate proof
-let proof = attestor.attest(&decision, &state, &candidates)?;
+let proof = attestor.attest(&token, &decision, &state, &candidates)?;
 
 // Create verifier with the image ID
 let verifier = create_real_risc0_verifier(MPRD_GUEST_ID);

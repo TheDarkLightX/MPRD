@@ -19,6 +19,7 @@
 //! For k=16, n=1000: P(cheat) < 2^-16 ≈ 0.0015%
 //! For k=32, n=1000: P(cheat) < 2^-32 ≈ 0.00000002%
 
+use crate::challenges;
 use crate::{prover::MpbProof, Hash256};
 use serde::{Deserialize, Serialize};
 
@@ -59,8 +60,20 @@ pub enum VerificationError {
     /// Output doesn't match last step result.
     OutputMismatch,
 
+    /// Bytecode hash does not match expected input.
+    BytecodeHashMismatch,
+
+    /// Input hash does not match expected input.
+    InputHashMismatch,
+
     /// Fuel consumed doesn't match step count.
     FuelMismatch,
+
+    /// Spot-check indices do not match the Fiat-Shamir challenge.
+    SpotCheckIndicesMismatch,
+
+    /// Deterministic spot-check derivation failed (should be unreachable).
+    SpotCheckDerivationFailed,
 
     /// Step number doesn't match index.
     StepNumberMismatch { expected: u32, got: u32 },
@@ -111,6 +124,38 @@ impl MpbVerifier {
     ///
     /// Time: O(k * log n) where k = number of spot checks
     pub fn verify(&self, proof: &MpbProof) -> VerificationResult {
+        // 0. Verify Fiat-Shamir spot check selection (prevents prover-chosen challenges).
+        let expected_seed = challenge_seed_v1(
+            &proof.bytecode_hash,
+            &proof.input_hash,
+            &proof.context_hash,
+            &proof.trace_root,
+            proof.output,
+            proof.num_steps,
+            proof.fuel_consumed,
+        );
+        if proof.challenge_seed != expected_seed {
+            return VerificationResult::Invalid(VerificationError::SpotCheckIndicesMismatch);
+        }
+        let expected_indices = match derive_spot_check_indices_v1(
+            &proof.challenge_seed,
+            proof.num_steps,
+            proof.spot_checks.len(),
+        ) {
+            Ok(v) => v,
+            Err(e) => return VerificationResult::Invalid(e),
+        };
+
+        let actual_indices: Vec<usize> = proof
+            .spot_checks
+            .iter()
+            .map(|c| c.proof.leaf_index)
+            .collect();
+
+        if actual_indices != expected_indices {
+            return VerificationResult::Invalid(VerificationError::SpotCheckIndicesMismatch);
+        }
+
         // 1. Verify first step Merkle proof
         if self.config.require_merkle_proofs {
             if !proof.first_step_proof.verify(&proof.trace_root) {
@@ -203,10 +248,10 @@ impl MpbVerifier {
     ) -> VerificationResult {
         // Check public inputs match
         if proof.bytecode_hash != *expected_bytecode_hash {
-            return VerificationResult::Invalid(VerificationError::OutputMismatch);
+            return VerificationResult::Invalid(VerificationError::BytecodeHashMismatch);
         }
         if proof.input_hash != *expected_input_hash {
-            return VerificationResult::Invalid(VerificationError::OutputMismatch);
+            return VerificationResult::Invalid(VerificationError::InputHashMismatch);
         }
 
         self.verify(proof)
@@ -227,6 +272,35 @@ impl MpbVerifier {
         // Security bits = -log2(P(cheat)) = -k * log2((n-k)/n)
         -k * ((n - k) / n).log2()
     }
+}
+
+fn challenge_seed_v1(
+    bytecode_hash: &Hash256,
+    input_hash: &Hash256,
+    context_hash: &Hash256,
+    trace_root: &Hash256,
+    output: i64,
+    num_steps: usize,
+    fuel_consumed: u32,
+) -> Hash256 {
+    challenges::challenge_seed_v1(
+        bytecode_hash,
+        input_hash,
+        context_hash,
+        trace_root,
+        output,
+        num_steps,
+        fuel_consumed,
+    )
+}
+
+fn derive_spot_check_indices_v1(
+    seed: &Hash256,
+    num_steps: usize,
+    num_checks: usize,
+) -> Result<Vec<usize>, VerificationError> {
+    challenges::derive_spot_check_indices_v1(seed, num_steps, num_checks)
+        .map_err(|_| VerificationError::SpotCheckDerivationFailed)
 }
 
 impl Default for MpbVerifier {
@@ -307,6 +381,7 @@ fn verify_stack_transition(step: &crate::trace::TraceStep) -> bool {
 mod tests {
     use super::*;
     use crate::{prover::MpbProver, sha256, trace::TraceStep};
+    use proptest::prelude::*;
 
     fn make_valid_trace(steps: usize) -> crate::trace::ExecutionTrace {
         let bytecode_hash = sha256(b"test bytecode");
@@ -361,6 +436,26 @@ mod tests {
     }
 
     #[test]
+    fn verify_with_inputs_reports_specific_hash_mismatch_errors() {
+        let trace = make_valid_trace(100);
+        let prover = MpbProver::new();
+        let proof = prover.prove(&trace).expect("prove");
+
+        let verifier = MpbVerifier::new();
+        let wrong = sha256(b"wrong");
+
+        assert!(matches!(
+            verifier.verify_with_inputs(&proof, &wrong, &proof.input_hash),
+            VerificationResult::Invalid(VerificationError::BytecodeHashMismatch)
+        ));
+
+        assert!(matches!(
+            verifier.verify_with_inputs(&proof, &proof.bytecode_hash, &wrong),
+            VerificationResult::Invalid(VerificationError::InputHashMismatch)
+        ));
+    }
+
+    #[test]
     fn verify_tampered_output_fails() {
         let trace = make_valid_trace(100);
         let prover = MpbProver::new();
@@ -372,10 +467,7 @@ mod tests {
         let verifier = MpbVerifier::new();
         let result = verifier.verify(&proof);
 
-        assert!(matches!(
-            result,
-            VerificationResult::Invalid(VerificationError::OutputMismatch)
-        ));
+        assert!(matches!(result, VerificationResult::Invalid(_)));
     }
 
     #[test]
@@ -415,6 +507,24 @@ mod tests {
     }
 
     #[test]
+    fn verify_fails_closed_when_spot_check_order_changes() {
+        let trace = make_valid_trace(200);
+        let prover = MpbProver::with_config(crate::prover::ProverConfig {
+            num_spot_checks: 16,
+            seed: None,
+        });
+        let mut proof = prover.prove(&trace).expect("prove");
+        if proof.spot_checks.len() >= 2 {
+            proof.spot_checks.swap(0, 1);
+            let verifier = MpbVerifier::new();
+            assert!(matches!(
+                verifier.verify(&proof),
+                VerificationResult::Invalid(VerificationError::SpotCheckIndicesMismatch)
+            ));
+        }
+    }
+
+    #[test]
     fn security_bits_increases_with_checks() {
         let trace = make_valid_trace(1000);
 
@@ -442,6 +552,70 @@ mod tests {
         assert!(bits_many > bits_few);
         // With spot checks, security scales with number of checks
         assert!(bits_many > 0.0);
+    }
+
+    fn opcode_binary_arith() -> impl Strategy<Value = u8> {
+        prop_oneof![Just(0x20u8), Just(0x21u8), Just(0x22u8)]
+    }
+
+    proptest! {
+        #[test]
+        fn arithmetic_checker_accepts_correct_results_for_binary_ops(
+            opcode in opcode_binary_arith(),
+            a in any::<i64>(),
+            b in any::<i64>(),
+            step in any::<u32>(),
+        ) {
+            let result = match opcode {
+                0x20 => a.saturating_add(b),
+                0x21 => a.saturating_sub(b),
+                0x22 => a.saturating_mul(b),
+                _ => unreachable!(),
+            };
+
+            let s = TraceStep {
+                step,
+                ip: 0,
+                opcode,
+                sp_before: 2,
+                sp_after: 1,
+                operand_a: a,
+                operand_b: b,
+                result,
+                reg_index: None,
+                fuel_remaining: 0,
+            };
+            prop_assert!(verify_step_arithmetic(&s));
+
+            let mut bad = s.clone();
+            bad.result = bad.result.wrapping_add(1);
+            prop_assert!(!verify_step_arithmetic(&bad));
+        }
+
+        #[test]
+        fn stack_transition_matches_opcode_contract_for_push(
+            sp_before in 0u8..=250u8,
+            step in any::<u32>(),
+        ) {
+            // PUSH must be +1
+            let push = TraceStep {
+                step,
+                ip: 0,
+                opcode: 0x01,
+                sp_before,
+                sp_after: sp_before.wrapping_add(1),
+                operand_a: 0,
+                operand_b: 0,
+                result: 0,
+                reg_index: None,
+                fuel_remaining: 0,
+            };
+            prop_assert!(verify_stack_transition(&push));
+
+            let mut bad = push.clone();
+            bad.sp_after = bad.sp_after.wrapping_add(1);
+            prop_assert!(!verify_stack_transition(&bad));
+        }
     }
 
     #[test]

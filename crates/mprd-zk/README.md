@@ -54,7 +54,8 @@ let accepted = runner.read_output()?;
 use mprd_zk::{ProductionConfig, ProductionBackend};
 
 // Production: Risc0 ZK proofs (recommended)
-let config = ProductionConfig::risc0_default(image_id);
+// Prefer registry-bound verification (`ValidDecision(bundle, registry_state)`), see docs/PRODUCTION_ZK.md.
+let config = ProductionConfig::risc0_mpb_v1(image_id, policy_bytecode, policy_variables);
 
 // Development: Local mode (no proofs)
 let config = ProductionConfig::local_testing();

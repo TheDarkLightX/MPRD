@@ -1,0 +1,6 @@
+[build]
+# `zerocopy` enables some AVX-512 type impls behind a cfg gate that require
+# a nightly `stdarch` feature on some toolchains; disable those impls for fuzz
+# builds to keep the sanitizer pipeline working.
+rustflags = ["--cfg", "no_zerocopy_simd_x86_avx12_1_89_0"]
+

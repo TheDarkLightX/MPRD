@@ -3,7 +3,10 @@
 //! Maintains a mapping from `PolicyHash` to `TauSpec`, enforcing invariant S6:
 //! for a given `policy_hash`, the underlying Tau spec is immutable.
 
-use crate::{hash::sha256, Hash32, MprdError, PolicyHash, Result};
+use crate::{
+    hash::{sha256_domain, POLICY_TAU_DOMAIN_V1},
+    Hash32, MprdError, PolicyHash, Result,
+};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -66,7 +69,7 @@ impl TauSpec {
 ///
 /// Currently uses raw content; future versions may normalize whitespace/comments.
 fn compute_policy_hash(content: &str) -> PolicyHash {
-    sha256(content.as_bytes())
+    sha256_domain(POLICY_TAU_DOMAIN_V1, content.as_bytes())
 }
 
 /// Trait for policy registries.

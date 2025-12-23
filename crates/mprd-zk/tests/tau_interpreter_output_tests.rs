@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -16,37 +17,46 @@ struct TauOutputEvent {
     value: String,
 }
 
-fn run_tau_bv16_risk_policy_case(
+fn run_tau_bv16_risk_policy_cases(
     tau_bin: &Path,
     export_label: &str,
-    risk: u16,
-    max_risk: u16,
-    cost: u16,
-    max_cost: u16,
-    has_approval: bool,
-) -> std::io::Result<bool> {
-    let base_dir = std::env::temp_dir().join("mprd_tau_policy_grid_work");
-    let _ = std::fs::create_dir_all(&base_dir);
+    cases: &[(u16, u16, u16, u16, bool)],
+) -> std::io::Result<Vec<bool>> {
+    let work_dir = unique_tau_work_dir(export_label);
+    let _ = std::fs::create_dir_all(&work_dir);
 
-    let case_dir = base_dir.join(format!(
-        "{export_label}_r{risk}_mr{max_risk}_c{cost}_mc{max_cost}_a{}",
-        if has_approval { 1 } else { 0 }
-    ));
-    let _ = std::fs::create_dir_all(&case_dir);
+    let i_risk = work_dir.join("risk.in");
+    let i_max_risk = work_dir.join("max_risk.in");
+    let i_cost = work_dir.join("cost.in");
+    let i_max_cost = work_dir.join("max_cost.in");
+    let i_approval = work_dir.join("approval.in");
 
-    let i_risk = case_dir.join("risk.in");
-    let i_max_risk = case_dir.join("max_risk.in");
-    let i_cost = case_dir.join("cost.in");
-    let i_max_cost = case_dir.join("max_cost.in");
-    let i_approval = case_dir.join("approval.in");
+    let mut risk_contents = String::from("0\n");
+    let mut max_risk_contents = String::from("0\n");
+    let mut cost_contents = String::from("0\n");
+    let mut max_cost_contents = String::from("0\n");
+    let mut approval_contents = String::from("0\n");
 
-    write_two_line_input_file(&i_risk, "0", &bv16_to_file_literal(risk))?;
-    write_two_line_input_file(&i_max_risk, "0", &bv16_to_file_literal(max_risk))?;
-    write_two_line_input_file(&i_cost, "0", &bv16_to_file_literal(cost))?;
-    write_two_line_input_file(&i_max_cost, "0", &bv16_to_file_literal(max_cost))?;
-    write_two_line_input_file(&i_approval, "0", sbf_to_file_literal(has_approval))?;
+    for (risk, max_risk, cost, max_cost, has_approval) in cases {
+        risk_contents.push_str(&bv16_to_file_literal(*risk));
+        risk_contents.push('\n');
+        max_risk_contents.push_str(&bv16_to_file_literal(*max_risk));
+        max_risk_contents.push('\n');
+        cost_contents.push_str(&bv16_to_file_literal(*cost));
+        cost_contents.push('\n');
+        max_cost_contents.push_str(&bv16_to_file_literal(*max_cost));
+        max_cost_contents.push('\n');
+        approval_contents.push_str(sbf_to_file_literal(*has_approval));
+        approval_contents.push('\n');
+    }
 
-    let out_path = case_dir.join("allowed.out");
+    std::fs::write(&i_risk, risk_contents)?;
+    std::fs::write(&i_max_risk, max_risk_contents)?;
+    std::fs::write(&i_cost, cost_contents)?;
+    std::fs::write(&i_max_cost, max_cost_contents)?;
+    std::fs::write(&i_approval, approval_contents)?;
+
+    let out_path = work_dir.join("allowed.out");
     let _ = std::fs::remove_file(&out_path);
 
     // NOTE: BV comparisons (<=, >=, <, >) are NOT supported directly in Tau execution mode.
@@ -76,10 +86,26 @@ q\n",
     );
 
     run_tau_file_io_once(tau_bin, &program)?;
-    let out_line = read_last_nonempty_line(&out_path)?
-        .ok_or_else(|| std::io::Error::other("no output produced"))?;
-    let allowed = parse_sbf_value_to_bool(&out_line)
-        .ok_or_else(|| std::io::Error::other(format!("unexpected sbf output '{out_line}'")))?;
+
+    let out_contents = std::fs::read_to_string(&out_path)?;
+    let out_lines: Vec<&str> = out_contents.lines().map(|l| l.trim()).collect();
+    let expected_len = 1usize + cases.len();
+    if out_lines.len() != expected_len {
+        return Err(std::io::Error::other(format!(
+            "tau bv16 policy output line count mismatch: expected {expected_len}, got {}",
+            out_lines.len()
+        )));
+    }
+
+    let mut allowed = Vec::<bool>::with_capacity(cases.len());
+    for idx in 0..cases.len() {
+        let raw = out_lines[idx + 1];
+        let b = parse_sbf_value_to_bool(raw)
+            .ok_or_else(|| std::io::Error::other(format!("unexpected sbf output '{raw}'")))?;
+        allowed.push(b);
+    }
+
+    let _ = std::fs::remove_dir_all(&work_dir);
     Ok(allowed)
 }
 
@@ -205,10 +231,6 @@ where
         export_rows.push(header);
     }
 
-    let base_dir = std::env::temp_dir().join("mprd_tau_truth_table_work");
-    let _ = std::fs::create_dir_all(&base_dir);
-
-    let mut inputs_vec = vec![false; num_inputs as usize];
     let max_state: u32 = 1u32 << num_inputs;
 
     let mut terminal_rows: Vec<(u32, Vec<bool>, bool, bool)> = Vec::new();
@@ -218,7 +240,61 @@ where
         terminal_rows.reserve(max_state as usize);
     }
 
+    // Batch the entire truth table into a single Tau run by mapping input combinations to
+    // time steps. This avoids spawning Tau + hitting the filesystem once per state, which
+    // can make these tests take minutes on developer machines.
+    let work_dir = unique_tau_work_dir(export_label);
+    let _ = std::fs::create_dir_all(&work_dir);
+
+    let mut input_paths = Vec::<PathBuf>::new();
+    for i in 0..num_inputs {
+        let p = work_dir.join(format!("i{i}.in"));
+        let mut contents = String::new();
+        contents.push_str("0\n");
+        for bits in 0..max_state {
+            let mask = 1u32 << i;
+            let b = bits & mask != 0;
+            contents.push_str(sbf_to_file_literal(b));
+            contents.push('\n');
+        }
+        std::fs::write(&p, contents)?;
+        input_paths.push(p);
+    }
+
+    let out_path = work_dir.join("o0.out");
+    let _ = std::fs::remove_file(&out_path);
+
+    let mut program = String::from("set charvar off\n");
+    for i in 0..num_inputs {
+        let p = input_paths[i as usize].to_string_lossy();
+        program.push_str(&format!("i{i}:sbf = in file(\"{p}\").\n"));
+    }
+    program.push_str(&format!(
+        "o0:sbf = out file(\"{}\").\n",
+        out_path.to_string_lossy()
+    ));
+    program.push_str("defs\n");
+    program.push_str(&format!("r (\n    {tau_relation}\n)\n"));
+    program.push_str("n\nq\n");
+
+    run_tau_file_io_once(tau_bin, &program).unwrap_or_else(|e| {
+        panic!("[tau-truth-table] {export_label}: batch file-io run failed: {e}");
+    });
+
+    let out_contents = std::fs::read_to_string(&out_path).unwrap_or_else(|e| {
+        panic!("[tau-truth-table] {export_label}: failed reading output: {e}");
+    });
+    let out_lines: Vec<String> = out_contents.lines().map(|l| l.trim().to_string()).collect();
+    let expected_len = 1usize + max_state as usize;
+    if out_lines.len() != expected_len {
+        panic!(
+            "[tau-truth-table] {export_label}: output line count mismatch (expected {expected_len}, got {})",
+            out_lines.len()
+        );
+    }
+
     let mut ok_count: u32 = 0;
+    let mut inputs_vec = vec![false; num_inputs as usize];
     for bits in 0..max_state {
         for i in 0..num_inputs {
             let mask = 1u32 << i;
@@ -227,63 +303,8 @@ where
 
         let expected = expected_fn(&inputs_vec);
 
-        // One working directory per state to avoid any file caching edge-cases.
-        let case_dir = base_dir.join(format!(
-            "{export_label}_{bits:0width$b}",
-            width = num_inputs as usize
-        ));
-        let _ = std::fs::create_dir_all(&case_dir);
-
-        let mut input_paths = Vec::<PathBuf>::new();
-        for i in 0..num_inputs {
-            let p = case_dir.join(format!("i{i}.in"));
-            // See internal demo notes: first line is consumed at initialization, second line corresponds to t=0.
-            let v = sbf_to_file_literal(inputs_vec[i as usize]);
-            std::fs::write(&p, format!("0\n{v}\n"))?;
-            input_paths.push(p);
-        }
-
-        let out_path = case_dir.join("o0.out");
-        let _ = std::fs::remove_file(&out_path);
-
-        let mut program = String::from("set charvar off\n");
-        for i in 0..num_inputs {
-            let p = input_paths[i as usize].to_string_lossy();
-            program.push_str(&format!("i{i}:sbf = in file(\"{p}\").\n"));
-        }
-        program.push_str(&format!(
-            "o0:sbf = out file(\"{}\").\n",
-            out_path.to_string_lossy()
-        ));
-        program.push_str("defs\n");
-        program.push_str(&format!("r (\n    {tau_relation}\n)\n"));
-        program.push_str("n\nq\n");
-
-        run_tau_file_io_once(tau_bin, &program).unwrap_or_else(|e| {
-            panic!(
-                "tau file-io run failed for state {:0width$b}: {e}",
-                bits,
-                width = num_inputs as usize
-            )
-        });
-
-        let out_line = read_last_nonempty_line(&out_path)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "failed reading output for state {:0width$b}: {e}",
-                    bits,
-                    width = num_inputs as usize
-                )
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "no output produced for state {:0width$b}",
-                    bits,
-                    width = num_inputs as usize
-                )
-            });
-
-        let Some(actual) = parse_sbf_value_to_bool(&out_line) else {
+        let out_line = &out_lines[(bits as usize) + 1];
+        let Some(actual) = parse_sbf_value_to_bool(out_line) else {
             panic!(
                 "unexpected sbf output '{out_line}' for state {:0width$b}",
                 bits,
@@ -348,6 +369,8 @@ where
             "[tau-truth-table] {export_label}: ok={ok_count}/{max_state}"
         );
     }
+
+    let _ = std::fs::remove_dir_all(&work_dir);
 
     if let Some(dir) = export_dir {
         let _ = std::fs::create_dir_all(&dir);
@@ -876,6 +899,12 @@ fn run_tau_file_io_once(tau_bin: &Path, program: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+fn unique_tau_work_dir(label: &str) -> PathBuf {
+    static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("mprd_tau_truth_table_work_{label}_{id}"))
+}
+
 fn truth_table_export_dir() -> Option<PathBuf> {
     let enabled = std::env::var("TAU_TRUTH_TABLE_EXPORT").ok()?;
     if enabled != "1" {
@@ -1372,23 +1401,15 @@ fn mprd_risk_threshold_policy_bv16_grid_matches_expected() {
     cases.sort();
     cases.dedup();
 
-    for (risk, max_risk, cost, max_cost, has_approval) in cases {
-        let expected = (risk <= max_risk) && (cost <= max_cost) && has_approval;
-        let actual = run_tau_bv16_risk_policy_case(
-            &tau_bin,
-            EXPORT_LABEL,
-            risk,
-            max_risk,
-            cost,
-            max_cost,
-            has_approval,
-        )
-        .unwrap_or_else(|e| {
-            panic!(
-                "tau bv16 policy run failed for risk={risk} max_risk={max_risk} cost={cost} max_cost={max_cost} approval={has_approval}: {e}"
-            )
+    let actuals =
+        run_tau_bv16_risk_policy_cases(&tau_bin, EXPORT_LABEL, &cases).unwrap_or_else(|e| {
+            panic!("tau bv16 policy batch run failed: {e}");
         });
 
+    for ((risk, max_risk, cost, max_cost, has_approval), actual) in
+        cases.into_iter().zip(actuals.into_iter())
+    {
+        let expected = (risk <= max_risk) && (cost <= max_cost) && has_approval;
         assert_eq!(
             actual, expected,
             "bv16 risk policy mismatch for risk={risk} max_risk={max_risk} cost={cost} max_cost={max_cost} approval={has_approval}"

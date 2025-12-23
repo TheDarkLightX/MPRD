@@ -1010,6 +1010,7 @@ impl MultiAttestor {
     /// Run attestation across all attestors and aggregate results.
     pub fn attest_multi(
         &self,
+        token: &DecisionToken,
         decision: &Decision,
         state: &StateSnapshot,
         candidates: &[CandidateAction],
@@ -1021,7 +1022,7 @@ impl MultiAttestor {
         for (i, attestor) in self.attestors.iter().enumerate() {
             let attestor_id = format!("attestor_{}", i);
 
-            match attestor.attest(decision, state, candidates) {
+            match attestor.attest(token, decision, state, candidates) {
                 Ok(proof) => {
                     debug!(attestor = %attestor_id, "Attestation succeeded");
                     proofs_for_merge.push(proof.clone());
@@ -1042,6 +1043,9 @@ impl MultiAttestor {
                             state_hash: state.state_hash.clone(),
                             candidate_set_hash: Hash32([0u8; 32]),
                             chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                            limits_hash: Hash32([0u8; 32]),
+                            limits_bytes: vec![],
+                            chosen_action_preimage: vec![],
                             risc0_receipt: vec![],
                             attestation_metadata: HashMap::new(),
                         },
@@ -1095,6 +1099,7 @@ impl MultiAttestor {
             hasher.update(proof.policy_hash.0);
             hasher.update(proof.state_hash.0);
             hasher.update(proof.chosen_action_hash.0);
+            hasher.update(proof.limits_hash.0);
         }
         Hash32(hasher.finalize().into())
     }
@@ -1113,6 +1118,9 @@ impl MultiAttestor {
             state_hash: first.state_hash.clone(),
             candidate_set_hash: first.candidate_set_hash.clone(),
             chosen_action_hash: first.chosen_action_hash.clone(),
+            limits_hash: first.limits_hash.clone(),
+            limits_bytes: first.limits_bytes.clone(),
+            chosen_action_preimage: first.chosen_action_preimage.clone(),
             risc0_receipt: first.risc0_receipt.clone(), // Use first receipt
             attestation_metadata: metadata,
         })
@@ -1263,7 +1271,10 @@ impl IpfsPolicyStore {
 
         Ok(Self {
             gateway_url,
-            client: Client::new(),
+            client: Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|e| MprdError::ZkError(format!("Failed to create HTTP client: {}", e)))?,
             hash_to_cid: RwLock::new(mapping),
             mapping_path,
         })
@@ -1333,10 +1344,7 @@ impl IpfsPolicyStore {
     }
 
     fn compute_hash(bytes: &[u8]) -> Hash32 {
-        let mut hasher = Sha256::new();
-        hasher.update(b"MPRD_POLICY_V1");
-        hasher.update(bytes);
-        Hash32(hasher.finalize().into())
+        mprd_core::hash::sha256_domain(mprd_core::hash::POLICY_TAU_DOMAIN_V1, bytes)
     }
 
     fn verify_policy_hash_matches_expected(expected: &Hash32, policy_bytes: &[u8]) -> Result<()> {
@@ -1462,6 +1470,291 @@ impl DistributedPolicyStore for IpfsPolicyStore {
 }
 
 // =============================================================================
+// Low-Trust Mode: Multi-Gateway IPFS Policy Store
+// =============================================================================
+
+/// Multi-gateway IPFS policy store for low-trust mode.
+///
+/// Eliminates single gateway SPOF by trying multiple gateways with failover.
+/// Content hash is always verified against the expected policy hash.
+///
+/// # Security
+///
+/// - Tries gateways in order until one succeeds
+/// - Always verifies content hash matches expected policy hash (fail-closed)
+/// - Untrusted gateways cannot inject malicious content due to hash verification
+pub struct MultiGatewayIpfsPolicyStore {
+    gateways: Vec<String>,
+    client: Client,
+    hash_to_cid: RwLock<HashMap<Hash32, String>>,
+    mapping_path: PathBuf,
+}
+
+impl MultiGatewayIpfsPolicyStore {
+    /// Create a new multi-gateway IPFS policy store.
+    ///
+    /// # Arguments
+    ///
+    /// * `gateways` - List of IPFS gateway URLs in preference order.
+    ///   Must contain at least one gateway.
+    pub fn new(gateways: Vec<String>) -> Result<Self> {
+        if gateways.is_empty() {
+            return Err(MprdError::ZkError(
+                "MultiGatewayIpfsPolicyStore requires at least one gateway".into(),
+            ));
+        }
+
+        // Validate all gateway URLs
+        for gateway in &gateways {
+            egress::validate_outbound_url(gateway)?;
+        }
+
+        let mapping_path = Self::default_mapping_path();
+        let mapping = match Self::load_mapping(&mapping_path) {
+            Ok(m) => m,
+            Err(e) => {
+                warn!(error = %e, "Failed to load IPFS mapping file, starting with empty mapping");
+                HashMap::new()
+            }
+        };
+
+        Ok(Self {
+            gateways,
+            client: Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|e| MprdError::ZkError(format!("Failed to create HTTP client: {}", e)))?,
+            hash_to_cid: RwLock::new(mapping),
+            mapping_path,
+        })
+    }
+
+    fn default_mapping_path() -> PathBuf {
+        if let Ok(path) = std::env::var("MPRD_IPFS_MAPPING_FILE") {
+            PathBuf::from(path)
+        } else {
+            PathBuf::from(".mprd_ipfs_multi_mapping.json")
+        }
+    }
+
+    fn load_mapping(path: &Path) -> Result<HashMap<Hash32, String>> {
+        if !path.exists() {
+            return Ok(HashMap::new());
+        }
+
+        let data = fs::read_to_string(path)
+            .map_err(|e| MprdError::ZkError(format!("Failed to read IPFS mapping file: {}", e)))?;
+
+        let raw: HashMap<String, String> = serde_json::from_str(&data)
+            .map_err(|e| MprdError::ZkError(format!("Failed to parse IPFS mapping file: {}", e)))?;
+
+        let mut mapping = HashMap::new();
+        for (hex_hash, cid) in raw {
+            let bytes = hex::decode(&hex_hash).map_err(|e| {
+                MprdError::ZkError(format!("Invalid hash in IPFS mapping file: {}", e))
+            })?;
+            if bytes.len() != 32 {
+                return Err(MprdError::ZkError(
+                    "Invalid hash length in IPFS mapping file".into(),
+                ));
+            }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            mapping.insert(Hash32(arr), cid);
+        }
+
+        Ok(mapping)
+    }
+
+    fn persist_mapping(&self, mapping: &HashMap<Hash32, String>) -> Result<()> {
+        let mut raw = HashMap::new();
+        for (hash, cid) in mapping {
+            raw.insert(hex::encode(hash.0), cid.clone());
+        }
+
+        let data = serde_json::to_string_pretty(&raw)
+            .map_err(|e| MprdError::ZkError(format!("Failed to serialize IPFS mapping: {}", e)))?;
+
+        let tmp_path = self.mapping_path.with_extension("tmp");
+        fs::write(&tmp_path, &data).map_err(|e| {
+            MprdError::ZkError(format!("Failed to write IPFS mapping temp file: {}", e))
+        })?;
+        fs::rename(&tmp_path, &self.mapping_path).map_err(|e| {
+            MprdError::ZkError(format!("Failed to replace IPFS mapping file: {}", e))
+        })?;
+
+        Ok(())
+    }
+
+    fn compute_hash(bytes: &[u8]) -> Hash32 {
+        mprd_core::hash::sha256_domain(mprd_core::hash::POLICY_TAU_DOMAIN_V1, bytes)
+    }
+
+    fn verify_policy_hash_matches_expected(expected: &Hash32, policy_bytes: &[u8]) -> Result<()> {
+        let computed = Self::compute_hash(policy_bytes);
+        if computed == *expected {
+            return Ok(());
+        }
+        Err(MprdError::ZkError(format!(
+            "Policy hash mismatch: expected {}, got {}",
+            hex::encode(expected.0),
+            hex::encode(computed.0)
+        )))
+    }
+
+    fn has_mapping(&self, policy_hash: &Hash32) -> Result<bool> {
+        let mapping = self
+            .hash_to_cid
+            .read()
+            .map_err(|_| MprdError::ZkError("IPFS mapping lock poisoned".into()))?;
+        Ok(mapping.contains_key(policy_hash))
+    }
+
+    /// Try to add content to IPFS using the first available gateway.
+    fn ipfs_add(&self, bytes: &[u8]) -> Result<String> {
+        let mut last_error = None;
+
+        for gateway in &self.gateways {
+            match self.try_ipfs_add(gateway, bytes) {
+                Ok(cid) => return Ok(cid),
+                Err(e) => {
+                    warn!(gateway = %gateway, error = %e, "IPFS add failed, trying next gateway");
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| MprdError::ZkError("No gateways available".into())))
+    }
+
+    fn try_ipfs_add(&self, gateway: &str, bytes: &[u8]) -> Result<String> {
+        let url = format!("{}/api/v0/add", gateway);
+        let part = reqwest::blocking::multipart::Part::bytes(bytes.to_vec()).file_name("policy");
+        let form = reqwest::blocking::multipart::Form::new().part("file", part);
+
+        let response = self
+            .client
+            .post(&url)
+            .multipart(form)
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .map_err(|e| MprdError::ZkError(format!("IPFS add failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(MprdError::ZkError(format!(
+                "IPFS add returned {}",
+                response.status()
+            )));
+        }
+
+        #[derive(Deserialize)]
+        struct IpfsAddResponse {
+            #[serde(rename = "Hash")]
+            hash: String,
+        }
+
+        let parsed: IpfsAddResponse = response
+            .json()
+            .map_err(|e| MprdError::ZkError(format!("Failed to parse IPFS response: {}", e)))?;
+
+        Ok(parsed.hash)
+    }
+
+    /// Try to fetch content from IPFS using multiple gateways with failover.
+    fn ipfs_cat(&self, cid: &str) -> Result<Vec<u8>> {
+        let mut last_error = None;
+
+        for gateway in &self.gateways {
+            match self.try_ipfs_cat(gateway, cid) {
+                Ok(bytes) => return Ok(bytes),
+                Err(e) => {
+                    warn!(gateway = %gateway, cid = %cid, error = %e, "IPFS cat failed, trying next gateway");
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| MprdError::ZkError("No gateways available".into())))
+    }
+
+    fn try_ipfs_cat(&self, gateway: &str, cid: &str) -> Result<Vec<u8>> {
+        let url = format!("{}/api/v0/cat?arg={}", gateway, cid);
+
+        let response = self
+            .client
+            .post(&url)
+            .timeout(std::time::Duration::from_secs(60))
+            .send()
+            .map_err(|e| MprdError::ZkError(format!("IPFS cat failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(MprdError::ZkError(format!(
+                "IPFS cat returned {}",
+                response.status()
+            )));
+        }
+
+        let body = response
+            .bytes()
+            .map_err(|e| MprdError::ZkError(format!("Failed to read IPFS content: {}", e)))?;
+
+        Ok(body.to_vec())
+    }
+
+    /// Get the number of configured gateways.
+    pub fn gateway_count(&self) -> usize {
+        self.gateways.len()
+    }
+}
+
+impl DistributedPolicyStore for MultiGatewayIpfsPolicyStore {
+    fn store(&self, policy_bytes: &[u8]) -> Result<Hash32> {
+        let hash = Self::compute_hash(policy_bytes);
+
+        if self.has_mapping(&hash)? {
+            return Ok(hash);
+        }
+
+        let cid = self.ipfs_add(policy_bytes)?;
+
+        let mut mapping = self
+            .hash_to_cid
+            .write()
+            .map_err(|_| MprdError::ZkError("IPFS mapping lock poisoned".into()))?;
+        mapping.insert(hash.clone(), cid);
+        self.persist_mapping(&mapping)?;
+
+        Ok(hash)
+    }
+
+    fn retrieve(&self, policy_hash: &Hash32) -> Result<Vec<u8>> {
+        let cid = {
+            let mapping = self
+                .hash_to_cid
+                .read()
+                .map_err(|_| MprdError::ZkError("IPFS mapping lock poisoned".into()))?;
+            mapping
+                .get(policy_hash)
+                .cloned()
+                .ok_or_else(|| MprdError::ZkError("No CID mapping for policy hash".into()))?
+        };
+
+        // Try all gateways with failover, always verify content hash
+        let bytes = self.ipfs_cat(&cid)?;
+        Self::verify_policy_hash_matches_expected(policy_hash, &bytes)?;
+        Ok(bytes)
+    }
+
+    fn exists(&self, policy_hash: &Hash32) -> Result<bool> {
+        self.has_mapping(policy_hash)
+    }
+
+    fn backend_name(&self) -> &'static str {
+        "IPFS-MultiGateway"
+    }
+}
+
+// =============================================================================
 // Commitment Anchoring
 // =============================================================================
 
@@ -1577,13 +1870,22 @@ impl CommitmentAnchorStore for LocalTimestampAnchorStore {
 mod tests {
     use super::*;
     use mprd_core::components::StubZkAttestor;
+    use mprd_core::PolicyRef;
     use mprd_core::Score;
+    use proptest::prelude::*;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::sync::{Mutex, OnceLock};
 
     fn dummy_hash(byte: u8) -> Hash32 {
         Hash32([byte; 32])
+    }
+
+    fn dummy_policy_ref() -> PolicyRef {
+        PolicyRef {
+            policy_epoch: 1,
+            registry_root: dummy_hash(99),
+        }
     }
 
     #[test]
@@ -1760,7 +2062,11 @@ mod tests {
             Ok(_) => panic!("expected IpfsPolicyStore::new to reject private IP"),
             Err(e) => e,
         };
-        assert!(err.to_string().to_lowercase().contains("disallowed"));
+        assert!(matches!(
+            err,
+            MprdError::ConfigError(msg)
+                if msg == "Outbound URL host is a disallowed IP (private/link-local/loopback/multicast/unspecified)"
+        ));
     }
 
     #[test]
@@ -1853,9 +2159,21 @@ mod tests {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(4),
+            state_ref: mprd_core::StateRef::unknown(),
         };
 
-        let result = multi.attest_multi(&decision, &state, &[]);
+        let token = DecisionToken {
+            policy_hash: decision.policy_hash.clone(),
+            policy_ref: dummy_policy_ref(),
+            state_hash: state.state_hash.clone(),
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            nonce_or_tx_hash: dummy_hash(9),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+
+        let result = multi.attest_multi(&token, &decision, &state, &[]);
 
         assert_eq!(result.success_count, 3);
         assert!(result.quorum_reached);
@@ -1921,7 +2239,9 @@ mod tests {
 
         let token = DecisionToken {
             policy_hash: dummy_hash(1),
+            policy_ref: dummy_policy_ref(),
             state_hash: dummy_hash(2),
+            state_ref: mprd_core::StateRef::unknown(),
             chosen_action_hash: dummy_hash(3),
             nonce_or_tx_hash: dummy_hash(4),
             timestamp_ms: 0,
@@ -1933,6 +2253,9 @@ mod tests {
             state_hash: dummy_hash(2),
             candidate_set_hash: dummy_hash(5),
             chosen_action_hash: dummy_hash(3),
+            limits_hash: dummy_hash(6),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
             risc0_receipt: vec![],
             attestation_metadata: HashMap::new(),
         };
@@ -2301,5 +2624,211 @@ mod tests {
         assert_eq!(expected, actual);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    // =========================================================================
+    // Property-Based Tests
+    // =========================================================================
+
+    proptest! {
+        /// Property: committee hash is order-independent (permutation invariant).
+        #[test]
+        fn committee_hash_order_independent(
+            threshold in 1u16..=5,
+            n_members in 5usize..=8,
+            seed in any::<u8>(),
+        ) {
+            let threshold = threshold.min(n_members as u16);
+            let members: Vec<Vec<u8>> = (0..n_members)
+                .map(|i| vec![seed.wrapping_add(i as u8); 48])
+                .collect();
+
+            // Reverse the order
+            let mut reversed = members.clone();
+            reversed.reverse();
+
+            let h1 = compute_committee_hash(threshold, &members).expect("hash");
+            let h2 = compute_committee_hash(threshold, &reversed).expect("hash");
+
+            prop_assert_eq!(h1, h2, "hash should be order-independent");
+        }
+
+        /// Property: different committees produce different hashes (injectivity).
+        #[test]
+        fn committee_hash_is_injective(
+            threshold in 1u16..=3,
+            n_members in 3usize..=5,
+            seed_a in any::<u8>(),
+            seed_b in any::<u8>(),
+        ) {
+            prop_assume!(seed_a != seed_b);
+            let threshold = threshold.min(n_members as u16);
+
+            let members_a: Vec<Vec<u8>> = (0..n_members)
+                .map(|i| vec![seed_a.wrapping_add(i as u8); 48])
+                .collect();
+            let members_b: Vec<Vec<u8>> = (0..n_members)
+                .map(|i| vec![seed_b.wrapping_add(i as u8); 48])
+                .collect();
+
+            let h1 = compute_committee_hash(threshold, &members_a).expect("hash");
+            let h2 = compute_committee_hash(threshold, &members_b).expect("hash");
+
+            prop_assert_ne!(h1, h2, "different members should produce different hashes");
+        }
+
+        /// Property: verify_threshold is exact - k signatures pass, k-1 fail.
+        #[test]
+        fn verify_threshold_is_exact(
+            threshold in 1u16..=5,
+            n_members in 5usize..=8,
+        ) {
+            let threshold = threshold.min(n_members as u16);
+            let members: Vec<Vec<u8>> = (0..n_members)
+                .map(|i| vec![i as u8; 33])
+                .collect();
+
+            let config = ProfileConfig::new(threshold, members.clone()).expect("config");
+
+            // Exactly k signatures should pass
+            let sigs_k: Vec<(Vec<u8>, Vec<u8>)> = members[..threshold as usize]
+                .iter()
+                .map(|m| (m.clone(), vec![0u8; 64]))
+                .collect();
+            prop_assert!(config.verify_threshold(&sigs_k), "k sigs should pass");
+
+            // k-1 signatures should fail (if threshold > 1)
+            if threshold > 1 {
+                let sigs_k_minus_1: Vec<(Vec<u8>, Vec<u8>)> = members[..(threshold - 1) as usize]
+                    .iter()
+                    .map(|m| (m.clone(), vec![0u8; 64]))
+                    .collect();
+                prop_assert!(!config.verify_threshold(&sigs_k_minus_1), "k-1 sigs should fail");
+            }
+        }
+
+        /// Stateful test: GovernanceState transitions match a reference model.
+        /// Generates random update operations and verifies invariants.
+        #[test]
+        fn governance_state_stateful_model_test(
+            initial_rules_byte in any::<u8>(),
+            initial_committee_byte in any::<u8>(),
+            ops in proptest::collection::vec(
+                (prop::bool::ANY, any::<u8>(), prop::bool::ANY),
+                5..20
+            )
+        ) {
+            // Reference model: mirrors GovernanceState structure
+            #[derive(Clone)]
+            struct GovernanceModel {
+                rules_hash: Hash32,
+                rules_seq: u64,
+                committee_hash: Hash32,
+                committee_seq: u64,
+            }
+
+            impl GovernanceModel {
+                fn apply_rules_update(&mut self, new_rules_text: &str, threshold_ok: bool) -> bool {
+                    if !threshold_ok {
+                        return false;
+                    }
+                    // Model accepts: just increment seq and update hash
+                    self.rules_seq += 1;
+                    self.rules_hash = compute_rules_hash(new_rules_text);
+                    true
+                }
+
+                fn apply_committee_update(&mut self, new_committee_hash: Hash32, threshold_ok: bool) -> bool {
+                    if !threshold_ok {
+                        return false;
+                    }
+                    // Model accepts: just increment seq and update hash
+                    self.committee_seq += 1;
+                    self.committee_hash = new_committee_hash;
+                    true
+                }
+            }
+
+            // Initialize SUT
+            let initial_rules_hash = compute_rules_hash(&format!("rule_{}", initial_rules_byte));
+            let initial_members = vec![vec![initial_committee_byte; 48]];
+            let initial_committee_hash = compute_committee_hash(1, &initial_members).unwrap();
+
+            let mut sut = GovernanceState {
+                rules_hash: initial_rules_hash.clone(),
+                rules_seq: 0,
+                committee_hash: initial_committee_hash.clone(),
+                committee_seq: 0,
+            };
+
+            // Initialize model with same state
+            let mut model = GovernanceModel {
+                rules_hash: initial_rules_hash,
+                rules_seq: 0,
+                committee_hash: initial_committee_hash,
+                committee_seq: 0,
+            };
+
+            for (is_rules_update, data_byte, threshold_ok) in ops {
+                if is_rules_update {
+                    // Rules update
+                    let rules_text = format!("rule_v{}", data_byte);
+                    let tx = RulesUpdateTx {
+                        prev_rules_hash: sut.rules_hash.clone(),
+                        rules_text: rules_text.clone(),
+                        update_seq: sut.rules_seq + 1,
+                    };
+
+                    let sut_result = sut.apply_rules_update(&tx, threshold_ok);
+                    let model_success = model.apply_rules_update(&rules_text, threshold_ok);
+
+                    // INVARIANT: SUT and model agree on success/failure
+                    prop_assert_eq!(
+                        sut_result.is_ok(), model_success,
+                        "SUT/Model disagree on rules update. threshold_ok={}",
+                        threshold_ok
+                    );
+
+                    if model_success {
+                        // INVARIANT: seq is monotonically increasing
+                        prop_assert_eq!(sut.rules_seq, model.rules_seq);
+                        // INVARIANT: hash matches
+                        prop_assert_eq!(sut.rules_hash.clone(), model.rules_hash.clone());
+                    }
+                } else {
+                    // Committee update
+                    let new_members = vec![vec![data_byte; 48]];
+                    let new_committee_hash = compute_committee_hash(1, &new_members).unwrap();
+
+                    let tx = CommitteeUpdateTx {
+                        prev_committee_hash: sut.committee_hash.clone(),
+                        new_threshold: 1,
+                        new_members,
+                        committee_seq: sut.committee_seq + 1,
+                    };
+
+                    let sut_result = sut.apply_committee_update(&tx, threshold_ok);
+                    let model_success = model.apply_committee_update(new_committee_hash.clone(), threshold_ok);
+
+                    // INVARIANT: SUT and model agree on success/failure
+                    prop_assert_eq!(
+                        sut_result.is_ok(), model_success,
+                        "SUT/Model disagree on committee update. threshold_ok={}",
+                        threshold_ok
+                    );
+
+                    if model_success {
+                        // INVARIANT: seq is monotonically increasing
+                        prop_assert_eq!(sut.committee_seq, model.committee_seq);
+                        // INVARIANT: hash matches
+                        prop_assert_eq!(sut.committee_hash.clone(), model.committee_hash.clone());
+                    }
+                }
+
+                // FINAL INVARIANT: Overall state agreement
+                prop_assert_eq!(sut.rules_seq, model.rules_seq, "rules_seq mismatch");
+                prop_assert_eq!(sut.committee_seq, model.committee_seq, "committee_seq mismatch");
+            }
+        }
     }
 }

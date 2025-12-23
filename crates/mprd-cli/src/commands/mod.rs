@@ -1,10 +1,18 @@
 //! CLI Command Implementations
 
+pub mod deploy;
+pub mod doctor;
+pub mod fees;
 pub mod init;
+pub mod markets;
+pub mod panel;
 pub mod policy;
+pub mod policy_test;
+pub mod policy_verify;
 pub mod prove;
 pub mod run;
 pub mod serve;
+pub mod staking;
 pub mod status;
 pub mod verify;
 
@@ -29,6 +37,9 @@ pub struct MprdConfigFile {
 
     /// Execution configuration.
     pub execution: ExecutionConfig,
+
+    /// Anti-replay configuration.
+    pub anti_replay: Option<AntiReplayConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -55,6 +66,12 @@ pub struct ExecutionConfig {
     pub audit_file: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AntiReplayConfig {
+    /// Optional durable nonce store directory.
+    pub nonce_store_dir: Option<PathBuf>,
+}
+
 impl Default for MprdConfigFile {
     fn default() -> Self {
         Self {
@@ -73,6 +90,9 @@ impl Default for MprdConfigFile {
                 http_url: None,
                 audit_file: Some(PathBuf::from(".mprd/audit.jsonl")),
             },
+            anti_replay: Some(AntiReplayConfig {
+                nonce_store_dir: Some(PathBuf::from(".mprd/anti_replay")),
+            }),
         }
     }
 }

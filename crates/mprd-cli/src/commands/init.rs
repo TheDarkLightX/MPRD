@@ -3,14 +3,21 @@
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
+use thiserror::Error;
 
 use super::MprdConfigFile;
 
+#[derive(Debug, Error, PartialEq, Eq)]
+enum InitCommandError {
+    #[error(
+        "Refusing to initialize `local` mode without explicit acknowledgement. Re-run with `--insecure-demo` to generate an operator-trusted local config."
+    )]
+    LocalInsecureDemoRequired,
+}
+
 pub fn run(output: PathBuf, mode: String, insecure_demo: bool) -> Result<()> {
     if mode == "local" && !insecure_demo {
-        anyhow::bail!(
-            "Refusing to initialize `local` mode without explicit acknowledgement. Re-run with `--insecure-demo` to generate an operator-trusted local config."
-        );
+        return Err(InitCommandError::LocalInsecureDemoRequired.into());
     }
 
     println!("🔧 Initializing MPRD configuration...");
@@ -80,8 +87,9 @@ mod tests {
     fn init_fails_closed_for_local_without_insecure_demo() {
         let err = run(PathBuf::from("."), "local".into(), false)
             .expect_err("should refuse local init without insecure_demo");
-        assert!(err
-            .to_string()
-            .contains("Refusing to initialize `local` mode"));
+        assert_eq!(
+            err.downcast_ref::<InitCommandError>(),
+            Some(&InitCommandError::LocalInsecureDemoRequired)
+        );
     }
 }

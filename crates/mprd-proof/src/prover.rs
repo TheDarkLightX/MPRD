@@ -19,9 +19,9 @@ use crate::{
     trace::{ExecutionTrace, TraceStep},
     Hash256,
 };
-use rand::seq::index;
-use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
+
+use crate::challenges;
 
 /// Configuration for proof generation.
 #[derive(Clone, Debug)]
@@ -29,7 +29,9 @@ pub struct ProverConfig {
     /// Number of random steps to include in proof.
     pub num_spot_checks: usize,
 
-    /// Random seed for deterministic proofs (testing).
+    /// Deprecated: randomness is derived from the committed trace via Fiat-Shamir.
+    ///
+    /// Kept for backwards-compatibility in configs; ignored.
     pub seed: Option<u64>,
 }
 
@@ -51,6 +53,9 @@ pub struct MpbProof {
     /// Hash of the input registers.
     pub input_hash: Hash256,
 
+    /// External context hash bound into the proof statement.
+    pub context_hash: Hash256,
+
     /// The output value (public).
     pub output: i64,
 
@@ -62,6 +67,9 @@ pub struct MpbProof {
 
     /// Merkle root of all step hashes.
     pub trace_root: Hash256,
+
+    /// Fiat-Shamir challenge seed derived from the committed trace and public inputs.
+    pub challenge_seed: Hash256,
 
     /// Spot-checked steps with proofs.
     pub spot_checks: Vec<SpotCheck>,
@@ -98,6 +106,7 @@ pub struct MpbProver {
 pub enum ProverError {
     EmptyTrace,
     MissingMerkleProof { index: usize },
+    SpotCheckDerivationFailed,
 }
 
 impl MpbProver {
@@ -126,6 +135,17 @@ impl MpbProver {
         let step_hashes: Vec<Hash256> = trace.steps.iter().map(|s| s.hash()).collect();
         let merkle_tree = MerkleTree::build(step_hashes);
 
+        let trace_root = merkle_tree.root();
+        let challenge_seed = challenges::challenge_seed_v1(
+            &trace.bytecode_hash,
+            &trace.input_hash,
+            &trace.context_hash,
+            &trace_root,
+            trace.final_result,
+            trace.steps.len(),
+            trace.fuel_consumed,
+        );
+
         // Always include first and last step
         let first_step = trace.steps.first().ok_or(ProverError::EmptyTrace)?.clone();
         let last_step_index = trace.steps.len() - 1;
@@ -140,16 +160,18 @@ impl MpbProver {
                     index: last_step_index,
                 })?;
 
-        // Select random steps for spot checking
-        let spot_checks = self.select_spot_checks(trace, &merkle_tree)?;
+        // Select deterministic spot checks derived from the committed trace (Fiat-Shamir).
+        let spot_checks = self.select_spot_checks(trace, &merkle_tree, &challenge_seed)?;
 
         Ok(MpbProof {
             bytecode_hash: trace.bytecode_hash,
             input_hash: trace.input_hash,
+            context_hash: trace.context_hash,
             output: trace.final_result,
             num_steps: trace.steps.len(),
             fuel_consumed: trace.fuel_consumed,
-            trace_root: merkle_tree.root(),
+            trace_root,
+            challenge_seed,
             spot_checks,
             first_step,
             last_step,
@@ -158,11 +180,12 @@ impl MpbProver {
         })
     }
 
-    /// Select random steps for spot checking.
+    /// Select deterministic steps for spot checking.
     fn select_spot_checks(
         &self,
         trace: &ExecutionTrace,
         tree: &MerkleTree,
+        challenge_seed: &Hash256,
     ) -> std::result::Result<Vec<SpotCheck>, ProverError> {
         let n = trace.steps.len();
         if n <= 2 {
@@ -174,14 +197,8 @@ impl MpbProver {
             return Ok(vec![]);
         }
 
-        let mut rng = match self.config.seed {
-            Some(seed) => rand::rngs::StdRng::seed_from_u64(seed),
-            None => rand::rngs::StdRng::from_entropy(),
-        };
-
-        let sample = index::sample(&mut rng, n - 2, num_checks);
-        let mut indices: Vec<usize> = sample.into_iter().map(|i| i + 1).collect();
-        indices.sort_unstable();
+        let indices = challenges::derive_spot_check_indices_v1(challenge_seed, n, num_checks)
+            .map_err(|_| ProverError::SpotCheckDerivationFailed)?;
 
         let mut spot_checks: Vec<SpotCheck> = Vec::with_capacity(indices.len());
         for idx in indices {
@@ -325,17 +342,21 @@ mod tests {
     }
 
     #[test]
-    fn deterministic_with_seed() {
+    fn deterministic_spot_checks_are_trace_bound() {
         let trace = make_dummy_trace(100);
-        let prover = MpbProver::with_config(ProverConfig {
+        let prover_a = MpbProver::with_config(ProverConfig {
             num_spot_checks: 16,
             seed: Some(12345),
         });
+        let prover_b = MpbProver::with_config(ProverConfig {
+            num_spot_checks: 16,
+            seed: Some(999),
+        });
 
-        let proof1 = prover.prove(&trace).expect("prove");
-        let proof2 = prover.prove(&trace).expect("prove");
+        let proof1 = prover_a.prove(&trace).expect("prove");
+        let proof2 = prover_b.prove(&trace).expect("prove");
 
-        // Same seed should give same spot checks
+        // Spot checks are derived from the committed trace (Fiat-Shamir), not from a prover-chosen seed.
         assert_eq!(proof1.spot_checks.len(), proof2.spot_checks.len());
         for (c1, c2) in proof1.spot_checks.iter().zip(proof2.spot_checks.iter()) {
             assert_eq!(c1.step.step, c2.step.step);

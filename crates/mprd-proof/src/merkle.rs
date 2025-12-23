@@ -186,6 +186,7 @@ impl MerkleProof {
 mod tests {
     use super::*;
     use crate::sha256;
+    use proptest::prelude::*;
 
     fn make_leaves(n: usize) -> Vec<Hash256> {
         (0..n).map(|i| sha256(&i.to_le_bytes())).collect()
@@ -260,6 +261,37 @@ mod tests {
         for i in (0..1000).step_by(100) {
             let proof = tree.prove(i).unwrap();
             assert!(proof.verify(&root), "Proof for leaf {} should verify", i);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn merkle_proof_verifies_for_any_leaf_set(
+            leaves in proptest::collection::vec(any::<[u8; 32]>(), 1..64),
+            idx in 0usize..64,
+        ) {
+            let tree = MerkleTree::build(leaves.clone());
+            prop_assert_eq!(tree.len(), leaves.len());
+
+            let index = idx % leaves.len();
+            let proof = tree.prove(index).expect("proof");
+            prop_assert!(proof.verify(&tree.root()));
+        }
+
+        #[test]
+        fn prove_is_none_when_out_of_range(leaves in proptest::collection::vec(any::<[u8; 32]>(), 1..64)) {
+            let tree = MerkleTree::build(leaves.clone());
+            prop_assert!(tree.prove(leaves.len()).is_none());
+            prop_assert!(tree.prove(leaves.len() + 1).is_none());
+        }
+
+        #[test]
+        fn proof_rejects_zero_root_for_nonzero_root(leaves in proptest::collection::vec(any::<[u8; 32]>(), 1..64)) {
+            let tree = MerkleTree::build(leaves.clone());
+            let root = tree.root();
+            prop_assume!(root != [0u8; 32]);
+            let proof = tree.prove(0).expect("proof");
+            prop_assert!(!proof.verify(&[0u8; 32]));
         }
     }
 }

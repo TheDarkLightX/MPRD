@@ -1,0 +1,40 @@
+[package]
+name = "tau-mprd-compiler"
+version = "0.1.0"
+edition = "2021"
+description = "Compiler for Tau-MPRD policy language subset to TCV circuit format"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+
+# Keep this crate out of the main MPRD workspace (license boundary per TCV spec §0.1)
+[workspace]
+
+# NOTE: This tool is intentionally separate from the main MPRD workspace
+# to maintain license boundaries per TCV spec §0.1. It produces only:
+# - policy_source_hash (hash of Tau source bytes)
+# - policy_hash (hash of compiled artifact bytes) + compiled artifact bytes
+#
+# The Tau language itself (external/tau-lang) is under a different license.
+# This compiler parses a restricted subset (Tau-MPRD) and does NOT link to
+# or embed any Tau language libraries.
+
+[dependencies]
+sha2 = "0.10"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hex = "0.4"
+mprd-risc0-shared = { path = "../../crates/mprd-risc0-shared" }
+rand = "0.8"
+rand_chacha = "0.3"
+
+[dev-dependencies]
+proptest = "1.4"
+
+[[bin]]
+name = "tau-mprd-compile"
+path = "src/main.rs"
+
+[lib]
+name = "tau_mprd_compiler"
+path = "src/lib.rs"

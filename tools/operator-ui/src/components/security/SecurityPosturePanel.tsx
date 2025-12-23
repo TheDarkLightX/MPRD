@@ -151,11 +151,12 @@ function PostureBar({ label, level, value }: { label: string; level: TrustLevel 
 // =============================================================================
 
 function MetricRow({ label, value, unit, warning = false }: { label: string; value: number; unit?: string; warning?: boolean }) {
+    const isPercent = !unit || unit === '%';
     return (
         <div className="flex items-center justify-between py-1.5 text-xs">
             <span className="text-dark-400">{label}</span>
             <span className={`font-mono ${warning ? 'text-degraded-400' : 'text-gray-300'}`}>
-                {(value * 100).toFixed(1)}{unit || '%'}
+                {isPercent ? (value * 100).toFixed(1) : value.toFixed(2)}{unit || '%'}
             </span>
         </div>
     );

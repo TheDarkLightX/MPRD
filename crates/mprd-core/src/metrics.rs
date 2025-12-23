@@ -150,6 +150,8 @@ impl Histogram {
 /// Central metrics collection for MPRD.
 pub struct MprdMetrics {
     // Counters
+    pub states_total: Counter,
+    // Counters
     pub proposals_total: Counter,
     pub evaluations_total: Counter,
     pub selections_total: Counter,
@@ -168,6 +170,7 @@ pub struct MprdMetrics {
     pub pending_executions: Gauge,
 
     // Histograms (latencies in ms)
+    pub state_latency: Histogram,
     pub proposal_latency: Histogram,
     pub evaluation_latency: Histogram,
     pub selection_latency: Histogram,
@@ -178,11 +181,14 @@ pub struct MprdMetrics {
 
     // Per-policy counters
     policy_decisions: RwLock<HashMap<String, Counter>>,
+    // Failures by structured reason code (string key, counter value).
+    failure_reasons: RwLock<HashMap<String, Counter>>,
 }
 
 impl MprdMetrics {
     pub fn new() -> Self {
         Self {
+            states_total: Counter::new(),
             proposals_total: Counter::new(),
             evaluations_total: Counter::new(),
             selections_total: Counter::new(),
@@ -200,6 +206,7 @@ impl MprdMetrics {
             pending_executions: Gauge::new(),
 
             proposal_latency: Histogram::new_latency(),
+            state_latency: Histogram::new_latency(),
             evaluation_latency: Histogram::new_latency(),
             selection_latency: Histogram::new_latency(),
             attestation_latency: Histogram::new_latency(),
@@ -208,6 +215,7 @@ impl MprdMetrics {
             total_pipeline_latency: Histogram::new_latency(),
 
             policy_decisions: RwLock::new(HashMap::new()),
+            failure_reasons: RwLock::new(HashMap::new()),
         }
     }
 
@@ -215,6 +223,20 @@ impl MprdMetrics {
     pub fn record_policy_decision(&self, policy_hash: &str) {
         if let Ok(mut map) = self.policy_decisions.write() {
             map.entry(policy_hash.to_string())
+                .or_insert_with(Counter::new)
+                .inc();
+        }
+    }
+
+    /// Record a failure reason code (string key) as a counter.
+    ///
+    /// This is intended for fail-closed security events:
+    /// - verification failures by reason
+    /// - nonce replay
+    /// - manifest/registry unavailability
+    pub fn inc_failure_reason(&self, reason: &str) {
+        if let Ok(mut map) = self.failure_reasons.write() {
+            map.entry(reason.to_string())
                 .or_insert_with(Counter::new)
                 .inc();
         }
@@ -231,8 +253,17 @@ impl MprdMetrics {
 
     /// Export metrics as JSON.
     pub fn to_json(&self) -> serde_json::Value {
+        let failure_reasons = if let Ok(map) = self.failure_reasons.read() {
+            let mut out: Vec<_> = map.iter().map(|(k, v)| (k.clone(), v.get())).collect();
+            out.sort_by(|a, b| a.0.cmp(&b.0));
+            out
+        } else {
+            Vec::new()
+        };
+
         serde_json::json!({
             "counters": {
+                "states_total": self.states_total.get(),
                 "proposals_total": self.proposals_total.get(),
                 "evaluations_total": self.evaluations_total.get(),
                 "selections_total": self.selections_total.get(),
@@ -249,7 +280,9 @@ impl MprdMetrics {
                 "active_policies": self.active_policies.get(),
                 "pending_executions": self.pending_executions.get(),
             },
+            "failure_reasons": failure_reasons,
             "latencies_ms": {
+                "state_mean": self.state_latency.get_mean(),
                 "proposal_mean": self.proposal_latency.get_mean(),
                 "evaluation_mean": self.evaluation_latency.get_mean(),
                 "selection_mean": self.selection_latency.get_mean(),
@@ -305,6 +338,16 @@ where
 {
     let _timer = StageTimer::start(&metrics.proposal_latency);
     metrics.proposals_total.inc();
+    f()
+}
+
+/// Record state capture with timing.
+pub fn timed_state<F, T>(metrics: &MprdMetrics, f: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    let _timer = StageTimer::start(&metrics.state_latency);
+    metrics.states_total.inc();
     f()
 }
 
@@ -408,12 +451,14 @@ mod tests {
     fn metrics_export_to_json() {
         let metrics = MprdMetrics::new();
 
+        metrics.states_total.inc();
         metrics.proposals_total.inc();
         metrics.evaluations_total.inc();
         metrics.actions_allowed.inc();
 
         let json = metrics.to_json();
 
+        assert_eq!(json["counters"]["states_total"], 1);
         assert_eq!(json["counters"]["proposals_total"], 1);
         assert_eq!(json["counters"]["evaluations_total"], 1);
         assert_eq!(json["counters"]["actions_allowed"], 1);

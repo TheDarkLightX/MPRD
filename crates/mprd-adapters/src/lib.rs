@@ -17,6 +17,8 @@
 
 pub mod egress;
 pub mod executors;
+pub mod models_market;
+pub mod proposers;
 pub mod storage;
 
 pub use executors::{
@@ -25,3 +27,9 @@ pub use executors::{
 };
 
 pub use storage::{IpfsConfig, IpfsPolicyStorage, LocalPolicyStorage};
+
+pub use proposers::{HttpProposer, HttpProposerConfig};
+
+pub use models_market::{
+    FileModelsMarketSnapshotProvider, MarketRoutedProposer, ModelsMarketRoutingConfig,
+};

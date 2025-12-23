@@ -8,7 +8,8 @@ use std::path::PathBuf;
 use super::load_config;
 use mprd_core::hash::{hash_candidate, hash_state};
 use mprd_core::{
-    CandidateAction, DefaultSelector, Hash32, RuleVerdict, Score, Selector, StateSnapshot, Value,
+    CandidateAction, DefaultSelector, Hash32, RuleVerdict, Score, Selector, StateRef,
+    StateSnapshot, Value,
 };
 
 fn json_number_to_value(n: &serde_json::Number) -> Option<Value> {
@@ -38,6 +39,7 @@ pub fn run(
     candidates_path: PathBuf,
     execute: bool,
     format: String,
+    decision_out: Option<PathBuf>,
     insecure_demo: bool,
     config_path: Option<PathBuf>,
 ) -> Result<()> {
@@ -73,6 +75,7 @@ pub fn run(
         fields,
         policy_inputs: HashMap::new(),
         state_hash: Hash32([0u8; 32]),
+        state_ref: StateRef::unknown(),
     };
 
     let mut state = state;
@@ -170,6 +173,24 @@ pub fn run(
             println!("   [Would execute in production mode]");
         } else {
             println!("💡 Dry run - use --execute to perform the action");
+        }
+    }
+
+    // Write decision to file if --decision-out is provided
+    if let Some(ref out_path) = decision_out {
+        let decision_json = serde_json::json!({
+            "chosen_index": decision.chosen_index,
+            "action_type": decision.chosen_action.action_type,
+            "params": decision.chosen_action.params,
+            "score": decision.chosen_action.score.0,
+            "candidate_hash": hex::encode(decision.chosen_action.candidate_hash.0),
+            "policy_hash": policy_hex,
+            "state_hash": hex::encode(state.state_hash.0),
+        });
+        std::fs::write(out_path, serde_json::to_string_pretty(&decision_json)?)
+            .with_context(|| format!("Failed to write decision to {}", out_path.display()))?;
+        if format == "human" {
+            println!("📄 Decision written to: {}", out_path.display());
         }
     }
 

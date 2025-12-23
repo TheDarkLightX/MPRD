@@ -1,553 +1,20 @@
 //! MPRD Policy Bytecode (MPB) — Deterministic Policy Evaluation VM
 //!
-//! # Overview
-//!
-//! MPB is an independent, clean-room implementation of a stack-based bytecode
-//! virtual machine designed for deterministic policy evaluation. It is NOT
-//! derived from Tau-lang source code.
-//!
-//! # Purpose
-//!
-//! - **Deterministic execution**: Same inputs always produce same outputs
-//! - **Bounded execution**: Fuel-limited, guaranteed termination
-//! - **ZK-compatible**: No heap allocation, fixed-size stack, Risc0 friendly
-//! - **Fail-closed**: Any error (division by zero, overflow) → DENY
-//!
-//! # Relationship to Tau
-//!
-//! MPB is designed to work alongside Tau Network integration:
-//! - Tau specs are the **source of truth** (stored on Tau Network)
-//! - MPB provides **deterministic re-execution** in Risc0 ZK circuits
-//! - A compiler (offline) translates Tau policy expressions → MPB bytecode
-//!
-//! # Legal Notice
-//!
-//! This implementation is original work, not derived from IDNI AG's Tau-lang
-//! source code. MPRD integrates with Tau Network under the permitted use case:
-//! "development and use solely for the purpose of integrating with the Tau Net
-//! blockchain" as specified in the Tau Language Framework license.
-//!
-//! Copyright (c) 2024 MPRD Contributors. MIT License.
+//! This module provides:
+//! - A reusable, `no_std` MPB VM core (re-exported from `mprd-mpb`)
+//! - A `std` policy-engine wrapper that maps MPRD state/candidates into registers
+//!   and applies fail-closed evaluation semantics.
 
-use crate::{CandidateAction, Hash32, MprdError, PolicyHash, Result, RuleVerdict, StateSnapshot};
+use crate::{
+    CandidateAction, Hash32, MprdError, PolicyEngine, PolicyHash, Result, RuleVerdict,
+    StateSnapshot,
+};
 use std::collections::HashMap;
 
-// =============================================================================
-// INSTRUCTION SET
-// =============================================================================
-
-/// MPB Opcode definitions.
-///
-/// Design principles:
-/// - Single-byte opcodes (cache friendly)
-/// - No backward jumps (bounded execution by construction)
-/// - All arithmetic is checked/saturating (no UB)
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OpCode {
-    // Stack manipulation
-    Push = 0x01, // Push immediate i64 (followed by 8 bytes LE)
-    Pop = 0x02,  // Pop and discard top
-    Dup = 0x03,  // Duplicate top of stack
-    Swap = 0x04, // Swap top two elements
-
-    // Load from registers (inputs)
-    LoadReg = 0x10, // Push register[arg] onto stack
-
-    // Arithmetic (checked, saturating on overflow)
-    Add = 0x20,
-    Sub = 0x21,
-    Mul = 0x22,
-    Div = 0x23, // Division by zero → error (fail-closed)
-    Mod = 0x24, // Modulo by zero → error
-    Neg = 0x25, // Negate (saturating)
-    Abs = 0x26, // Absolute value
-
-    // Comparison (push 1 for true, 0 for false)
-    Eq = 0x30,
-    Ne = 0x31,
-    Lt = 0x32,
-    Le = 0x33,
-    Gt = 0x34,
-    Ge = 0x35,
-
-    // Logic (0 = false, nonzero = true)
-    And = 0x40,
-    Or = 0x41,
-    Not = 0x42,
-
-    // Bitvector operations
-    BitAnd = 0x50,
-    BitOr = 0x51,
-    BitXor = 0x52,
-    BitNot = 0x53,
-    Shl = 0x54, // Shift left (capped at 63)
-    Shr = 0x55, // Shift right (capped at 63)
-
-    // Termination
-    Halt = 0xFF, // Stop execution, return top of stack
-}
+pub use mprd_mpb::{BytecodeBuilder, MpbVm, OpCode, VmStatus};
 
 // =============================================================================
-// VIRTUAL MACHINE
-// =============================================================================
-
-/// Execution status of the VM.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VmStatus {
-    /// VM is still running.
-    Running,
-    /// VM halted successfully with a result.
-    Halted { result: i64 },
-    /// VM ran out of fuel (bounded execution).
-    OutOfFuel,
-    /// Stack overflow (pushed too many values).
-    StackOverflow,
-    /// Stack underflow (popped from empty stack).
-    StackUnderflow,
-    /// Division or modulo by zero.
-    DivisionByZero,
-    /// Invalid opcode encountered.
-    InvalidOpcode { opcode: u8 },
-    /// Bytecode ended unexpectedly.
-    UnexpectedEnd,
-}
-
-/// MPB Virtual Machine.
-///
-/// Invariants:
-/// - `stack_ptr <= MAX_STACK`
-/// - `fuel` decrements monotonically
-/// - No heap allocation during execution
-#[derive(Clone, Debug)]
-pub struct MpbVm {
-    /// Operand stack (fixed size, no allocation).
-    stack: [i64; Self::MAX_STACK],
-    /// Stack pointer (points to next free slot).
-    stack_ptr: usize,
-    /// Input registers (loaded from state/candidate).
-    registers: [i64; Self::MAX_REGISTERS],
-    /// Fuel remaining (bounded execution guarantee).
-    fuel: u32,
-    /// Current execution status.
-    status: VmStatus,
-}
-
-impl MpbVm {
-    /// Maximum stack depth.
-    pub const MAX_STACK: usize = 64;
-    /// Maximum number of input registers.
-    pub const MAX_REGISTERS: usize = 32;
-    /// Default fuel limit.
-    pub const DEFAULT_FUEL: u32 = 10_000;
-
-    /// Create a new VM with the given input registers.
-    ///
-    /// # Precondition
-    /// `registers.len() <= MAX_REGISTERS`
-    pub fn new(registers: &[i64]) -> Self {
-        let mut vm = Self {
-            stack: [0; Self::MAX_STACK],
-            stack_ptr: 0,
-            registers: [0; Self::MAX_REGISTERS],
-            fuel: Self::DEFAULT_FUEL,
-            status: VmStatus::Running,
-        };
-
-        let n = registers.len().min(Self::MAX_REGISTERS);
-        vm.registers[..n].copy_from_slice(&registers[..n]);
-
-        vm
-    }
-
-    /// Create a VM with custom fuel limit.
-    pub fn with_fuel(registers: &[i64], fuel: u32) -> Self {
-        let mut vm = Self::new(registers);
-        vm.fuel = fuel;
-        vm
-    }
-
-    /// Execute bytecode until halt or error.
-    ///
-    /// # Termination Proof
-    /// The fuel counter decrements by 1 for each instruction.
-    /// Since fuel is finite and never increases, execution terminates
-    /// in at most `fuel` steps.
-    ///
-    /// # Returns
-    /// - `Ok(result)` if execution halted successfully
-    /// - `Err(status)` if an error occurred
-    pub fn execute(&mut self, bytecode: &[u8]) -> std::result::Result<i64, VmStatus> {
-        let mut ip = 0; // Instruction pointer
-
-        while ip < bytecode.len() {
-            // Fuel check — guarantees termination
-            if self.fuel == 0 {
-                self.status = VmStatus::OutOfFuel;
-                return Err(self.status);
-            }
-            self.fuel -= 1;
-
-            let opcode = bytecode[ip];
-            ip += 1;
-
-            match opcode {
-                // === Stack Manipulation ===
-                0x01 => {
-                    // Push: read 8 bytes as i64 LE
-                    if ip + 8 > bytecode.len() {
-                        self.status = VmStatus::UnexpectedEnd;
-                        return Err(self.status);
-                    }
-                    let bytes: [u8; 8] = match bytecode[ip..ip + 8].try_into() {
-                        Ok(b) => b,
-                        Err(_) => {
-                            self.status = VmStatus::UnexpectedEnd;
-                            return Err(self.status);
-                        }
-                    };
-                    let value = i64::from_le_bytes(bytes);
-                    ip += 8;
-                    self.push(value)?;
-                }
-                0x02 => {
-                    // Pop
-                    self.pop()?;
-                }
-                0x03 => {
-                    // Dup
-                    let v = self.peek()?;
-                    self.push(v)?;
-                }
-                0x04 => {
-                    // Swap
-                    let a = self.pop()?;
-                    let b = self.pop()?;
-                    self.push(a)?;
-                    self.push(b)?;
-                }
-
-                // === Load Register ===
-                0x10 => {
-                    if ip >= bytecode.len() {
-                        self.status = VmStatus::UnexpectedEnd;
-                        return Err(self.status);
-                    }
-                    let reg = bytecode[ip] as usize;
-                    ip += 1;
-                    let value = self.registers.get(reg).copied().unwrap_or(0);
-                    self.push(value)?;
-                }
-
-                // === Arithmetic ===
-                0x20 => {
-                    // Add (saturating)
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(a.saturating_add(b))?;
-                }
-                0x21 => {
-                    // Sub (saturating)
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(a.saturating_sub(b))?;
-                }
-                0x22 => {
-                    // Mul (saturating)
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(a.saturating_mul(b))?;
-                }
-                0x23 => {
-                    // Div (fail on zero)
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    if b == 0 {
-                        self.status = VmStatus::DivisionByZero;
-                        return Err(self.status);
-                    }
-                    self.push(a / b)?;
-                }
-                0x24 => {
-                    // Mod (fail on zero)
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    if b == 0 {
-                        self.status = VmStatus::DivisionByZero;
-                        return Err(self.status);
-                    }
-                    self.push(a % b)?;
-                }
-                0x25 => {
-                    // Neg (saturating)
-                    let a = self.pop()?;
-                    self.push(a.saturating_neg())?;
-                }
-                0x26 => {
-                    // Abs
-                    let a = self.pop()?;
-                    self.push(a.saturating_abs())?;
-                }
-
-                // === Comparison ===
-                0x30 => {
-                    // Eq
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(if a == b { 1 } else { 0 })?;
-                }
-                0x31 => {
-                    // Ne
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(if a != b { 1 } else { 0 })?;
-                }
-                0x32 => {
-                    // Lt
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(if a < b { 1 } else { 0 })?;
-                }
-                0x33 => {
-                    // Le
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(if a <= b { 1 } else { 0 })?;
-                }
-                0x34 => {
-                    // Gt
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(if a > b { 1 } else { 0 })?;
-                }
-                0x35 => {
-                    // Ge
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(if a >= b { 1 } else { 0 })?;
-                }
-
-                // === Logic ===
-                0x40 => {
-                    // And
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(if a != 0 && b != 0 { 1 } else { 0 })?;
-                }
-                0x41 => {
-                    // Or
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(if a != 0 || b != 0 { 1 } else { 0 })?;
-                }
-                0x42 => {
-                    // Not
-                    let a = self.pop()?;
-                    self.push(if a == 0 { 1 } else { 0 })?;
-                }
-
-                // === Bitvector ===
-                0x50 => {
-                    // BitAnd
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(a & b)?;
-                }
-                0x51 => {
-                    // BitOr
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(a | b)?;
-                }
-                0x52 => {
-                    // BitXor
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    self.push(a ^ b)?;
-                }
-                0x53 => {
-                    // BitNot
-                    let a = self.pop()?;
-                    self.push(!a)?;
-                }
-                0x54 => {
-                    // Shl (capped shift)
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    let shift = (b as u32).min(63);
-                    self.push(a.wrapping_shl(shift))?;
-                }
-                0x55 => {
-                    // Shr (capped shift)
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    let shift = (b as u32).min(63);
-                    self.push(a.wrapping_shr(shift))?;
-                }
-
-                // === Halt ===
-                0xFF => {
-                    let result = self.pop().unwrap_or(0);
-                    self.status = VmStatus::Halted { result };
-                    return Ok(result);
-                }
-
-                _ => {
-                    self.status = VmStatus::InvalidOpcode { opcode };
-                    return Err(self.status);
-                }
-            }
-        }
-
-        // Ran off end without explicit halt
-        let result = self.pop().unwrap_or(0);
-        self.status = VmStatus::Halted { result };
-        Ok(result)
-    }
-
-    /// Get remaining fuel.
-    pub fn remaining_fuel(&self) -> u32 {
-        self.fuel
-    }
-
-    /// Get current status.
-    pub fn status(&self) -> VmStatus {
-        self.status
-    }
-
-    #[inline]
-    fn push(&mut self, value: i64) -> std::result::Result<(), VmStatus> {
-        if self.stack_ptr >= Self::MAX_STACK {
-            self.status = VmStatus::StackOverflow;
-            return Err(self.status);
-        }
-        self.stack[self.stack_ptr] = value;
-        self.stack_ptr += 1;
-        Ok(())
-    }
-
-    #[inline]
-    fn pop(&mut self) -> std::result::Result<i64, VmStatus> {
-        if self.stack_ptr == 0 {
-            self.status = VmStatus::StackUnderflow;
-            return Err(self.status);
-        }
-        self.stack_ptr -= 1;
-        Ok(self.stack[self.stack_ptr])
-    }
-
-    #[inline]
-    fn peek(&self) -> std::result::Result<i64, VmStatus> {
-        if self.stack_ptr == 0 {
-            return Err(VmStatus::StackUnderflow);
-        }
-        Ok(self.stack[self.stack_ptr - 1])
-    }
-}
-
-// =============================================================================
-// BYTECODE BUILDER
-// =============================================================================
-
-/// Helper for building MPB bytecode programmatically.
-#[derive(Clone, Debug, Default)]
-pub struct BytecodeBuilder {
-    code: Vec<u8>,
-}
-
-impl BytecodeBuilder {
-    pub fn new() -> Self {
-        Self { code: Vec::new() }
-    }
-
-    /// Push an immediate i64 value.
-    pub fn push_i64(&mut self, value: i64) -> &mut Self {
-        self.code.push(0x01);
-        self.code.extend_from_slice(&value.to_le_bytes());
-        self
-    }
-
-    /// Load a register value onto the stack.
-    pub fn load_reg(&mut self, reg: u8) -> &mut Self {
-        self.code.push(0x10);
-        self.code.push(reg);
-        self
-    }
-
-    /// Emit a simple opcode (no arguments).
-    pub fn op(&mut self, opcode: OpCode) -> &mut Self {
-        self.code.push(opcode as u8);
-        self
-    }
-
-    /// Add two values.
-    pub fn add(&mut self) -> &mut Self {
-        self.op(OpCode::Add)
-    }
-
-    /// Subtract.
-    pub fn sub(&mut self) -> &mut Self {
-        self.op(OpCode::Sub)
-    }
-
-    /// Multiply.
-    pub fn mul(&mut self) -> &mut Self {
-        self.op(OpCode::Mul)
-    }
-
-    /// Divide.
-    pub fn div(&mut self) -> &mut Self {
-        self.op(OpCode::Div)
-    }
-
-    /// Less than or equal.
-    pub fn le(&mut self) -> &mut Self {
-        self.op(OpCode::Le)
-    }
-
-    /// Greater than or equal.
-    pub fn ge(&mut self) -> &mut Self {
-        self.op(OpCode::Ge)
-    }
-
-    /// Equal.
-    pub fn eq(&mut self) -> &mut Self {
-        self.op(OpCode::Eq)
-    }
-
-    /// Logical AND.
-    pub fn and(&mut self) -> &mut Self {
-        self.op(OpCode::And)
-    }
-
-    /// Logical OR.
-    pub fn or(&mut self) -> &mut Self {
-        self.op(OpCode::Or)
-    }
-
-    /// Logical NOT.
-    pub fn not(&mut self) -> &mut Self {
-        self.op(OpCode::Not)
-    }
-
-    /// Halt execution.
-    pub fn halt(&mut self) -> &mut Self {
-        self.op(OpCode::Halt)
-    }
-
-    /// Build and return the bytecode.
-    pub fn build(&self) -> Vec<u8> {
-        let mut code = self.code.clone();
-        // Ensure bytecode ends with halt
-        if code.last() != Some(&0xFF) {
-            code.push(0xFF);
-        }
-        code
-    }
-}
-
-// =============================================================================
-// POLICY ENGINE INTEGRATION
+// POLICY ENGINE INTEGRATION (std)
 // =============================================================================
 
 /// Compiled MPB policy.
@@ -555,22 +22,37 @@ impl BytecodeBuilder {
 pub struct MpbPolicy {
     /// Bytecode for evaluation.
     pub bytecode: Vec<u8>,
-    /// Variable name → register index mapping.
-    pub variables: HashMap<String, u8>,
-    /// Policy hash (for verification).
+
+    /// Canonical variable bindings in ascending name order.
+    pub variables: Vec<(String, u8)>,
+
+    /// Policy hash (content identity for mpb-v1).
     pub policy_hash: PolicyHash,
+
     /// Original source (for audit/debugging).
     pub source: Option<String>,
 }
 
 impl MpbPolicy {
     /// Create a policy from bytecode and variable mapping.
+    ///
+    /// The resulting `policy_hash` commits to BOTH:
+    /// - the bytecode, and
+    /// - the canonicalized variable bindings.
     pub fn new(bytecode: Vec<u8>, variables: HashMap<String, u8>) -> Self {
-        use crate::hash::sha256;
-        let policy_hash = sha256(&bytecode);
+        let mut bindings: Vec<(String, u8)> = variables.into_iter().collect();
+        bindings.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let refs: Vec<(&[u8], u8)> = bindings
+            .iter()
+            .map(|(name, reg)| (name.as_bytes(), *reg))
+            .collect();
+
+        let policy_hash = Hash32(mprd_mpb::policy_hash_v1(&bytecode, &refs));
+
         Self {
             bytecode,
-            variables,
+            variables: bindings,
             policy_hash,
             source: None,
         }
@@ -626,10 +108,8 @@ impl MpbPolicyEngine {
                 hash: policy_hash.clone(),
             })?;
 
-        // Build register values from state and candidate
         let registers = self.build_registers(policy, state, candidate);
 
-        // Execute bytecode
         let mut vm = MpbVm::with_fuel(&registers, self.fuel_limit);
         let result = vm.execute(&policy.bytecode);
 
@@ -639,18 +119,14 @@ impl MpbPolicyEngine {
                 reasons: vec![],
                 limits: HashMap::new(),
             }),
-            Err(status) => {
-                // Fail closed: any VM error → DENY
-                Ok(RuleVerdict {
-                    allowed: false,
-                    reasons: vec![format!("MPB VM error: {:?}", status)],
-                    limits: HashMap::new(),
-                })
-            }
+            Err(status) => Ok(RuleVerdict {
+                allowed: false,
+                reasons: vec![format!("MPB VM error: {:?}", status)],
+                limits: HashMap::new(),
+            }),
         }
     }
 
-    /// Build register array from state and candidate.
     fn build_registers(
         &self,
         policy: &MpbPolicy,
@@ -659,25 +135,22 @@ impl MpbPolicyEngine {
     ) -> Vec<i64> {
         let mut registers = vec![0i64; MpbVm::MAX_REGISTERS];
 
-        for (name, &reg) in &policy.variables {
-            let reg = reg as usize;
+        for (name, reg_u8) in &policy.variables {
+            let reg = *reg_u8 as usize;
             if reg >= MpbVm::MAX_REGISTERS {
                 continue;
             }
 
-            // Try state fields first
             if let Some(value) = state.fields.get(name) {
                 registers[reg] = value_to_i64(value);
                 continue;
             }
 
-            // Then try candidate params
             if let Some(value) = candidate.params.get(name) {
                 registers[reg] = value_to_i64(value);
                 continue;
             }
 
-            // Special fields
             if name.as_str() == "score" {
                 registers[reg] = candidate.score.0;
             }
@@ -693,7 +166,27 @@ impl Default for MpbPolicyEngine {
     }
 }
 
-/// Convert a Value to i64 for VM registers.
+impl PolicyEngine for MpbPolicyEngine {
+    fn evaluate(
+        &self,
+        policy_hash: &PolicyHash,
+        state: &StateSnapshot,
+        candidates: &[CandidateAction],
+    ) -> Result<Vec<RuleVerdict>> {
+        if candidates.len() > crate::MAX_CANDIDATES {
+            return Err(MprdError::BoundedValueExceeded(
+                "too many candidates for MpbPolicyEngine".into(),
+            ));
+        }
+
+        let mut out = Vec::with_capacity(candidates.len());
+        for c in candidates {
+            out.push(self.evaluate_one(policy_hash, state, c)?);
+        }
+        Ok(out)
+    }
+}
+
 fn value_to_i64(value: &crate::Value) -> i64 {
     match value {
         crate::Value::Bool(b) => {
@@ -704,9 +197,15 @@ fn value_to_i64(value: &crate::Value) -> i64 {
             }
         }
         crate::Value::Int(i) => *i,
-        crate::Value::UInt(u) => *u as i64,
-        crate::Value::String(_) => 0, // Strings not supported in VM
-        crate::Value::Bytes(_) => 0,  // Bytes not supported in VM
+        crate::Value::UInt(u) => {
+            if *u > i64::MAX as u64 {
+                i64::MAX
+            } else {
+                *u as i64
+            }
+        }
+        crate::Value::String(_) => 0,
+        crate::Value::Bytes(_) => 0,
     }
 }
 
@@ -717,207 +216,107 @@ fn value_to_i64(value: &crate::Value) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Score, Value};
+    use std::collections::HashMap;
 
-    #[test]
-    fn simple_push_and_halt() {
-        let bytecode = BytecodeBuilder::new().push_i64(42).halt().build();
+    fn candidate(action_type: &str, score: i64, params: &[(&str, Value)]) -> CandidateAction {
+        CandidateAction {
+            action_type: action_type.into(),
+            params: params
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), v.clone()))
+                .collect(),
+            score: Score(score),
+            candidate_hash: Hash32([0u8; 32]),
+        }
+    }
 
-        let mut vm = MpbVm::new(&[]);
-        let result = vm.execute(&bytecode);
-
-        assert_eq!(result, Ok(42));
+    fn state(fields: &[(&str, Value)]) -> StateSnapshot {
+        StateSnapshot {
+            fields: fields
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), v.clone()))
+                .collect(),
+            policy_inputs: HashMap::new(),
+            state_hash: Hash32([0u8; 32]),
+            state_ref: crate::StateRef::unknown(),
+        }
     }
 
     #[test]
-    fn arithmetic_add() {
-        let bytecode = BytecodeBuilder::new()
-            .push_i64(10)
-            .push_i64(32)
-            .add()
-            .halt()
-            .build();
-
+    fn vm_simple_push_and_halt() {
+        let bytecode = BytecodeBuilder::new().push_i64(42).halt().build();
         let mut vm = MpbVm::new(&[]);
         assert_eq!(vm.execute(&bytecode), Ok(42));
     }
 
     #[test]
-    fn comparison_le_true() {
-        // risk=50, max_risk=100 → 50 <= 100 → 1
+    fn policy_hash_binds_variable_mapping() {
+        let bytecode = BytecodeBuilder::new().load_reg(0).halt().build();
+        let p1 = MpbPolicy::new(bytecode.clone(), HashMap::from([("x".into(), 0)]));
+        let p2 = MpbPolicy::new(bytecode, HashMap::from([("x".into(), 1)]));
+        assert_ne!(p1.policy_hash, p2.policy_hash);
+    }
+
+    #[test]
+    fn engine_evaluates_one_candidate() {
         let bytecode = BytecodeBuilder::new()
             .load_reg(0) // risk
-            .load_reg(1) // max_risk
+            .push_i64(100)
             .le()
             .halt()
             .build();
 
-        let mut vm = MpbVm::new(&[50, 100]);
-        assert_eq!(vm.execute(&bytecode), Ok(1));
+        let mut engine = MpbPolicyEngine::new().with_fuel_limit(1_000);
+        let policy_hash = engine.register(MpbPolicy::new(
+            bytecode,
+            HashMap::from([("risk".into(), 0)]),
+        ));
+
+        let verdict = engine
+            .evaluate_one(
+                &policy_hash,
+                &state(&[("risk", Value::UInt(50))]),
+                &candidate("BUY", 10, &[]),
+            )
+            .unwrap();
+        assert!(verdict.allowed);
     }
 
     #[test]
-    fn comparison_le_false() {
-        // risk=150, max_risk=100 → 150 <= 100 → 0
+    fn preimage_register_mapping_matches_engine_mapping() {
         let bytecode = BytecodeBuilder::new()
-            .load_reg(0)
-            .load_reg(1)
-            .le()
-            .halt()
-            .build();
-
-        let mut vm = MpbVm::new(&[150, 100]);
-        assert_eq!(vm.execute(&bytecode), Ok(0));
-    }
-
-    #[test]
-    fn logical_and_both_true() {
-        // within_bounds=1, within_tol=1 → 1 && 1 → 1
-        let bytecode = BytecodeBuilder::new()
-            .load_reg(0)
-            .load_reg(1)
-            .and()
-            .halt()
-            .build();
-
-        let mut vm = MpbVm::new(&[1, 1]);
-        assert_eq!(vm.execute(&bytecode), Ok(1));
-    }
-
-    #[test]
-    fn logical_and_one_false() {
-        // within_bounds=1, within_tol=0 → 1 && 0 → 0
-        let bytecode = BytecodeBuilder::new()
-            .load_reg(0)
-            .load_reg(1)
-            .and()
-            .halt()
-            .build();
-
-        let mut vm = MpbVm::new(&[1, 0]);
-        assert_eq!(vm.execute(&bytecode), Ok(0));
-    }
-
-    #[test]
-    fn division_by_zero_fails() {
-        let bytecode = BytecodeBuilder::new()
+            .load_reg(0) // x
             .push_i64(10)
-            .push_i64(0)
-            .div()
+            .ge()
             .halt()
             .build();
 
-        let mut vm = MpbVm::new(&[]);
-        assert_eq!(vm.execute(&bytecode), Err(VmStatus::DivisionByZero));
-    }
+        let mut engine = MpbPolicyEngine::new().with_fuel_limit(1_000);
+        let policy_hash = engine.register(MpbPolicy::new(
+            bytecode.clone(),
+            HashMap::from([("x".into(), 0), ("score".into(), 1)]),
+        ));
 
-    #[test]
-    fn out_of_fuel_terminates() {
-        let bytecode = BytecodeBuilder::new()
-            .push_i64(1)
-            .push_i64(2)
-            .add()
-            .push_i64(3)
-            .add()
-            .halt()
-            .build();
+        let state = state(&[("x", Value::Int(12))]);
+        let candidate = candidate("TEST", 7, &[("x", Value::Int(1))]); // state should win
 
-        let mut vm = MpbVm::with_fuel(&[], 2);
-        assert_eq!(vm.execute(&bytecode), Err(VmStatus::OutOfFuel));
-    }
+        let verdict_engine = engine
+            .evaluate_one(&policy_hash, &state, &candidate)
+            .unwrap();
 
-    #[test]
-    fn stack_overflow_detected() {
-        let mut builder = BytecodeBuilder::new();
-        for i in 0..100 {
-            builder.push_i64(i);
-        }
-        let bytecode = builder.halt().build();
+        let state_preimage = crate::hash::state_hash_preimage(&state);
+        let cand_preimage = crate::hash::candidate_hash_preimage(&candidate);
+        let bindings = [("score".as_bytes(), 1u8), ("x".as_bytes(), 0u8)];
 
-        let mut vm = MpbVm::new(&[]);
-        assert_eq!(vm.execute(&bytecode), Err(VmStatus::StackOverflow));
-    }
+        let regs =
+            mprd_mpb::registers_from_preimages_v1(&state_preimage, &cand_preimage, &bindings)
+                .expect("register mapping should parse canonical preimages");
+        let mut vm = mprd_mpb::MpbVm::with_fuel(&regs, 1_000);
+        let allowed_direct = vm.execute(&bytecode).map(|v| v != 0).unwrap_or(false);
 
-    #[test]
-    fn saturating_arithmetic_no_panic() {
-        let bytecode = BytecodeBuilder::new()
-            .push_i64(i64::MAX)
-            .push_i64(i64::MAX)
-            .add()
-            .halt()
-            .build();
-
-        let mut vm = MpbVm::new(&[]);
-        assert_eq!(vm.execute(&bytecode), Ok(i64::MAX));
-    }
-
-    #[test]
-    fn deterministic_execution() {
-        let bytecode = BytecodeBuilder::new()
-            .load_reg(0)
-            .load_reg(1)
-            .mul()
-            .load_reg(2)
-            .add()
-            .halt()
-            .build();
-
-        let registers = [7, 8, 3];
-
-        // Run 100 times, must be identical
-        for _ in 0..100 {
-            let mut vm = MpbVm::new(&registers);
-            assert_eq!(vm.execute(&bytecode), Ok(59)); // 7*8+3 = 59
-        }
-    }
-
-    #[test]
-    fn pid_policy_bytecode() {
-        // ALLOWED = within_bounds && within_tol
-        // r0 = within_bounds, r1 = within_tol
-        let bytecode = BytecodeBuilder::new()
-            .load_reg(0)
-            .load_reg(1)
-            .and()
-            .halt()
-            .build();
-
-        // Both true → allowed
-        let mut vm = MpbVm::new(&[1, 1]);
-        assert_eq!(vm.execute(&bytecode), Ok(1));
-
-        // One false → denied
-        let mut vm = MpbVm::new(&[1, 0]);
-        assert_eq!(vm.execute(&bytecode), Ok(0));
-
-        let mut vm = MpbVm::new(&[0, 1]);
-        assert_eq!(vm.execute(&bytecode), Ok(0));
-    }
-
-    #[test]
-    fn risk_threshold_policy() {
-        // ALLOWED = (risk <= max_risk) && (cost <= max_cost)
-        // r0=risk, r1=max_risk, r2=cost, r3=max_cost
-        let bytecode = BytecodeBuilder::new()
-            .load_reg(0) // risk
-            .load_reg(1) // max_risk
-            .le() // risk <= max_risk
-            .load_reg(2) // cost
-            .load_reg(3) // max_cost
-            .le() // cost <= max_cost
-            .and() // both conditions
-            .halt()
-            .build();
-
-        // Both within limits → allowed
-        let mut vm = MpbVm::new(&[50, 100, 30, 50]);
-        assert_eq!(vm.execute(&bytecode), Ok(1));
-
-        // Risk too high → denied
-        let mut vm = MpbVm::new(&[150, 100, 30, 50]);
-        assert_eq!(vm.execute(&bytecode), Ok(0));
-
-        // Cost too high → denied
-        let mut vm = MpbVm::new(&[50, 100, 60, 50]);
-        assert_eq!(vm.execute(&bytecode), Ok(0));
+        assert_eq!(allowed_direct, verdict_engine.allowed);
+        assert_eq!(regs[0], 12);
+        assert_eq!(regs[1], 7);
     }
 }

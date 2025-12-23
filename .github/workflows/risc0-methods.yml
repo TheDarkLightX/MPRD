@@ -16,6 +16,8 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87.0
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
@@ -31,3 +33,15 @@ jobs:
 
       - name: Test methods embedded
         run: cargo test -p mprd-risc0-methods --lib
+
+      - name: Export image IDs
+        run: |
+          set -euo pipefail
+          cargo run -p mprd-risc0-methods --bin print_image_ids > image_ids.txt
+          cat image_ids.txt
+
+      - name: Upload image IDs
+        uses: actions/upload-artifact@v4
+        with:
+          name: risc0-image-ids
+          path: image_ids.txt

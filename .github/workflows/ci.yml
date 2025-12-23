@@ -1,0 +1,50 @@
+name: CI (Fmt + Tests)
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  fmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87.0
+          components: rustfmt
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Fmt (gate)
+        run: cargo fmt --check
+
+  test:
+    name: cargo test --workspace
+    runs-on: ubuntu-latest
+    env:
+      # Keep tests runnable in environments without the Risc0 guest target installed.
+      # The dedicated risc0-methods workflow builds the real guests and enforces image ID drift.
+      RISC0_SKIP_BUILD: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87.0
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test (gate)
+        run: cargo test --workspace --all-targets
+

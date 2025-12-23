@@ -1,0 +1,13 @@
+[package]
+name = "mprd-perf"
+version = "0.1.0"
+edition = "2021"
+description = "Reproducible performance harness for MPRD hot paths"
+
+[dependencies]
+mprd-core = { path = "../mprd-core" }
+mprd-mpb = { path = "../mprd-mpb" }
+mprd-risc0-shared = { path = "../mprd-risc0-shared" }
+mprd-generators = { path = "../mprd-generators" }
+serde_json = "1.0"
+hex = "0.4"

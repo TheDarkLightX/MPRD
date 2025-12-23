@@ -25,6 +25,9 @@ import type {
   IncidentDetailWithActions,
   SnoozeRequest,
   SnoozeResult,
+  AutopilotState,
+  AutopilotMode,
+  AutoAction,
   PipelineEvent,
   PipelineEventHandler,
 } from './types';
@@ -177,6 +180,42 @@ export const apiClient = {
             headers: buildHeaders(),
         });
         return handleResponse<RetentionPruneResult>(response);
+    },
+
+    // -------------------------------------------------------------------------
+    // Autopilot
+    // -------------------------------------------------------------------------
+
+    async getAutopilot(): Promise<AutopilotState> {
+        const response = await safeFetch(`${getApiBaseUrl()}/api/autopilot`, {
+            headers: buildHeaders(),
+        });
+        return handleResponse<AutopilotState>(response);
+    },
+
+    async setAutopilotMode(mode: AutopilotMode, reason?: string): Promise<AutopilotState> {
+        const response = await safeFetch(`${getApiBaseUrl()}/api/autopilot/mode`, {
+            method: 'POST',
+            headers: buildHeaders(),
+            body: JSON.stringify({ mode, reason }),
+        });
+        return handleResponse<AutopilotState>(response);
+    },
+
+    async ackAutopilot(): Promise<AutopilotState> {
+        const response = await safeFetch(`${getApiBaseUrl()}/api/autopilot/ack`, {
+            method: 'POST',
+            headers: buildHeaders(),
+        });
+        return handleResponse<AutopilotState>(response);
+    },
+
+    async listAutopilotActivity(limit = 50): Promise<AutoAction[]> {
+        const params = new URLSearchParams({ limit: String(limit) });
+        const response = await safeFetch(`${getApiBaseUrl()}/api/autopilot/activity?${params}`, {
+            headers: buildHeaders(),
+        });
+        return handleResponse<AutoAction[]>(response);
     },
 
     /**

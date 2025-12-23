@@ -1,0 +1,110 @@
+[package]
+name = "mprd-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.mprd-core]
+path = "../crates/mprd-core"
+
+[dependencies.mprd-zk]
+path = "../crates/mprd-zk"
+optional = true
+
+[dependencies.mprd-generators]
+path = "../crates/mprd-generators"
+optional = true
+
+[dependencies.mprd-risc0-shared]
+path = "../crates/mprd-risc0-shared"
+optional = true
+
+[dependencies.mprd-asde]
+path = "../crates/mprd-asde"
+optional = true
+
+[dependencies.risc0-zkvm]
+version = "1.2"
+optional = true
+
+[features]
+# Preserve existing behavior (all fuzz targets) by default, but allow a
+# low-disk build with `--no-default-features` for core-only targets.
+default = ["zk", "asde"]
+zk = [
+  "dep:mprd-zk",
+  "dep:risc0-zkvm",
+  "dep:mprd-generators",
+  "dep:mprd-risc0-shared",
+  "mprd-zk/fuzz-utils",
+]
+asde = ["dep:mprd-asde"]
+
+[[bin]]
+name = "limits_bytes_v1"
+path = "fuzz_targets/limits_bytes_v1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "candidate_preimage_v1"
+path = "fuzz_targets/candidate_preimage_v1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "receipt_deser"
+path = "fuzz_targets/receipt_deser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mpb_artifact_deser"
+path = "fuzz_targets/mpb_artifact_deser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "asde_voucher_trace_v1"
+path = "fuzz_targets/asde_voucher_trace_v1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "asde_allocation_v1"
+path = "fuzz_targets/asde_allocation_v1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "anti_replay_state_machine"
+path = "fuzz_targets/anti_replay_state_machine.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tau_output_attestation_envelope_v1"
+path = "fuzz_targets/tau_output_attestation_envelope_v1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decoded_journal_metamorphic_v3"
+path = "fuzz_targets/decoded_journal_metamorphic_v3.rs"
+test = false
+doc = false
+bench = false

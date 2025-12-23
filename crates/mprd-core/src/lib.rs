@@ -3,16 +3,27 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 pub mod anti_replay;
+pub mod artifact_repo;
 pub mod components;
 pub mod config;
 pub mod crypto;
+pub mod decision_log;
 pub mod egress;
+pub mod fee_router;
 pub mod hash;
+pub mod limits;
 pub mod metrics;
 pub mod mpb;
+pub mod nonce;
+pub mod observability;
 pub mod orchestrator;
 pub mod registry;
+pub mod selectors;
+pub mod state_provenance;
 pub mod tau;
+pub mod tau_net_output_attestation;
+pub mod validation;
+pub mod wire;
 
 pub use config::MprdConfig;
 pub use crypto::{TokenSigningKey, TokenVerifyingKey};
@@ -25,6 +36,52 @@ pub type PolicyHash = Hash32;
 pub type StateHash = Hash32;
 pub type CandidateHash = Hash32;
 pub type NonceHash = Hash32;
+
+/// Reference to the policy authorization context.
+///
+/// A verifier MUST be able to check that `policy_hash` was authorized at exactly this
+/// `(policy_epoch, registry_root)` (fail-closed).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PolicyRef {
+    /// Monotonic policy registry epoch (authorization context).
+    pub policy_epoch: u64,
+    /// Commitment to the registry root at `policy_epoch`.
+    pub registry_root: Hash32,
+}
+
+/// Reference to the state provenance context.
+///
+/// ZK receipts prove correctness *conditional on inputs*; production deployments must define how
+/// `state_hash` relates to reality. This struct binds a verifier-checkable provenance identity into
+/// the signed token and (for ZK modes) into the public journal.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateRef {
+    /// Domain-separated ID describing the state source/provenance scheme (e.g. "signed_snapshot_v1").
+    pub state_source_id: Hash32,
+    /// Monotonic state epoch (e.g. block height / snapshot sequence).
+    pub state_epoch: u64,
+    /// Commitment to the provenance attestation material (e.g. signature bytes / merkle proof hash).
+    pub state_attestation_hash: Hash32,
+}
+
+impl StateRef {
+    /// Placeholder provenance used for local testing or transitional deployments.
+    ///
+    /// Production configurations should reject this value (fail-closed).
+    pub fn unknown() -> Self {
+        Self {
+            state_source_id: Hash32([0u8; 32]),
+            state_epoch: 0,
+            state_attestation_hash: Hash32([0u8; 32]),
+        }
+    }
+}
+
+impl Default for StateRef {
+    fn default() -> Self {
+        Self::unknown()
+    }
+}
 
 /// Generic bounded value used in state fields and action parameters.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -46,6 +103,8 @@ pub struct StateSnapshot {
     pub fields: HashMap<String, Value>,
     pub policy_inputs: HashMap<String, Vec<u8>>, // Canonical encoding for Tau.
     pub state_hash: StateHash,
+    /// Provenance context for `state_hash` (source/epoch/attestation commitment).
+    pub state_ref: StateRef,
 }
 
 /// Score used by proposers to rank candidates.
@@ -92,7 +151,11 @@ pub struct Decision {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DecisionToken {
     pub policy_hash: PolicyHash,
+    /// Authorization context for `policy_hash` (S6 / downgrade resistance).
+    pub policy_ref: PolicyRef,
     pub state_hash: StateHash,
+    /// Provenance context for `state_hash` (ZK inputs are only as good as their source).
+    pub state_ref: StateRef,
     pub chosen_action_hash: Hash32,
     pub nonce_or_tx_hash: NonceHash,
     pub timestamp_ms: i64,
@@ -106,8 +169,52 @@ pub struct ProofBundle {
     pub state_hash: StateHash,
     pub candidate_set_hash: Hash32,
     pub chosen_action_hash: Hash32,
+    /// Hash of canonical execution-affecting limits bytes committed by the guest.
+    pub limits_hash: Hash32,
+    /// Canonical execution-affecting limits bytes whose hash must equal `limits_hash`.
+    pub limits_bytes: Vec<u8>,
+    /// Canonical v1 action preimage bytes whose hash must equal `chosen_action_hash`.
+    ///
+    /// This enables executors to derive and execute *exactly* the committed action.
+    pub chosen_action_preimage: Vec<u8>,
     pub risc0_receipt: Vec<u8>,
     pub attestation_metadata: HashMap<String, String>,
+}
+
+/// A proof bundle that has been locally verified against its token.
+///
+/// This is a **type-level gate**: executors can only be called with a `VerifiedBundle`,
+/// making the "verify before side effects" rule correct-by-conposition.
+#[derive(Clone, Copy, Debug)]
+pub struct VerifiedBundle<'a> {
+    token: &'a DecisionToken,
+    proof: &'a ProofBundle,
+}
+
+impl<'a> VerifiedBundle<'a> {
+    pub fn token(&self) -> &'a DecisionToken {
+        self.token
+    }
+
+    pub fn proof(&self) -> &'a ProofBundle {
+        self.proof
+    }
+
+    pub(crate) fn new(token: &'a DecisionToken, proof: &'a ProofBundle) -> Self {
+        Self { token, proof }
+    }
+}
+
+/// Verify `proof` against `token` and, on success, produce a `VerifiedBundle` for execution.
+pub fn verify_for_execution<'a>(
+    verifier: &dyn ZkLocalVerifier,
+    token: &'a DecisionToken,
+    proof: &'a ProofBundle,
+) -> Result<VerifiedBundle<'a>> {
+    match verifier.verify(token, proof) {
+        VerificationStatus::Success => Ok(VerifiedBundle::new(token, proof)),
+        VerificationStatus::Failure(reason) => Err(MprdError::ZkError(reason)),
+    }
 }
 
 /// Unified error type for MPRD core operations.
@@ -225,6 +332,7 @@ pub trait Selector {
 /// Produces a ZK proof bundle (Risc0) for a given decision.
 pub trait ZkAttestor {
     /// Preconditions:
+    /// - `token` was produced by the configured `DecisionTokenFactory` for `decision` and `state`.
     /// - `decision` was produced by a compliant `Selector`.
     /// - `candidates.len() <= MAX_CANDIDATES`.
     ///
@@ -232,6 +340,7 @@ pub trait ZkAttestor {
     /// - Returned bundle commitments are consistent with inputs.
     fn attest(
         &self,
+        token: &DecisionToken,
         decision: &Decision,
         state: &StateSnapshot,
         candidates: &[CandidateAction],
@@ -264,13 +373,9 @@ pub struct ExecutionResult {
 
 /// Single choke point for all side effects under MPRD control.
 pub trait ExecutorAdapter {
-    /// Preconditions:
-    /// - `ZkLocalVerifier::verify(token, proof)` has returned `Success`.
-    /// - Token freshness and anti-replay checks have passed.
-    ///
     /// Postconditions:
     /// - Either performs the side effect exactly once, or performs none.
-    fn execute(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<ExecutionResult>;
+    fn execute(&self, verified: &VerifiedBundle<'_>) -> Result<ExecutionResult>;
 }
 
 pub struct DefaultSelector;
@@ -342,6 +447,7 @@ mod tests {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(2),
+            state_ref: StateRef::unknown(),
         };
         let candidates = vec![
             CandidateAction {
@@ -386,6 +492,7 @@ mod tests {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(6),
+            state_ref: StateRef::unknown(),
         };
         let candidates = vec![CandidateAction {
             action_type: "A".into(),
@@ -411,6 +518,7 @@ mod tests {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(9),
+            state_ref: StateRef::unknown(),
         };
 
         let mut candidates = Vec::new();

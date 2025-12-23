@@ -201,6 +201,10 @@ pub fn validate_decision_allowed(
 }
 
 /// Validate timestamp is within acceptable bounds.
+///
+/// # Security
+///
+/// Fails closed on system clock errors - does NOT default to epoch 0.
 pub fn validate_timestamp(
     timestamp_ms: i64,
     max_age_ms: i64,
@@ -208,7 +212,10 @@ pub fn validate_timestamp(
 ) -> ModeResult<()> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
+        .map_err(|_| ModeError::InvariantViolation {
+            invariant: "CLOCK".into(),
+            details: "System clock before UNIX epoch (fail-closed)".into(),
+        })?
         .as_millis() as i64;
 
     if timestamp_ms > now + max_future_ms {
@@ -240,10 +247,18 @@ pub fn validate_timestamp(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mprd_core::PolicyRef;
     use std::collections::HashMap;
 
     fn dummy_hash(byte: u8) -> Hash32 {
         Hash32([byte; 32])
+    }
+
+    fn dummy_policy_ref() -> PolicyRef {
+        PolicyRef {
+            policy_epoch: 1,
+            registry_root: dummy_hash(99),
+        }
     }
 
     #[test]
@@ -252,7 +267,9 @@ mod tests {
 
         let token = DecisionToken {
             policy_hash: dummy_hash(1),
+            policy_ref: dummy_policy_ref(),
             state_hash: dummy_hash(2),
+            state_ref: mprd_core::StateRef::unknown(),
             chosen_action_hash: dummy_hash(3),
             nonce_or_tx_hash: dummy_hash(4),
             timestamp_ms: 0,
@@ -264,6 +281,9 @@ mod tests {
             state_hash: dummy_hash(2),
             candidate_set_hash: dummy_hash(5),
             chosen_action_hash: dummy_hash(3),
+            limits_hash: dummy_hash(6),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
             risc0_receipt: vec![],
             attestation_metadata: HashMap::new(),
         };
@@ -277,7 +297,9 @@ mod tests {
 
         let token = DecisionToken {
             policy_hash: dummy_hash(1),
+            policy_ref: dummy_policy_ref(),
             state_hash: dummy_hash(2),
+            state_ref: mprd_core::StateRef::unknown(),
             chosen_action_hash: dummy_hash(3),
             nonce_or_tx_hash: dummy_hash(4),
             timestamp_ms: 0,
@@ -289,6 +311,9 @@ mod tests {
             state_hash: dummy_hash(2),
             candidate_set_hash: dummy_hash(5),
             chosen_action_hash: dummy_hash(3),
+            limits_hash: dummy_hash(6),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
             risc0_receipt: vec![],
             attestation_metadata: HashMap::new(),
         };
@@ -302,7 +327,9 @@ mod tests {
 
         let token = DecisionToken {
             policy_hash: dummy_hash(1),
+            policy_ref: dummy_policy_ref(),
             state_hash: dummy_hash(2),
+            state_ref: mprd_core::StateRef::unknown(),
             chosen_action_hash: dummy_hash(3),
             nonce_or_tx_hash: dummy_hash(4),
             timestamp_ms: 0,
@@ -314,6 +341,9 @@ mod tests {
             state_hash: dummy_hash(2),
             candidate_set_hash: dummy_hash(5),
             chosen_action_hash: dummy_hash(3),
+            limits_hash: dummy_hash(6),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
             risc0_receipt: vec![],
             attestation_metadata: HashMap::new(),
         };

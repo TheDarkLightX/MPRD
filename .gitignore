@@ -27,3 +27,6 @@ policies/governance/archive/
 # Test artifacts
 *.log
 /tmp/
+
+# Journal submissions (private until published)
+/submissions/

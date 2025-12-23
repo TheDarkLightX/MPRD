@@ -1,0 +1,11 @@
+[package]
+name = "mprd-generators"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic procedural generators for MPRD tests and benchmarks"
+
+[dependencies]
+mprd-core = { path = "../mprd-core" }
+mprd-risc0-shared = { path = "../mprd-risc0-shared" }
+sha2 = "0.10"
+

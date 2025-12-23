@@ -24,11 +24,145 @@ use crate::{MprdError, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+// =============================================================================
+// Trust Modes
+// =============================================================================
+
+/// Trust mode for MPRD deployments.
+///
+/// Determines the level of decentralization and fault tolerance required.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustMode {
+    /// High-trust mode (single-operator deployments).
+    ///
+    /// Suitable for:
+    /// - Single-node deployments
+    /// - Operator-controlled environments
+    /// - Development and testing
+    ///
+    /// Characteristics:
+    /// - Single signer for registry state
+    /// - Single signer for state snapshots
+    /// - File-based nonce store (single node)
+    /// - Single IPFS gateway
+    #[default]
+    HighTrust,
+
+    /// Low-trust mode (decentralized deployments).
+    ///
+    /// Required for:
+    /// - Multi-node deployments
+    /// - Trustless/permissionless environments
+    /// - Production deployments with no single point of failure
+    ///
+    /// Characteristics:
+    /// - Quorum signatures (k-of-n) for registry state
+    /// - Quorum signatures (k-of-n) for state snapshots
+    /// - Distributed nonce store (multi-node)
+    /// - Multi-gateway IPFS with failover
+    /// - State freshness SLA enforcement
+    LowTrust,
+}
+
+/// Low-trust mode specific configuration.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LowTrustConfig {
+    /// Minimum quorum threshold for registry state signatures.
+    /// Must be >= 1 and <= number of trusted signers.
+    pub registry_quorum_threshold: u8,
+
+    /// Hex-encoded public keys of trusted registry signers.
+    pub registry_trusted_signers_hex: Vec<String>,
+
+    /// Minimum quorum threshold for state attestor signatures.
+    pub state_quorum_threshold: u8,
+
+    /// Hex-encoded public keys of trusted state attestors.
+    pub state_trusted_attestors_hex: Vec<String>,
+
+    /// Maximum state staleness in milliseconds.
+    /// State snapshots older than this are rejected.
+    pub max_state_staleness_ms: i64,
+
+    /// IPFS gateway URLs for multi-gateway failover.
+    /// Must contain at least 2 gateways for redundancy.
+    pub ipfs_gateways: Vec<String>,
+
+    /// Distributed nonce store backend type.
+    pub nonce_store_backend: DistributedNonceBackend,
+
+    /// Redis URL for distributed nonce storage (when `nonce_store_backend = "redis"`).
+    ///
+    /// Supported forms:
+    /// - `redis://host:port`
+    /// - `redis://:password@host:port`
+    /// - `redis://user:password@host:port`
+    ///
+    /// TLS (`rediss://`) is not supported in this build.
+    #[serde(default)]
+    pub redis_url: Option<String>,
+
+    /// Redis key prefix for nonce entries.
+    #[serde(default = "default_redis_nonce_key_prefix")]
+    pub redis_key_prefix: String,
+
+    /// Redis operation timeout in milliseconds (read/write).
+    #[serde(default = "default_redis_timeout_ms")]
+    pub redis_timeout_ms: u64,
+}
+
+fn default_redis_nonce_key_prefix() -> String {
+    "mprd:nonce:v1".to_string()
+}
+
+fn default_redis_timeout_ms() -> u64 {
+    250
+}
+
+/// Backend type for distributed nonce storage.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DistributedNonceBackend {
+    /// Shared filesystem backend (low-friction pre-testnet / cooperative deployments).
+    ///
+    /// Relies on atomic file creation on a shared filesystem (e.g., NFS with correct semantics)
+    /// to coordinate nonces across nodes.
+    #[default]
+    SharedFs,
+
+    /// Redis backend (recommended for most deployments).
+    Redis,
+
+    /// PostgreSQL backend.
+    PostgreSql,
+
+    /// etcd backend.
+    Etcd,
+
+    /// On-chain nonce tracking (highest assurance).
+    OnChain,
+}
+
 /// Complete MPRD configuration.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MprdConfig {
+    /// Trust mode (high-trust vs low-trust).
+    #[serde(default)]
+    pub trust_mode: TrustMode,
+
+    /// Low-trust mode specific configuration.
+    /// Only used when `trust_mode` is `LowTrust`.
+    #[serde(default)]
+    pub low_trust: LowTrustConfig,
+
     /// Cryptographic configuration.
     pub crypto: CryptoConfig,
+
+    /// State provenance configuration.
+    pub state_provenance: StateProvenanceConfig,
 
     /// Anti-replay configuration.
     pub anti_replay: AntiReplayConfig,
@@ -79,6 +213,18 @@ impl MprdConfig {
             config.logging.level = level;
         }
 
+        if let Ok(v) = std::env::var("MPRD_REQUIRE_STATE_PROVENANCE") {
+            config.state_provenance.require_provenance =
+                matches!(v.as_str(), "1" | "true" | "TRUE");
+        }
+        if let Ok(v) = std::env::var("MPRD_ALLOWED_STATE_SOURCE_IDS") {
+            config.state_provenance.allowed_state_source_ids_hex = v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+
         config.validate()?;
         Ok(config)
     }
@@ -106,6 +252,50 @@ impl MprdConfig {
             ));
         }
 
+        let _ = crate::anti_replay::AntiReplayConfig::new(
+            self.anti_replay.max_token_age_ms,
+            self.anti_replay.nonce_retention_ms,
+            self.anti_replay.max_future_skew_ms,
+            self.anti_replay.max_tracked_nonces,
+        )?;
+
+        if let Some(ref dir) = self.anti_replay.nonce_store_dir {
+            if dir.trim().is_empty() {
+                return Err(MprdError::ConfigError(
+                    "nonce_store_dir must be non-empty when set".into(),
+                ));
+            }
+        }
+
+        // Validate state provenance allowlist if configured.
+        if self.state_provenance.require_provenance
+            && self
+                .state_provenance
+                .allowed_state_source_ids_hex
+                .is_empty()
+        {
+            return Err(MprdError::ConfigError(
+                "state_provenance.allowed_state_source_ids_hex must be non-empty when require_provenance=true"
+                    .into(),
+            ));
+        }
+        for id in &self.state_provenance.allowed_state_source_ids_hex {
+            let id = id.trim();
+            if id.len() != 64 {
+                return Err(MprdError::ConfigError(
+                    "allowed_state_source_ids_hex entries must be 64 hex chars".into(),
+                ));
+            }
+            let bytes = hex::decode(id).map_err(|_| {
+                MprdError::ConfigError("allowed_state_source_ids_hex contains invalid hex".into())
+            })?;
+            if bytes.len() != 32 {
+                return Err(MprdError::ConfigError(
+                    "allowed_state_source_ids_hex entries must be 32 bytes".into(),
+                ));
+            }
+        }
+
         // Validate policy
         if self.policy.max_candidates == 0 || self.policy.max_candidates > 1000 {
             return Err(MprdError::ConfigError(
@@ -119,12 +309,214 @@ impl MprdConfig {
             ));
         }
 
+        // Validate low-trust mode configuration
+        if self.trust_mode == TrustMode::LowTrust {
+            self.validate_low_trust()?;
+        }
+
+        Ok(())
+    }
+
+    /// Validate low-trust mode specific configuration.
+    fn validate_low_trust(&self) -> Result<()> {
+        let lt = &self.low_trust;
+
+        // Registry quorum validation
+        if lt.registry_quorum_threshold == 0 {
+            return Err(MprdError::ConfigError(
+                "low_trust.registry_quorum_threshold must be >= 1".into(),
+            ));
+        }
+        if lt.registry_trusted_signers_hex.len() < lt.registry_quorum_threshold as usize {
+            return Err(MprdError::ConfigError(format!(
+                "low_trust.registry_trusted_signers_hex must have at least {} entries (quorum threshold)",
+                lt.registry_quorum_threshold
+            )));
+        }
+        for (i, hex) in lt.registry_trusted_signers_hex.iter().enumerate() {
+            if hex.len() != 64 || hex::decode(hex).is_err() {
+                return Err(MprdError::ConfigError(format!(
+                    "low_trust.registry_trusted_signers_hex[{}] must be 64 hex chars",
+                    i
+                )));
+            }
+        }
+
+        // State attestor quorum validation
+        if lt.state_quorum_threshold == 0 {
+            return Err(MprdError::ConfigError(
+                "low_trust.state_quorum_threshold must be >= 1".into(),
+            ));
+        }
+        if lt.state_trusted_attestors_hex.len() < lt.state_quorum_threshold as usize {
+            return Err(MprdError::ConfigError(format!(
+                "low_trust.state_trusted_attestors_hex must have at least {} entries (quorum threshold)",
+                lt.state_quorum_threshold
+            )));
+        }
+        for (i, hex) in lt.state_trusted_attestors_hex.iter().enumerate() {
+            if hex.len() != 64 || hex::decode(hex).is_err() {
+                return Err(MprdError::ConfigError(format!(
+                    "low_trust.state_trusted_attestors_hex[{}] must be 64 hex chars",
+                    i
+                )));
+            }
+        }
+
+        // State freshness validation
+        if lt.max_state_staleness_ms <= 0 {
+            return Err(MprdError::ConfigError(
+                "low_trust.max_state_staleness_ms must be > 0".into(),
+            ));
+        }
+
+        // Multi-gateway IPFS validation
+        if lt.ipfs_gateways.len() < 2 {
+            return Err(MprdError::ConfigError(
+                "low_trust.ipfs_gateways must have at least 2 gateways for redundancy".into(),
+            ));
+        }
+
+        match lt.nonce_store_backend {
+            DistributedNonceBackend::SharedFs => {
+                if self
+                    .anti_replay
+                    .nonce_store_dir
+                    .as_deref()
+                    .map(|s| s.trim().is_empty())
+                    .unwrap_or(true)
+                {
+                    return Err(MprdError::ConfigError(
+                        "LowTrust SharedFs requires anti_replay.nonce_store_dir".into(),
+                    ));
+                }
+            }
+            DistributedNonceBackend::Redis => {
+                if lt
+                    .redis_url
+                    .as_deref()
+                    .map(|s| s.trim().is_empty())
+                    .unwrap_or(true)
+                {
+                    return Err(MprdError::ConfigError(
+                        "LowTrust Redis requires low_trust.redis_url".into(),
+                    ));
+                }
+                if lt.redis_timeout_ms == 0 {
+                    return Err(MprdError::ConfigError(
+                        "low_trust.redis_timeout_ms must be > 0".into(),
+                    ));
+                }
+                if lt.redis_key_prefix.trim().is_empty() {
+                    return Err(MprdError::ConfigError(
+                        "low_trust.redis_key_prefix must be non-empty".into(),
+                    ));
+                }
+            }
+            DistributedNonceBackend::PostgreSql
+            | DistributedNonceBackend::Etcd
+            | DistributedNonceBackend::OnChain => {}
+        }
+
+        Ok(())
+    }
+
+    /// Validate production-readiness requirements.
+    ///
+    /// This is stricter than `validate()` and is intended to enforce checklist MUSTs
+    /// around S4/S5 at the execution boundary.
+    pub fn validate_production(&self) -> Result<()> {
+        self.validate()?;
+
+        if !self.crypto.require_signatures {
+            return Err(MprdError::ConfigError(
+                "Production requires require_signatures=true".into(),
+            ));
+        }
+
+        if self
+            .crypto
+            .signing_key_hex
+            .as_deref()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
+        {
+            return Err(MprdError::ConfigError(
+                "Production requires signing_key_hex (do not generate keys at runtime)".into(),
+            ));
+        }
+
+        match self.trust_mode {
+            TrustMode::HighTrust => {
+                if self
+                    .anti_replay
+                    .nonce_store_dir
+                    .as_deref()
+                    .map(|s| s.trim().is_empty())
+                    .unwrap_or(true)
+                {
+                    return Err(MprdError::ConfigError(
+                        "Production requires anti_replay.nonce_store_dir for persistent anti-replay"
+                            .into(),
+                    ));
+                }
+            }
+            TrustMode::LowTrust => match self.low_trust.nonce_store_backend {
+                DistributedNonceBackend::Redis => {
+                    if self
+                        .low_trust
+                        .redis_url
+                        .as_deref()
+                        .map(|s| s.trim().is_empty())
+                        .unwrap_or(true)
+                    {
+                        return Err(MprdError::ConfigError(
+                            "Production requires low_trust.redis_url for distributed anti-replay"
+                                .into(),
+                        ));
+                    }
+                }
+                DistributedNonceBackend::SharedFs => {
+                    return Err(MprdError::ConfigError(
+                        "Production requires a real distributed nonce store (redis/postgresql/etcd/on_chain); shared_fs is pre-testnet only"
+                            .into(),
+                    ));
+                }
+                DistributedNonceBackend::PostgreSql
+                | DistributedNonceBackend::Etcd
+                | DistributedNonceBackend::OnChain => {
+                    return Err(MprdError::ConfigError(
+                        "Production requires a distributed nonce store backend implemented in this build (redis)"
+                            .into(),
+                    ));
+                }
+            },
+        }
+
+        if !self.state_provenance.require_provenance {
+            return Err(MprdError::ConfigError(
+                "Production requires state_provenance.require_provenance=true".into(),
+            ));
+        }
+
+        if self
+            .state_provenance
+            .allowed_state_source_ids_hex
+            .is_empty()
+        {
+            return Err(MprdError::ConfigError(
+                "Production requires non-empty state_provenance.allowed_state_source_ids_hex"
+                    .into(),
+            ));
+        }
+
         Ok(())
     }
 }
 
 /// Cryptographic configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CryptoConfig {
     /// Hex-encoded signing key seed (32 bytes = 64 hex chars).
     /// If None, a random key will be generated.
@@ -143,8 +535,19 @@ impl Default for CryptoConfig {
     }
 }
 
+/// State provenance configuration.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StateProvenanceConfig {
+    /// If true, executors must refuse tokens with unknown/unallowlisted state provenance.
+    pub require_provenance: bool,
+    /// Allowlisted state provenance scheme IDs (hex-encoded 32 bytes).
+    pub allowed_state_source_ids_hex: Vec<String>,
+}
+
 /// Anti-replay configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct AntiReplayConfig {
     /// Maximum age of a decision token in milliseconds.
     pub max_token_age_ms: i64,
@@ -152,22 +555,34 @@ pub struct AntiReplayConfig {
     /// Maximum future timestamp skew allowed in milliseconds.
     pub max_future_skew_ms: i64,
 
+    /// How long to retain nonces for replay checking.
+    pub nonce_retention_ms: i64,
+
     /// Maximum number of nonces to track.
     pub max_tracked_nonces: usize,
+
+    /// Optional durable nonce store directory.
+    ///
+    /// If set, the executor guard uses a persistent on-disk store for nonces.
+    /// This is REQUIRED for production anti-replay across process restarts.
+    pub nonce_store_dir: Option<String>,
 }
 
 impl Default for AntiReplayConfig {
     fn default() -> Self {
         Self {
-            max_token_age_ms: 300_000, // 5 minutes
-            max_future_skew_ms: 5_000, // 5 seconds
+            max_token_age_ms: 300_000,     // 5 minutes
+            max_future_skew_ms: 5_000,     // 5 seconds
+            nonce_retention_ms: 3_600_000, // 1 hour
             max_tracked_nonces: 100_000,
+            nonce_store_dir: None,
         }
     }
 }
 
 /// Policy evaluation configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyConfig {
     /// Maximum number of candidates per decision.
     pub max_candidates: usize,
@@ -195,6 +610,7 @@ impl Default for PolicyConfig {
 
 /// Execution configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExecutionConfig {
     /// Whether to enable dry-run mode (log only, no side effects).
     pub dry_run: bool,
@@ -218,6 +634,7 @@ impl Default for ExecutionConfig {
 
 /// Logging configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LoggingConfig {
     /// Log level (trace, debug, info, warn, error).
     pub level: String,
@@ -262,9 +679,45 @@ impl MprdConfigBuilder {
         self
     }
 
+    /// Require state provenance (fail-closed) at the executor boundary.
+    pub fn require_state_provenance(mut self, require: bool) -> Self {
+        self.config.state_provenance.require_provenance = require;
+        self
+    }
+
+    /// Allowlist acceptable `state_source_id` values (hex-encoded 32 bytes).
+    pub fn allowed_state_source_ids_hex(mut self, ids: Vec<String>) -> Self {
+        self.config.state_provenance.allowed_state_source_ids_hex = ids;
+        self
+    }
+
     /// Set maximum token age.
     pub fn max_token_age(mut self, duration: Duration) -> Self {
         self.config.anti_replay.max_token_age_ms = duration.as_millis() as i64;
+        self
+    }
+
+    /// Set nonce retention window.
+    pub fn nonce_retention(mut self, duration: Duration) -> Self {
+        self.config.anti_replay.nonce_retention_ms = duration.as_millis() as i64;
+        self
+    }
+
+    /// Set maximum future timestamp skew.
+    pub fn max_future_skew(mut self, duration: Duration) -> Self {
+        self.config.anti_replay.max_future_skew_ms = duration.as_millis() as i64;
+        self
+    }
+
+    /// Set maximum number of tracked nonces.
+    pub fn max_tracked_nonces(mut self, max: usize) -> Self {
+        self.config.anti_replay.max_tracked_nonces = max;
+        self
+    }
+
+    /// Enable a durable on-disk nonce store (required for production anti-replay).
+    pub fn nonce_store_dir(mut self, dir: impl Into<String>) -> Self {
+        self.config.anti_replay.nonce_store_dir = Some(dir.into());
         self
     }
 
@@ -335,6 +788,26 @@ mod tests {
         assert_eq!(config.policy.max_fuel, 5000);
         assert!(config.execution.dry_run);
         assert_eq!(config.logging.level, "debug");
+    }
+
+    #[test]
+    fn production_validation_requires_persistent_nonce_store_and_signing_key() {
+        let allowlisted = vec![hex::encode(
+            crate::state_provenance::state_source_id_signed_snapshot_v1().0,
+        )];
+
+        let cfg = MprdConfig::default();
+        assert!(cfg.validate().is_ok());
+        assert!(cfg.validate_production().is_err());
+
+        let cfg = MprdConfig::builder()
+            .signing_key_hex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+            .require_state_provenance(true)
+            .allowed_state_source_ids_hex(allowlisted)
+            .nonce_store_dir("/tmp/mprd_nonces")
+            .build()
+            .expect("build");
+        assert!(cfg.validate_production().is_ok());
     }
 
     #[test]

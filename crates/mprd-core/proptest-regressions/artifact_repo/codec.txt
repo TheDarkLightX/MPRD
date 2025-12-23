@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 447d009f4f5e57d1aba109681e9e4828c3e56aa7e77540b98dd2441e110529dd # shrinks to prev_commit = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], commit_height = 0, repo_root = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], policy_epoch = 0, registry_root = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], manifest_digest = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], signed_at_ms = 119132795967393, signer_pubkey = [127, 75, 173, 131, 31, 94, 194, 105, 225, 56, 167, 6, 22, 213, 226, 217, 220, 24, 205, 33, 196, 189, 68, 107, 30, 188, 77, 139, 27, 169, 80, 105], signature = [23, 31, 144, 167, 22, 193, 251, 15, 169, 92, 43, 20, 153, 212, 37, 221, 125, 71, 37, 221, 64, 92, 79, 177, 82, 252, 29, 124, 197, 191, 239, 63, 178, 46, 225, 32, 33, 184, 110, 137, 225, 29, 0, 208, 170, 170, 127, 180, 171, 166, 16, 197, 139, 164, 132, 13, 190, 28, 243, 110, 154, 6, 169, 199]

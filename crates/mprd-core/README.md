@@ -13,25 +13,27 @@ This crate provides the foundational types and interfaces for MPRD:
 ## Key Types
 
 ```rust
-// Decision token - proof that an action was allowed
-pub struct Decision {
-    pub chosen_action: CandidateAction,
-    pub decision_hash: Hash32,
-    pub timestamp: u64,
+// Minimal token that executors consume, binding policy, state and action.
+pub struct DecisionToken {
+    pub policy_hash: Hash32,
+    pub policy_ref: PolicyRef,
+    pub state_hash: Hash32,
+    pub chosen_action_hash: Hash32,
+    pub nonce_or_tx_hash: Hash32,
+    pub timestamp_ms: i64,
+    pub signature: Vec<u8>,
 }
 
-// Rule verdict from policy evaluation
-pub enum RuleVerdict {
-    Allowed,
-    Denied { reason: String },
-}
-
-// Proof bundle for verification
+// Proof bundle produced by an attestor (e.g. Risc0 host).
 pub struct ProofBundle {
     pub policy_hash: Hash32,
     pub state_hash: Hash32,
-    pub decision_hash: Hash32,
-    pub proof_data: Vec<u8>,
+    pub candidate_set_hash: Hash32,
+    pub chosen_action_hash: Hash32,
+    pub limits_hash: Hash32,
+    pub limits_bytes: Vec<u8>,
+    pub chosen_action_preimage: Vec<u8>,
+    pub risc0_receipt: Vec<u8>,
 }
 ```
 

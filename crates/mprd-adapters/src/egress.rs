@@ -17,18 +17,30 @@ mod tests {
     #[test]
     fn rejects_http_remote() {
         let err = validate_outbound_url("http://example.com").expect_err("should reject");
-        assert!(err.to_string().contains("https"));
+        assert!(matches!(
+            err,
+            mprd_core::MprdError::ConfigError(msg)
+                if msg == "Outbound URL must be https, or http only for localhost/loopback"
+        ));
     }
 
     #[test]
     fn rejects_link_local_ip() {
         let err = validate_outbound_url("https://169.254.1.2:8080").expect_err("should reject");
-        assert!(err.to_string().to_lowercase().contains("disallowed"));
+        assert!(matches!(
+            err,
+            mprd_core::MprdError::ConfigError(msg)
+                if msg == "Outbound URL host is a disallowed IP (private/link-local/loopback/multicast/unspecified)"
+        ));
     }
 
     #[test]
     fn rejects_private_ip() {
         let err = validate_outbound_url("https://10.0.0.1:8080").expect_err("should reject");
-        assert!(err.to_string().to_lowercase().contains("disallowed"));
+        assert!(matches!(
+            err,
+            mprd_core::MprdError::ConfigError(msg)
+                if msg == "Outbound URL host is a disallowed IP (private/link-local/loopback/multicast/unspecified)"
+        ));
     }
 }

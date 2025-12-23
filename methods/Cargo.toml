@@ -11,4 +11,4 @@ risc0-build = "1.2"
 # Empty - this crate only provides the ELF and IMAGE_ID constants
 
 [package.metadata.risc0]
-methods = ["guest"]
+methods = ["guest", "mpb_guest", "tau_compiled_guest"]

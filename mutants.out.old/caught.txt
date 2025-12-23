@@ -1,0 +1,2 @@
+crates/mprd-cli/src/operator/auth.rs:14:5: replace percent_decode -> Option<String> with Some("xyzzy".into())
+crates/mprd-cli/src/operator/auth.rs:17:13: replace < with == in percent_decode

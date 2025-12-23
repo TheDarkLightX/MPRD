@@ -10,6 +10,84 @@ use std::time::{Duration, Instant};
 const TAU_MAX_OUTPUT_BYTES: usize = 64 * 1024;
 const TAU_POLL_INTERVAL_MS: u64 = 10;
 
+/// Maximum allowed WFF length to prevent DoS via excessively large formulas.
+const MAX_WFF_LENGTH: usize = 4096;
+
+/// Validate that a WFF string is safe to pass to Tau.
+///
+/// # Security
+///
+/// This prevents command injection by ensuring the WFF only contains
+/// characters expected in Tau formulas. Specifically:
+/// - Alphanumeric characters
+/// - Bitvector literals (#b followed by 0/1)
+/// - Operators: <, >, =, !, &, |, +, -, *, /
+/// - Parentheses and brackets: (, ), [, ]
+/// - Whitespace
+///
+/// Rejects: newlines, semicolons, quotes, backticks, shell metacharacters
+fn validate_wff(wff: &str) -> Result<()> {
+    if wff.is_empty() {
+        return Err(MprdError::PolicyEvaluationFailed(
+            "WFF cannot be empty".into(),
+        ));
+    }
+
+    if wff.len() > MAX_WFF_LENGTH {
+        return Err(MprdError::PolicyEvaluationFailed(format!(
+            "WFF exceeds maximum length of {} bytes",
+            MAX_WFF_LENGTH
+        )));
+    }
+
+    // SECURITY: Whitelist approach - only allow known-safe characters
+    for (i, c) in wff.chars().enumerate() {
+        let allowed = c.is_ascii_alphanumeric()
+            || matches!(
+                c,
+                ' ' | '\t'      // Whitespace (no newlines!)
+                | '#'           // Bitvector prefix
+                | '(' | ')'     // Grouping
+                | '[' | ']'     // Bitvector notation
+                | '<' | '>' | '=' | '!'  // Comparison/negation
+                | '&' | '|'     // Logical operators
+                | '+' | '-' | '*' | '/'  // Arithmetic
+                | '_' // Identifiers
+            );
+
+        if !allowed {
+            return Err(MprdError::PolicyEvaluationFailed(format!(
+                "WFF contains disallowed character '{}' at position {}",
+                c.escape_default(),
+                i
+            )));
+        }
+    }
+
+    // SECURITY: Explicitly reject dangerous patterns even if individual chars passed
+    let dangerous_patterns = [
+        "\n", "\r", // Newlines (command injection)
+        ";",  // Command separator
+        "quit", "exit", // Tau control commands (case-insensitive check below)
+        "load", "save", // File operations
+        "exec", "system", // Execution commands
+        "`", "$(", // Shell substitution
+        "\\", // Escape sequences
+    ];
+
+    let wff_lower = wff.to_lowercase();
+    for pattern in dangerous_patterns {
+        if wff_lower.contains(pattern) {
+            return Err(MprdError::PolicyEvaluationFailed(format!(
+                "WFF contains potentially dangerous pattern: '{}'",
+                pattern.escape_default()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 fn read_tau_stream<R: Read>(mut reader: R, stream_name: &'static str) -> Result<String> {
     let mut output = Vec::new();
     let mut total = 0usize;
@@ -142,6 +220,9 @@ impl TauPolicyEngine {
     }
 
     fn solve_wff_with_tau(&self, wff: &str) -> Result<bool> {
+        // SECURITY: Validate WFF to prevent command injection
+        validate_wff(wff)?;
+
         let script = format!("solve {}\nquit\n", wff);
 
         let mut child = Command::new(&self.config.tau_binary)
@@ -255,12 +336,63 @@ mod tests {
     }
 
     #[test]
+    fn wff_validation_allows_valid_formulas() {
+        // Basic formula
+        assert!(validate_wff("1 = 1").is_ok());
+
+        // Bitvector formula
+        assert!(validate_wff("#b0101 <= #b1000").is_ok());
+
+        // Complex formula with operators
+        assert!(validate_wff("((#b0101 <= #b1000) && (#b0011 <= #b0100) && 1)").is_ok());
+    }
+
+    #[test]
+    fn wff_validation_rejects_newlines() {
+        let result = validate_wff("1 = 1\nquit");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("newline") || err_msg.contains("disallowed"));
+    }
+
+    #[test]
+    fn wff_validation_rejects_semicolons() {
+        let result = validate_wff("1 = 1; quit");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn wff_validation_rejects_quotes() {
+        let result = validate_wff("\"malicious\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn wff_validation_rejects_control_commands() {
+        assert!(validate_wff("quit").is_err());
+        assert!(validate_wff("1 = 1 exit").is_err());
+        assert!(validate_wff("load file").is_err());
+    }
+
+    #[test]
+    fn wff_validation_rejects_empty() {
+        assert!(validate_wff("").is_err());
+    }
+
+    #[test]
+    fn wff_validation_rejects_oversized() {
+        let large_wff = "a".repeat(MAX_WFF_LENGTH + 1);
+        assert!(validate_wff(&large_wff).is_err());
+    }
+
+    #[test]
     fn evaluate_fails_on_missing_params() {
         let engine = TauPolicyEngine::new("tau");
         let state = StateSnapshot {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(1),
+            state_ref: crate::StateRef::unknown(),
         };
         let candidates = vec![CandidateAction {
             action_type: "A".into(),
@@ -350,6 +482,7 @@ mod tests {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(1),
+            state_ref: crate::StateRef::unknown(),
         };
 
         let candidates = vec![CandidateAction {

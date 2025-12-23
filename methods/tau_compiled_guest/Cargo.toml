@@ -1,0 +1,19 @@
+[package]
+name = "mprd-risc0-tau-compiled-guest"
+version = "0.1.0"
+edition = "2021"
+description = "Risc0 guest program for MPRD Tau-compiled (TCV) decision verification"
+autobins = false
+
+[dependencies]
+risc0-zkvm = { version = "1.2", default-features = false }
+mprd-risc0-shared = { path = "../../crates/mprd-risc0-shared", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+
+[[bin]]
+name = "mprd-tau-compiled-guest"
+path = "src/main.rs"
+test = false
+bench = false
+
+[workspace]

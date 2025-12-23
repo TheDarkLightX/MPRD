@@ -12,71 +12,13 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
+use mprd_risc0_shared::{
+    compute_decision_commitment_v3, hash_candidate_preimage_v1, hash_candidate_set_preimage_v1,
+    hash_state_preimage_v1, limits_hash, GuestInputV3, GuestJournalV3, JOURNAL_VERSION,
+};
 use risc0_zkvm::guest::env;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 risc0_zkvm::guest::entry!(main);
-
-// =============================================================================
-// Guest Input/Output Types
-// =============================================================================
-
-/// Input provided to the guest (private witness).
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GuestInput {
-    /// The policy being evaluated (serialized).
-    pub policy_bytes: Vec<u8>,
-
-    /// The state snapshot (serialized).
-    pub state_bytes: Vec<u8>,
-
-    /// All candidate actions (serialized).
-    pub candidates_bytes: Vec<u8>,
-
-    /// Number of candidates (for bounds checking).
-    pub candidate_count: usize,
-
-    /// Index of the chosen action in candidates.
-    pub chosen_index: usize,
-
-    /// The verdict for the chosen action (must be allowed=true).
-    pub chosen_verdict_allowed: bool,
-}
-
-/// Output committed by the guest (public journal).
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GuestOutput {
-    /// Hash of the policy.
-    pub policy_hash: [u8; 32],
-
-    /// Hash of the state.
-    pub state_hash: [u8; 32],
-
-    /// Hash of the entire candidate set.
-    pub candidate_set_hash: [u8; 32],
-
-    /// Hash of the chosen action.
-    pub chosen_action_hash: [u8; 32],
-
-    /// The decision commitment binding all of the above.
-    pub decision_commitment: [u8; 32],
-
-    /// Whether the selector contract was satisfied.
-    pub selector_contract_satisfied: bool,
-}
-
-// =============================================================================
-// Hash Utilities
-// =============================================================================
-
-fn hash_with_domain(domain: &[u8], data: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(domain);
-    hasher.update(data);
-    hasher.finalize().into()
-}
 
 // =============================================================================
 // Selector Contract Verification
@@ -91,21 +33,32 @@ fn hash_with_domain(domain: &[u8], data: &[u8]) -> [u8; 32] {
 /// # Security
 /// This is the critical check that enforces the MPRD safety invariant.
 /// Both conditions MUST be true for the contract to be satisfied.
-fn verify_selector_contract(input: &GuestInput) -> bool {
-    // Precondition 1: chosen_index must be within bounds
-    // This ensures the chosen action is actually in the candidate set
-    if input.chosen_index >= input.candidate_count {
-        return false; // Bounds violation - action not in candidate set
+fn parse_candidate_count(candidate_set_preimage: &[u8]) -> Option<u32> {
+    let len_bytes: [u8; 4] = candidate_set_preimage.get(0..4)?.try_into().ok()?;
+    Some(u32::from_le_bytes(len_bytes))
+}
+
+fn candidate_hash_at_index(candidate_set_preimage: &[u8], index: u32) -> Option<[u8; 32]> {
+    let count = parse_candidate_count(candidate_set_preimage)?;
+    if count == 0 || index >= count {
+        return None;
     }
 
-    // Precondition 2: empty candidate set is invalid
-    if input.candidate_count == 0 {
-        return false; // No candidates to choose from
+    let start = 4usize + (index as usize) * 32usize;
+    let end = start.checked_add(32)?;
+    let bytes: [u8; 32] = candidate_set_preimage.get(start..end)?.try_into().ok()?;
+
+    let expected_len = 4usize + (count as usize) * 32usize;
+    if candidate_set_preimage.len() != expected_len {
+        return None;
     }
 
-    // Precondition 3: the verdict must indicate the action is allowed
-    // This ensures the policy permitted this action
-    input.chosen_verdict_allowed
+    Some(bytes)
+}
+
+fn verify_selector_contract(input: &GuestInputV3, chosen_action_hash: [u8; 32]) -> bool {
+    candidate_hash_at_index(&input.candidate_set_preimage, input.chosen_index)
+        .is_some_and(|expected| expected == chosen_action_hash)
 }
 
 // =============================================================================
@@ -114,49 +67,41 @@ fn verify_selector_contract(input: &GuestInput) -> bool {
 
 fn main() {
     // Read private input from host
-    let input: GuestInput = env::read();
+    let input: GuestInputV3 = env::read();
 
-    // Compute hashes of all inputs
-    let policy_hash = hash_with_domain(b"MPRD_POLICY_V1", &input.policy_bytes);
-    let state_hash = hash_with_domain(b"MPRD_STATE_V1", &input.state_bytes);
-    let candidate_set_hash = hash_with_domain(b"MPRD_CANDIDATES_V1", &input.candidates_bytes);
+    // Commitments derived from canonical preimage bytes.
+    // NOTE: Must match `mprd-core` canonical hashing (domain-separated).
+    let state_hash = hash_state_preimage_v1(&input.state_preimage);
+    let candidate_set_hash = hash_candidate_set_preimage_v1(&input.candidate_set_preimage);
+    let chosen_action_hash = hash_candidate_preimage_v1(&input.chosen_action_preimage);
+    let limits_hash = limits_hash(&input.limits_bytes);
 
-    // Compute hash of the chosen action
-    // The chosen action is identified by its index in the serialized candidates
-    let chosen_action_hash = {
-        let mut hasher = Sha256::new();
-        hasher.update(b"MPRD_CHOSEN_V1");
-        hasher.update(&input.candidates_bytes);
-        hasher.update(&input.chosen_index.to_le_bytes());
-        let result: [u8; 32] = hasher.finalize().into();
-        result
-    };
+    // Selector contract verification (interim).
+    // TODO(B): replace host-provided `chosen_verdict_allowed` with in-guest policy evaluation + selection.
+    let allowed = input.chosen_verdict_allowed && verify_selector_contract(&input, chosen_action_hash);
 
-    // Verify the Selector Contract
-    let selector_contract_satisfied = verify_selector_contract(&input);
-
-    // Compute decision commitment (binds everything together)
-    let decision_commitment = {
-        let mut hasher = Sha256::new();
-        hasher.update(b"MPRD_DECISION_V1");
-        hasher.update(&policy_hash);
-        hasher.update(&state_hash);
-        hasher.update(&candidate_set_hash);
-        hasher.update(&chosen_action_hash);
-        hasher.update(&[selector_contract_satisfied as u8]);
-        let result: [u8; 32] = hasher.finalize().into();
-        result
-    };
-
-    // Commit public output to journal
-    let output = GuestOutput {
-        policy_hash,
+    let mut journal = GuestJournalV3 {
+        journal_version: JOURNAL_VERSION,
+        policy_hash: input.policy_hash,
+        policy_exec_kind_id: input.policy_exec_kind_id,
+        policy_exec_version_id: input.policy_exec_version_id,
+        state_encoding_id: input.state_encoding_id,
+        action_encoding_id: input.action_encoding_id,
+        policy_epoch: input.policy_epoch,
+        registry_root: input.registry_root,
+        state_source_id: input.state_source_id,
+        state_epoch: input.state_epoch,
+        state_attestation_hash: input.state_attestation_hash,
         state_hash,
         candidate_set_hash,
         chosen_action_hash,
-        decision_commitment,
-        selector_contract_satisfied,
+        limits_hash,
+        nonce_or_tx_hash: input.nonce_or_tx_hash,
+        chosen_index: input.chosen_index,
+        allowed,
+        decision_commitment: [0u8; 32],
     };
 
-    env::commit(&output);
+    journal.decision_commitment = compute_decision_commitment_v3(&journal);
+    env::commit(&journal);
 }

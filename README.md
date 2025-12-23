@@ -141,6 +141,16 @@ cargo test -p mprd-zk -- governance
 cargo test -p mprd-zk --test tau_interpreter_output_tests
 ```
 
+## Operator Console Retention
+
+The operator console keeps a local decision history on disk. Retention can be controlled at runtime:
+
+- `MPRD_OPERATOR_DECISION_RETENTION_DAYS` (default `30`, `0` disables time-based pruning)
+- `MPRD_OPERATOR_DECISION_MAX` (default `10000`, `0` disables size cap)
+
+Settings are persisted in the operator store (`settings.json`) and can be updated live via `POST /api/settings`.
+You can trigger an immediate prune via `POST /api/settings/prune`.
+
 ## License
 
 See LICENSE file for details.

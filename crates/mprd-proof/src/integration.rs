@@ -14,6 +14,8 @@ use crate::{
     verifier::{MpbVerifier as ProofVerifier, VerificationResult},
     Hash256,
 };
+use bincode::{DefaultOptions, Options};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// Proof bundle containing MPB custom proof.
@@ -38,15 +40,37 @@ impl MpbProofBundle {
         bincode::serialize(self)
     }
 
-    /// Deserialize from bytes.
+    /// Deserialize from bytes with bounded size (2 MiB max).
+    ///
+    /// # Security
+    ///
+    /// Uses bounded `bincode` deserialization to prevent DoS via memory exhaustion: attackers can
+    /// craft small inputs with huge length prefixes that cause large allocations.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        bincode::deserialize(bytes).ok()
+        const MAX_PROOF_BUNDLE_BYTES: usize = 2 * 1024 * 1024;
+
+        // Fail-closed: reject oversized input before attempting deserialization.
+        if bytes.len() > MAX_PROOF_BUNDLE_BYTES {
+            return None;
+        }
+
+        bounded_bincode_deserialize(bytes, MAX_PROOF_BUNDLE_BYTES as u64).ok()
     }
 
     /// Get the proof size in bytes.
     pub fn size_bytes(&self) -> usize {
         self.proof.size_bytes() + self.bytecode.len() + self.registers.len() * 8
     }
+}
+
+fn bounded_bincode_deserialize<T: DeserializeOwned>(bytes: &[u8], max_bytes: u64) -> Result<T, ()> {
+    // Match bincode's default configuration while enforcing a hard size cap during decode.
+    DefaultOptions::new()
+        .with_fixint_encoding()
+        .allow_trailing_bytes()
+        .with_limit(max_bytes)
+        .deserialize(bytes)
+        .map_err(|_| ())
 }
 
 /// Configuration for the MPB attestor.
@@ -110,8 +134,23 @@ impl MpbAttestor {
         bytecode: &[u8],
         registers: &[i64],
     ) -> Result<MpbProofBundle, AttestationError> {
+        self.attest_with_context(bytecode, registers, [0u8; 32])
+    }
+
+    /// Execute bytecode and generate a proof, binding an external context hash into the statement.
+    pub fn attest_with_context(
+        &self,
+        bytecode: &[u8],
+        registers: &[i64],
+        context_hash: Hash256,
+    ) -> Result<MpbProofBundle, AttestationError> {
         // Execute with tracing
-        let vm = TracingVm::with_fuel(bytecode, registers, self.config.fuel_limit);
+        let vm = TracingVm::with_fuel_and_context(
+            bytecode,
+            registers,
+            self.config.fuel_limit,
+            context_hash,
+        );
 
         let trace = match vm.execute(bytecode) {
             TracingResult::Success { trace, .. } => trace,
@@ -139,7 +178,22 @@ impl MpbAttestor {
         bytecode: &[u8],
         registers: &[i64],
     ) -> Result<(i64, MpbProofBundle), AttestationError> {
-        let vm = TracingVm::with_fuel(bytecode, registers, self.config.fuel_limit);
+        self.attest_with_output_and_context(bytecode, registers, [0u8; 32])
+    }
+
+    /// Execute and attest, returning the output value along with proof and binding an external context hash.
+    pub fn attest_with_output_and_context(
+        &self,
+        bytecode: &[u8],
+        registers: &[i64],
+        context_hash: Hash256,
+    ) -> Result<(i64, MpbProofBundle), AttestationError> {
+        let vm = TracingVm::with_fuel_and_context(
+            bytecode,
+            registers,
+            self.config.fuel_limit,
+            context_hash,
+        );
 
         let (result, trace) = match vm.execute(bytecode) {
             TracingResult::Success { result, trace } => (result, trace),
@@ -279,6 +333,12 @@ pub enum LocalVerificationResult {
 mod tests {
     use super::*;
 
+    #[derive(Deserialize)]
+    #[allow(dead_code)]
+    struct VecWrapper {
+        v: Vec<u8>,
+    }
+
     fn build_simple_program() -> Vec<u8> {
         // PUSH 10, PUSH 20, ADD, HALT -> result = 30
         let mut bytecode = vec![0x01];
@@ -299,6 +359,17 @@ mod tests {
             0x33, // LE
             0xFF, // HALT
         ]
+    }
+
+    #[test]
+    fn bounded_bincode_deserialize_rejects_length_prefix_dos() {
+        // bincode encodes Vec length prefixes; an attacker can claim a huge length with a tiny
+        // input. The bounded decoder must fail without attempting to allocate enormous buffers.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&u64::MAX.to_le_bytes());
+
+        let res: Result<VecWrapper, _> = bounded_bincode_deserialize(&bytes, 1024);
+        assert!(res.is_err());
     }
 
     #[test]

@@ -4,14 +4,17 @@
 //! interfaces defined in lib.rs, enabling real MPRD pipelines.
 
 use crate::anti_replay::{
-    AntiReplayConfig as CoreAntiReplayConfig, InMemoryNonceTracker, NonceValidator,
+    AntiReplayConfig as CoreAntiReplayConfig, DistributedNonceTracker, FileNonceStore,
+    InMemoryNonceTracker, NonceValidator, PersistentNonceTracker, RedisDistributedNonceStore,
+    SharedFsDistributedNonceStore,
 };
 use crate::orchestrator::DecisionTokenFactory;
 use crate::{
+    hash::candidate_hash_preimage,
     hash::{hash_candidate, hash_decision, hash_state},
     CandidateAction, Decision, DecisionToken, ExecutionResult, ExecutorAdapter, Hash32, NonceHash,
-    ProofBundle, Proposer, Result, Score, StateProvider, StateSnapshot, Value, VerificationStatus,
-    ZkAttestor, ZkLocalVerifier,
+    PolicyRef, ProofBundle, Proposer, Result, Score, StateProvider, StateSnapshot, Value,
+    VerificationStatus, ZkAttestor, ZkLocalVerifier,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -61,6 +64,7 @@ impl StateProvider for SimpleStateProvider {
             fields: self.fields.clone(),
             policy_inputs: self.policy_inputs.clone(),
             state_hash: Hash32([0u8; 32]), // Placeholder, computed below
+            state_ref: crate::StateRef::unknown(),
         };
         let state_hash = hash_state(&state);
         Ok(StateSnapshot {
@@ -168,8 +172,14 @@ impl SignedDecisionTokenFactory {
 }
 
 impl DecisionTokenFactory for SignedDecisionTokenFactory {
-    fn create(&self, decision: &Decision, state: &StateSnapshot) -> Result<DecisionToken> {
-        let nonce = Self::generate_nonce();
+    fn create(
+        &self,
+        decision: &Decision,
+        state: &StateSnapshot,
+        nonce_or_tx_hash: Option<NonceHash>,
+        policy_ref: &PolicyRef,
+    ) -> Result<DecisionToken> {
+        let nonce = nonce_or_tx_hash.unwrap_or_else(Self::generate_nonce);
         let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| crate::MprdError::ExecutionError("System clock error".into()))?
@@ -183,7 +193,12 @@ impl DecisionTokenFactory for SignedDecisionTokenFactory {
         // Construct token binding data for signature
         let mut binding = Vec::new();
         binding.extend_from_slice(&decision.policy_hash.0);
+        binding.extend_from_slice(&policy_ref.policy_epoch.to_le_bytes());
+        binding.extend_from_slice(&policy_ref.registry_root.0);
         binding.extend_from_slice(&state.state_hash.0);
+        binding.extend_from_slice(&state.state_ref.state_source_id.0);
+        binding.extend_from_slice(&state.state_ref.state_epoch.to_le_bytes());
+        binding.extend_from_slice(&state.state_ref.state_attestation_hash.0);
         binding.extend_from_slice(&decision_commitment.0);
         binding.extend_from_slice(&nonce.0);
         binding.extend_from_slice(&timestamp_ms.to_le_bytes());
@@ -192,7 +207,9 @@ impl DecisionTokenFactory for SignedDecisionTokenFactory {
 
         Ok(DecisionToken {
             policy_hash: decision.policy_hash.clone(),
+            policy_ref: policy_ref.clone(),
             state_hash: state.state_hash.clone(),
+            state_ref: state.state_ref.clone(),
             chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
             nonce_or_tx_hash: nonce,
             timestamp_ms,
@@ -250,8 +267,14 @@ impl CryptoDecisionTokenFactory {
 }
 
 impl DecisionTokenFactory for CryptoDecisionTokenFactory {
-    fn create(&self, decision: &Decision, state: &StateSnapshot) -> Result<DecisionToken> {
-        let nonce = Self::generate_nonce();
+    fn create(
+        &self,
+        decision: &Decision,
+        state: &StateSnapshot,
+        nonce_or_tx_hash: Option<NonceHash>,
+        policy_ref: &PolicyRef,
+    ) -> Result<DecisionToken> {
+        let nonce = nonce_or_tx_hash.unwrap_or_else(Self::generate_nonce);
         let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| crate::MprdError::ExecutionError("System clock error".into()))?
@@ -263,7 +286,9 @@ impl DecisionTokenFactory for CryptoDecisionTokenFactory {
         // Create unsigned token for signing
         let mut token = DecisionToken {
             policy_hash: decision.policy_hash.clone(),
+            policy_ref: policy_ref.clone(),
             state_hash: state.state_hash.clone(),
+            state_ref: state.state_ref.clone(),
             chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
             nonce_or_tx_hash: nonce,
             timestamp_ms,
@@ -302,6 +327,7 @@ impl Default for StubZkAttestor {
 impl ZkAttestor for StubZkAttestor {
     fn attest(
         &self,
+        token: &DecisionToken,
         decision: &Decision,
         state: &StateSnapshot,
         candidates: &[CandidateAction],
@@ -309,6 +335,7 @@ impl ZkAttestor for StubZkAttestor {
         use crate::hash::hash_candidate_set;
 
         let candidate_set_hash = hash_candidate_set(candidates);
+        let chosen_action_preimage = candidate_hash_preimage(&decision.chosen_action);
 
         // Stub receipt: in production, this would be a real Risc0 receipt
         let stub_receipt = b"STUB_RISC0_RECEIPT_V1".to_vec();
@@ -316,12 +343,19 @@ impl ZkAttestor for StubZkAttestor {
         let mut metadata = HashMap::new();
         metadata.insert("attestor_version".into(), "stub_v1".into());
         metadata.insert("risc0_image_id".into(), "placeholder".into());
+        metadata.insert(
+            "nonce_or_tx_hash".into(),
+            hex::encode(token.nonce_or_tx_hash.0),
+        );
 
         Ok(ProofBundle {
             policy_hash: decision.policy_hash.clone(),
             state_hash: state.state_hash.clone(),
             candidate_set_hash,
             chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            limits_hash: crate::limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage,
             risc0_receipt: stub_receipt,
             attestation_metadata: metadata,
         })
@@ -422,7 +456,8 @@ impl Default for LoggingExecutorAdapter {
 }
 
 impl ExecutorAdapter for LoggingExecutorAdapter {
-    fn execute(&self, token: &DecisionToken, _proof: &ProofBundle) -> Result<ExecutionResult> {
+    fn execute(&self, verified: &crate::VerifiedBundle<'_>) -> Result<ExecutionResult> {
+        let token = verified.token();
         let action = ExecutedAction {
             policy_hash: token.policy_hash.clone(),
             state_hash: token.state_hash.clone(),
@@ -467,12 +502,13 @@ impl<E: ExecutorAdapter> SignatureVerifyingExecutor<E> {
 }
 
 impl<E: ExecutorAdapter> ExecutorAdapter for SignatureVerifyingExecutor<E> {
-    fn execute(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<ExecutionResult> {
+    fn execute(&self, verified: &crate::VerifiedBundle<'_>) -> Result<ExecutionResult> {
+        let token = verified.token();
         // Verify signature before executing
         self.verifying_key.verify_token(token, &token.signature)?;
 
         // Signature valid, proceed with execution
-        self.inner.execute(token, proof)
+        self.inner.execute(verified)
     }
 }
 
@@ -494,11 +530,55 @@ impl SignatureVerifyingBoxedExecutor {
 }
 
 impl ExecutorAdapter for SignatureVerifyingBoxedExecutor {
-    fn execute(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<ExecutionResult> {
+    fn execute(&self, verified: &crate::VerifiedBundle<'_>) -> Result<ExecutionResult> {
+        let token = verified.token();
         // SECURITY: fail closed on invalid/missing signatures. This must run before any side
         // effects (including nonce tracking) to prevent unauthenticated probing.
         self.verifying_key.verify_token(token, &token.signature)?;
-        self.inner.execute(token, proof)
+        self.inner.execute(verified)
+    }
+}
+
+pub struct StateProvenanceBoxedExecutor {
+    inner: Box<dyn ExecutorAdapter + Send + Sync>,
+    allowed_state_source_ids: Vec<Hash32>,
+}
+
+impl StateProvenanceBoxedExecutor {
+    pub fn new(
+        inner: Box<dyn ExecutorAdapter + Send + Sync>,
+        allowed_state_source_ids: Vec<Hash32>,
+    ) -> Self {
+        Self {
+            inner,
+            allowed_state_source_ids,
+        }
+    }
+}
+
+impl ExecutorAdapter for StateProvenanceBoxedExecutor {
+    fn execute(&self, verified: &crate::VerifiedBundle<'_>) -> Result<ExecutionResult> {
+        let token = verified.token();
+        let state_ref = &token.state_ref;
+        if state_ref.state_source_id == Hash32([0u8; 32])
+            || state_ref.state_attestation_hash == Hash32([0u8; 32])
+        {
+            return Err(crate::MprdError::InvalidInput(
+                "missing state provenance (state_ref)".into(),
+            ));
+        }
+
+        if !self
+            .allowed_state_source_ids
+            .iter()
+            .any(|h| h == &state_ref.state_source_id)
+        {
+            return Err(crate::MprdError::InvalidInput(
+                "unallowlisted state provenance scheme (state_source_id)".into(),
+            ));
+        }
+
+        self.inner.execute(verified)
     }
 }
 
@@ -520,34 +600,86 @@ impl AntiReplayBoxedExecutor {
 }
 
 impl ExecutorAdapter for AntiReplayBoxedExecutor {
-    fn execute(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<ExecutionResult> {
+    fn execute(&self, verified: &crate::VerifiedBundle<'_>) -> Result<ExecutionResult> {
+        let token = verified.token();
         // SECURITY: Checks-Effects-Interactions
         // - Check: validate that the nonce has not been replayed and timestamp is acceptable.
         // - Interaction: execute the inner action.
-        // - Effect: only mark nonce used on success (prevents attacker-induced nonce DoS).
-        self.nonce_validator.validate(token)?;
-        let result = self.inner.execute(token, proof)?;
+        // - Effect:
+        //   - If the nonce was not claimed before execution, mark it used only on success.
+        //   - If the nonce was claimed before execution (low-trust multi-node), do not re-claim.
+        let claim = self.nonce_validator.validate_and_claim(token)?;
+        let result = self.inner.execute(verified)?;
 
         if !result.success {
             return Ok(result);
         }
 
-        self.nonce_validator.mark_used(token)?;
+        if claim == crate::anti_replay::NonceClaim::NotClaimed {
+            self.nonce_validator.mark_used(token)?;
+        }
         Ok(result)
     }
 }
 
-fn nonce_tracker_from_config(config: &crate::config::AntiReplayConfig) -> Arc<dyn NonceValidator> {
+fn nonce_tracker_from_config(config: &crate::MprdConfig) -> Result<Arc<dyn NonceValidator>> {
     // SECURITY: translate the user-provided anti-replay settings into the core nonce tracker.
     // Any omitted fields use the core defaults; this must remain conservative (fail-closed)
     // relative to replay protection.
-    let tracker_config = CoreAntiReplayConfig {
-        max_token_age_ms: config.max_token_age_ms,
-        max_future_skew_ms: config.max_future_skew_ms,
-        max_tracked_nonces: config.max_tracked_nonces,
-        ..Default::default()
-    };
-    Arc::new(InMemoryNonceTracker::with_config(tracker_config))
+    let tracker_config = CoreAntiReplayConfig::new(
+        config.anti_replay.max_token_age_ms,
+        config.anti_replay.nonce_retention_ms,
+        config.anti_replay.max_future_skew_ms,
+        config.anti_replay.max_tracked_nonces,
+    )?;
+
+    if config.trust_mode == crate::config::TrustMode::LowTrust {
+        match config.low_trust.nonce_store_backend {
+            crate::config::DistributedNonceBackend::SharedFs => {
+                let Some(ref dir) = config.anti_replay.nonce_store_dir else {
+                    return Err(crate::MprdError::ConfigError(
+                        "LowTrust requires anti_replay.nonce_store_dir for SharedFs nonce coordination".into(),
+                    ));
+                };
+                let store = SharedFsDistributedNonceStore::new(dir)?;
+                return Ok(Arc::new(DistributedNonceTracker::new(
+                    store,
+                    tracker_config,
+                )));
+            }
+            crate::config::DistributedNonceBackend::Redis => {
+                let Some(ref redis_url) = config.low_trust.redis_url else {
+                    return Err(crate::MprdError::ConfigError(
+                        "LowTrust Redis requires low_trust.redis_url".into(),
+                    ));
+                };
+                let store = RedisDistributedNonceStore::new(
+                    redis_url,
+                    &config.low_trust.redis_key_prefix,
+                    std::time::Duration::from_millis(config.low_trust.redis_timeout_ms),
+                )?;
+                return Ok(Arc::new(DistributedNonceTracker::new(
+                    store,
+                    tracker_config,
+                )));
+            }
+            crate::config::DistributedNonceBackend::PostgreSql
+            | crate::config::DistributedNonceBackend::Etcd
+            | crate::config::DistributedNonceBackend::OnChain => {
+                return Err(crate::MprdError::ConfigError(
+                    "LowTrust distributed nonce backend not implemented in this build; use redis (recommended) or shared_fs for pre-testnet".into(),
+                ));
+            }
+        }
+    }
+
+    if let Some(ref dir) = config.anti_replay.nonce_store_dir {
+        // HighTrust: fail closed if persistence is configured but cannot be initialized.
+        let store = FileNonceStore::new(dir)?;
+        return Ok(Arc::new(PersistentNonceTracker::new(store, tracker_config)));
+    }
+
+    Ok(Arc::new(InMemoryNonceTracker::with_config(tracker_config)))
 }
 
 fn verifying_key_from_config(
@@ -565,6 +697,26 @@ fn verifying_key_from_config(
     Ok(signing_key.verifying_key())
 }
 
+fn state_provenance_allowlist_from_config(
+    config: &crate::config::StateProvenanceConfig,
+) -> Result<Vec<Hash32>> {
+    let mut out = Vec::with_capacity(config.allowed_state_source_ids_hex.len());
+    for id in &config.allowed_state_source_ids_hex {
+        let bytes = hex::decode(id.trim()).map_err(|_| {
+            crate::MprdError::ConfigError(
+                "allowed_state_source_ids_hex contains invalid hex".into(),
+            )
+        })?;
+        let arr: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
+            crate::MprdError::ConfigError(
+                "allowed_state_source_ids_hex entries must be 32 bytes".into(),
+            )
+        })?;
+        out.push(Hash32(arr));
+    }
+    Ok(out)
+}
+
 pub fn wrap_executor_with_guards(
     inner: Box<dyn ExecutorAdapter + Send + Sync>,
     config: &crate::MprdConfig,
@@ -575,15 +727,26 @@ pub fn wrap_executor_with_guards(
     // Invariants:
     // - If `require_signatures=true`, then every accepted token MUST have a valid signature.
     // - Every successful execution MUST be replay-protected (nonce marked used once).
-    // - Unsuccessful executions MUST NOT consume the nonce (prevents attacker-induced DoS).
+    // - High-trust: unsuccessful executions MUST NOT consume the nonce (prevents
+    //   attacker-induced nonce exhaustion).
+    // - Low-trust: the distributed nonce tracker claims the nonce before execution to prevent
+    //   multi-node replay races. This may consume the nonce even if execution fails; deployments
+    //   should require downstream idempotency keyed by `nonce_or_tx_hash`.
     //
     // Guard ordering (outermost first):
     // - Signature verification (when enabled) runs before anti-replay to avoid an attacker using
     //   unauthenticated traffic to probe nonce-tracker state.
+    // - State provenance checks (when enabled) run before anti-replay; they are side-effect free
+    //   and prevent accepting tokens bound to unknown/untrusted state sources.
     // - Anti-replay performs Checks-Effects-Interactions: validate -> execute -> mark_used.
-    let nonce_validator = nonce_tracker_from_config(&config.anti_replay);
+    let nonce_validator = nonce_tracker_from_config(config)?;
     let mut executor: Box<dyn ExecutorAdapter + Send + Sync> =
         Box::new(AntiReplayBoxedExecutor::new(inner, nonce_validator));
+
+    if config.state_provenance.require_provenance {
+        let allowlisted = state_provenance_allowlist_from_config(&config.state_provenance)?;
+        executor = Box::new(StateProvenanceBoxedExecutor::new(executor, allowlisted));
+    }
 
     if !config.crypto.require_signatures {
         return Ok(executor);
@@ -612,6 +775,13 @@ mod tests {
         Hash32([byte; 32])
     }
 
+    fn dummy_policy_ref() -> PolicyRef {
+        PolicyRef {
+            policy_epoch: 1,
+            registry_root: dummy_hash(99),
+        }
+    }
+
     #[test]
     fn simple_state_provider_creates_snapshot_with_hash() {
         let fields = HashMap::from([
@@ -637,6 +807,7 @@ mod tests {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(1),
+            state_ref: crate::StateRef::unknown(),
         };
 
         let candidates = proposer.propose(&state).expect("propose should succeed");
@@ -664,10 +835,11 @@ mod tests {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(5),
+            state_ref: crate::StateRef::unknown(),
         };
 
         let token = factory
-            .create(&decision, &state)
+            .create(&decision, &state, None, &dummy_policy_ref())
             .expect("create should succeed");
 
         assert_eq!(token.policy_hash, decision.policy_hash);
@@ -695,12 +867,23 @@ mod tests {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(5),
+            state_ref: crate::StateRef::unknown(),
         };
 
         let candidates = vec![decision.chosen_action.clone()];
+        let token = DecisionToken {
+            policy_hash: decision.policy_hash.clone(),
+            policy_ref: dummy_policy_ref(),
+            state_hash: state.state_hash.clone(),
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            nonce_or_tx_hash: dummy_hash(9),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
 
         let proof = attestor
-            .attest(&decision, &state, &candidates)
+            .attest(&token, &decision, &state, &candidates)
             .expect("attest should succeed");
 
         assert_eq!(proof.policy_hash, decision.policy_hash);
@@ -713,7 +896,9 @@ mod tests {
 
         let token = DecisionToken {
             policy_hash: dummy_hash(1),
+            policy_ref: dummy_policy_ref(),
             state_hash: dummy_hash(2),
+            state_ref: crate::StateRef::unknown(),
             chosen_action_hash: dummy_hash(3),
             nonce_or_tx_hash: dummy_hash(4),
             timestamp_ms: 0,
@@ -725,6 +910,9 @@ mod tests {
             state_hash: dummy_hash(2),
             candidate_set_hash: dummy_hash(5),
             chosen_action_hash: dummy_hash(3),
+            limits_hash: dummy_hash(6),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
             risc0_receipt: vec![1, 2, 3],
             attestation_metadata: HashMap::new(),
         };
@@ -748,7 +936,9 @@ mod tests {
 
         let token = DecisionToken {
             policy_hash: dummy_hash(1),
+            policy_ref: dummy_policy_ref(),
             state_hash: dummy_hash(2),
+            state_ref: crate::StateRef::unknown(),
             chosen_action_hash: dummy_hash(3),
             nonce_or_tx_hash: dummy_hash(4),
             timestamp_ms: 12345,
@@ -760,13 +950,15 @@ mod tests {
             state_hash: dummy_hash(2),
             candidate_set_hash: dummy_hash(5),
             chosen_action_hash: dummy_hash(3),
+            limits_hash: dummy_hash(6),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
             risc0_receipt: vec![1, 2, 3],
             attestation_metadata: HashMap::new(),
         };
 
-        let result = executor
-            .execute(&token, &proof)
-            .expect("execute should succeed");
+        let verified = crate::VerifiedBundle::new(&token, &proof);
+        let result = executor.execute(&verified).expect("execute should succeed");
         assert!(result.success);
 
         let log = executor.get_log();
@@ -795,10 +987,11 @@ mod tests {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(5),
+            state_ref: crate::StateRef::unknown(),
         };
 
         let token = factory
-            .create(&decision, &state)
+            .create(&decision, &state, None, &dummy_policy_ref())
             .expect("create should succeed");
 
         // Verify signature
@@ -829,20 +1022,27 @@ mod tests {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(5),
+            state_ref: crate::StateRef::unknown(),
         };
 
-        let token = factory.create(&decision, &state).unwrap();
+        let token = factory
+            .create(&decision, &state, None, &dummy_policy_ref())
+            .unwrap();
 
         let proof = ProofBundle {
             policy_hash: token.policy_hash.clone(),
             state_hash: token.state_hash.clone(),
             candidate_set_hash: dummy_hash(6),
             chosen_action_hash: token.chosen_action_hash.clone(),
+            limits_hash: dummy_hash(7),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
             risc0_receipt: vec![1, 2, 3],
             attestation_metadata: HashMap::new(),
         };
 
-        let result = executor.execute(&token, &proof);
+        let verified = crate::VerifiedBundle::new(&token, &proof);
+        let result = executor.execute(&verified);
         assert!(result.is_ok());
     }
 
@@ -870,21 +1070,28 @@ mod tests {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(5),
+            state_ref: crate::StateRef::unknown(),
         };
 
         // Token signed with wrong key
-        let token = factory.create(&decision, &state).unwrap();
+        let token = factory
+            .create(&decision, &state, None, &dummy_policy_ref())
+            .unwrap();
 
         let proof = ProofBundle {
             policy_hash: token.policy_hash.clone(),
             state_hash: token.state_hash.clone(),
             candidate_set_hash: dummy_hash(6),
             chosen_action_hash: token.chosen_action_hash.clone(),
+            limits_hash: dummy_hash(7),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
             risc0_receipt: vec![1, 2, 3],
             attestation_metadata: HashMap::new(),
         };
 
-        let result = executor.execute(&token, &proof);
+        let verified = crate::VerifiedBundle::new(&token, &proof);
+        let result = executor.execute(&verified);
         assert!(result.is_err());
     }
 
@@ -893,7 +1100,7 @@ mod tests {
     }
 
     impl ExecutorAdapter for CountingExecutor {
-        fn execute(&self, _token: &DecisionToken, _proof: &ProofBundle) -> Result<ExecutionResult> {
+        fn execute(&self, _verified: &crate::VerifiedBundle<'_>) -> Result<ExecutionResult> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(ExecutionResult {
                 success: true,
@@ -936,9 +1143,12 @@ mod tests {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(5),
+            state_ref: crate::StateRef::unknown(),
         };
 
-        let mut token = factory.create(&decision, &state).expect("token");
+        let mut token = factory
+            .create(&decision, &state, None, &dummy_policy_ref())
+            .expect("token");
         token.signature = vec![0u8; 64];
         token.timestamp_ms = now_ms_for_tests();
 
@@ -947,6 +1157,9 @@ mod tests {
             state_hash: token.state_hash.clone(),
             candidate_set_hash: dummy_hash(6),
             chosen_action_hash: token.chosen_action_hash.clone(),
+            limits_hash: dummy_hash(7),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
             risc0_receipt: vec![1],
             attestation_metadata: HashMap::new(),
         };
@@ -957,7 +1170,8 @@ mod tests {
         });
         let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
 
-        let result = guarded.execute(&token, &proof);
+        let verified = crate::VerifiedBundle::new(&token, &proof);
+        let result = guarded.execute(&verified);
         assert!(result.is_err());
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
@@ -971,7 +1185,9 @@ mod tests {
 
         let token = DecisionToken {
             policy_hash: dummy_hash(10),
+            policy_ref: dummy_policy_ref(),
             state_hash: dummy_hash(11),
+            state_ref: crate::StateRef::unknown(),
             chosen_action_hash: dummy_hash(12),
             nonce_or_tx_hash: dummy_hash(13),
             timestamp_ms: now_ms_for_tests(),
@@ -983,6 +1199,9 @@ mod tests {
             state_hash: token.state_hash.clone(),
             candidate_set_hash: dummy_hash(14),
             chosen_action_hash: token.chosen_action_hash.clone(),
+            limits_hash: dummy_hash(15),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
             risc0_receipt: vec![1],
             attestation_metadata: HashMap::new(),
         };
@@ -993,12 +1212,195 @@ mod tests {
         });
         let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
 
-        let first = guarded.execute(&token, &proof);
+        let verified = crate::VerifiedBundle::new(&token, &proof);
+        let first = guarded.execute(&verified);
         assert!(first.is_ok());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-        let second = guarded.execute(&token, &proof);
+        let second = guarded.execute(&verified);
         assert!(matches!(second, Err(crate::MprdError::NonceReplay { .. })));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn low_trust_nonce_claims_before_execute_prevent_double_execution() {
+        let dir = std::env::temp_dir().join(format!(
+            "mprd_low_trust_nonces_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("create dir");
+
+        let mut config = crate::MprdConfig::default();
+        config.crypto.require_signatures = false;
+        config.trust_mode = crate::config::TrustMode::LowTrust;
+        config.anti_replay.nonce_store_dir = Some(dir.to_string_lossy().to_string());
+        config.low_trust.registry_quorum_threshold = 1;
+        config.low_trust.registry_trusted_signers_hex =
+            vec!["0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into()];
+        config.low_trust.state_quorum_threshold = 1;
+        config.low_trust.state_trusted_attestors_hex =
+            vec!["abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".into()];
+        config.low_trust.max_state_staleness_ms = 60_000;
+        config.low_trust.ipfs_gateways =
+            vec!["https://gw1.invalid".into(), "https://gw2.invalid".into()];
+        config.validate().expect("config validate");
+
+        let token = DecisionToken {
+            policy_hash: dummy_hash(10),
+            policy_ref: dummy_policy_ref(),
+            state_hash: dummy_hash(11),
+            state_ref: crate::StateRef::unknown(),
+            chosen_action_hash: dummy_hash(12),
+            nonce_or_tx_hash: dummy_hash(13),
+            timestamp_ms: now_ms_for_tests(),
+            signature: vec![],
+        };
+
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash.clone(),
+            state_hash: token.state_hash.clone(),
+            candidate_set_hash: dummy_hash(14),
+            chosen_action_hash: token.chosen_action_hash.clone(),
+            limits_hash: dummy_hash(15),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
+            risc0_receipt: vec![1],
+            attestation_metadata: HashMap::new(),
+        };
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(CountingExecutor {
+            calls: calls.clone(),
+        });
+        let guarded = Arc::new(wrap_executor_with_guards(inner, &config).expect("wrap"));
+
+        let g1 = guarded.clone();
+        let t1 = token.clone();
+        let p1 = proof.clone();
+        let h1 = std::thread::spawn(move || {
+            let verified = crate::VerifiedBundle::new(&t1, &p1);
+            g1.execute(&verified)
+        });
+
+        let g2 = guarded.clone();
+        let t2 = token.clone();
+        let p2 = proof.clone();
+        let h2 = std::thread::spawn(move || {
+            let verified = crate::VerifiedBundle::new(&t2, &p2);
+            g2.execute(&verified)
+        });
+
+        let r1 = h1.join().expect("join");
+        let r2 = h2.join().expect("join");
+
+        assert!(
+            matches!(r1, Ok(_)) || matches!(r2, Ok(_)),
+            "at least one execution should succeed"
+        );
+        assert!(
+            matches!(r1, Err(crate::MprdError::NonceReplay { .. }))
+                || matches!(r2, Err(crate::MprdError::NonceReplay { .. }))
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn wrap_executor_with_guards_rejects_unknown_state_provenance_when_required() {
+        let allowlisted = vec![hex::encode(
+            crate::state_provenance::state_source_id_signed_snapshot_v1().0,
+        )];
+        let config = crate::MprdConfig::builder()
+            .require_signatures(false)
+            .require_state_provenance(true)
+            .allowed_state_source_ids_hex(allowlisted)
+            .build()
+            .expect("config");
+
+        let token = DecisionToken {
+            policy_hash: dummy_hash(10),
+            policy_ref: dummy_policy_ref(),
+            state_hash: dummy_hash(11),
+            state_ref: crate::StateRef::unknown(),
+            chosen_action_hash: dummy_hash(12),
+            nonce_or_tx_hash: dummy_hash(13),
+            timestamp_ms: now_ms_for_tests(),
+            signature: vec![],
+        };
+
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash.clone(),
+            state_hash: token.state_hash.clone(),
+            candidate_set_hash: dummy_hash(14),
+            chosen_action_hash: token.chosen_action_hash.clone(),
+            limits_hash: dummy_hash(15),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
+            risc0_receipt: vec![1],
+            attestation_metadata: HashMap::new(),
+        };
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(CountingExecutor {
+            calls: calls.clone(),
+        });
+        let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
+
+        let verified = crate::VerifiedBundle::new(&token, &proof);
+        let result = guarded.execute(&verified);
+        assert!(result.is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn wrap_executor_with_guards_accepts_allowlisted_state_provenance() {
+        let state_source_id = crate::state_provenance::state_source_id_signed_snapshot_v1();
+        let allowlisted = vec![hex::encode(state_source_id.0)];
+        let config = crate::MprdConfig::builder()
+            .require_signatures(false)
+            .require_state_provenance(true)
+            .allowed_state_source_ids_hex(allowlisted)
+            .build()
+            .expect("config");
+
+        let token = DecisionToken {
+            policy_hash: dummy_hash(10),
+            policy_ref: dummy_policy_ref(),
+            state_hash: dummy_hash(11),
+            state_ref: crate::StateRef {
+                state_source_id,
+                state_epoch: 7,
+                state_attestation_hash: dummy_hash(33),
+            },
+            chosen_action_hash: dummy_hash(12),
+            nonce_or_tx_hash: dummy_hash(99),
+            timestamp_ms: now_ms_for_tests(),
+            signature: vec![],
+        };
+
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash.clone(),
+            state_hash: token.state_hash.clone(),
+            candidate_set_hash: dummy_hash(14),
+            chosen_action_hash: token.chosen_action_hash.clone(),
+            limits_hash: dummy_hash(15),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
+            risc0_receipt: vec![1],
+            attestation_metadata: HashMap::new(),
+        };
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(CountingExecutor {
+            calls: calls.clone(),
+        });
+        let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
+
+        let verified = crate::VerifiedBundle::new(&token, &proof);
+        let result = guarded.execute(&verified);
+        assert!(result.is_ok());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

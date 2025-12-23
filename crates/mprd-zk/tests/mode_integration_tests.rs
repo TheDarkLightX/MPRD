@@ -11,8 +11,8 @@
 use mprd_core::{
     components::{SimpleProposer, SimpleStateProvider},
     orchestrator::{run_once, RunOnceInputs},
-    CandidateAction, DefaultSelector, Hash32, PolicyEngine, PolicyHash, Result, RuleVerdict,
-    StateSnapshot, Value,
+    CandidateAction, DefaultSelector, Hash32, PolicyEngine, PolicyHash, PolicyRef, Result,
+    RuleVerdict, StateSnapshot, Value,
 };
 use mprd_zk::{
     create_attestor, create_verifier, DeploymentMode, ExternalVerifier, ModeConfig,
@@ -50,6 +50,13 @@ impl PolicyEngine for AllowAllPolicyEngine {
 
 fn dummy_hash(byte: u8) -> Hash32 {
     Hash32([byte; 32])
+}
+
+fn dummy_policy_ref() -> PolicyRef {
+    PolicyRef {
+        policy_epoch: 1,
+        registry_root: dummy_hash(99),
+    }
 }
 
 fn setup_components() -> (
@@ -105,6 +112,10 @@ fn mode_a_local_trusted_flow() {
         verifier: &verifier,
         executor: &executor,
         policy_hash: &policy_hash,
+        policy_ref: dummy_policy_ref(),
+        nonce_or_tx_hash: None,
+        metrics: None,
+        audit_recorder: None,
     });
 
     assert!(result.is_ok(), "Mode A should succeed");
@@ -135,6 +146,10 @@ fn mode_b_lite_attestation_flow() {
         verifier: &verifier,
         executor: &executor,
         policy_hash: &policy_hash,
+        policy_ref: dummy_policy_ref(),
+        nonce_or_tx_hash: None,
+        metrics: None,
+        audit_recorder: None,
     });
 
     assert!(result.is_ok(), "Mode B-Lite should succeed");
@@ -148,9 +163,15 @@ fn mode_b_lite_external_verification() {
     let request = VerificationRequest {
         mode: DeploymentMode::TrustlessLite,
         policy_hash: [1u8; 32],
+        policy_epoch: 1,
+        registry_root: [9u8; 32],
+        state_source_id: [7u8; 32],
+        state_epoch: 123,
+        state_attestation_hash: [6u8; 32],
         state_hash: [2u8; 32],
         candidate_set_hash: [3u8; 32],
         chosen_action_hash: [4u8; 32],
+        nonce_or_tx_hash: [8u8; 32],
         proof_data: vec![],
         metadata: HashMap::from([
             ("mode".into(), "B-Lite".into()),
@@ -159,12 +180,11 @@ fn mode_b_lite_external_verification() {
     };
 
     let response = verifier.verify(&request);
-    assert!(!response.valid, "External verification must fail-closed for B-Lite until MPB proof verification is implemented");
-    assert!(response
-        .error
-        .as_ref()
-        .expect("error")
-        .contains("not implemented"));
+    assert!(
+        !response.valid,
+        "External verification must fail-closed when required B-Lite metadata is missing"
+    );
+    assert_eq!(response.error.as_deref(), Some("Missing MPB metadata"));
 }
 
 // =============================================================================
@@ -180,6 +200,7 @@ fn mode_b_full_requires_risc0() {
         fields: HashMap::new(),
         policy_inputs: HashMap::new(),
         state_hash: dummy_hash(1),
+        state_ref: mprd_core::StateRef::unknown(),
     };
 
     let decision = mprd_core::Decision {
@@ -195,7 +216,17 @@ fn mode_b_full_requires_risc0() {
     };
 
     // Mode B-Full should fail until Risc0 is wired
-    let result = attestor.attest(&decision, &state, &[]);
+    let token = mprd_core::DecisionToken {
+        policy_hash: decision.policy_hash.clone(),
+        policy_ref: dummy_policy_ref(),
+        state_hash: state.state_hash.clone(),
+        state_ref: mprd_core::StateRef::unknown(),
+        chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+        nonce_or_tx_hash: dummy_hash(9),
+        timestamp_ms: 0,
+        signature: vec![],
+    };
+    let result = attestor.attest(&token, &decision, &state, &[]);
     assert!(result.is_err(), "B-Full should fail without Risc0");
 }
 
@@ -206,9 +237,15 @@ fn mode_b_full_external_verifier_requires_image_id() {
     let request = VerificationRequest {
         mode: DeploymentMode::TrustlessFull,
         policy_hash: [1u8; 32],
+        policy_epoch: 1,
+        registry_root: [9u8; 32],
+        state_source_id: [7u8; 32],
+        state_epoch: 123,
+        state_attestation_hash: [6u8; 32],
         state_hash: [2u8; 32],
         candidate_set_hash: [3u8; 32],
         chosen_action_hash: [4u8; 32],
+        nonce_or_tx_hash: [8u8; 32],
         proof_data: vec![1, 2, 3],
         metadata: HashMap::new(),
     };
@@ -230,6 +267,7 @@ fn mode_c_not_yet_implemented() {
         fields: HashMap::new(),
         policy_inputs: HashMap::new(),
         state_hash: dummy_hash(1),
+        state_ref: mprd_core::StateRef::unknown(),
     };
 
     let decision = mprd_core::Decision {
@@ -245,7 +283,17 @@ fn mode_c_not_yet_implemented() {
     };
 
     // Mode C should fail until implemented
-    let result = attestor.attest(&decision, &state, &[]);
+    let token = mprd_core::DecisionToken {
+        policy_hash: decision.policy_hash.clone(),
+        policy_ref: dummy_policy_ref(),
+        state_hash: state.state_hash.clone(),
+        state_ref: mprd_core::StateRef::unknown(),
+        chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+        nonce_or_tx_hash: dummy_hash(9),
+        timestamp_ms: 0,
+        signature: vec![],
+    };
+    let result = attestor.attest(&token, &decision, &state, &[]);
     assert!(result.is_err(), "Mode C should fail until implemented");
 }
 
@@ -300,8 +348,6 @@ fn mode_config_serialization() {
     let config = ModeConfig::mode_b_lite();
 
     let json = serde_json::to_string(&config).expect("Serialization should succeed");
-    assert!(json.contains("TrustlessLite"));
-
     let deserialized: ModeConfig =
         serde_json::from_str(&json).expect("Deserialization should succeed");
     assert_eq!(deserialized.mode, DeploymentMode::TrustlessLite);

@@ -11,8 +11,8 @@ use mprd_core::orchestrator::DecisionTokenFactory;
 use mprd_core::StateProvider;
 use mprd_core::{
     CandidateAction, DecisionToken, DefaultSelector, ExecutorAdapter, Hash32, PolicyEngine,
-    PolicyHash, Result, RuleVerdict, Score, Selector, StateSnapshot, Value, VerificationStatus,
-    ZkAttestor, ZkLocalVerifier,
+    PolicyHash, PolicyRef, Result, RuleVerdict, Score, Selector, StateSnapshot, Value,
+    VerificationStatus, ZkAttestor, ZkLocalVerifier,
 };
 use std::collections::HashMap;
 
@@ -22,6 +22,13 @@ use std::collections::HashMap;
 
 fn dummy_hash(b: u8) -> Hash32 {
     Hash32([b; 32])
+}
+
+fn dummy_policy_ref() -> PolicyRef {
+    PolicyRef {
+        policy_epoch: 1,
+        registry_root: dummy_hash(99),
+    }
 }
 
 /// Simple allow-all policy engine for testing.
@@ -132,17 +139,22 @@ fn e2e_basic_pipeline_selects_highest_score() {
     assert_eq!(decision.chosen_action.action_type, "HIGH_SCORE");
 
     // Create token
-    let token = token_factory.create(&decision, &state).unwrap();
+    let token = token_factory
+        .create(&decision, &state, None, &dummy_policy_ref())
+        .unwrap();
 
     // Attest
-    let proof = attestor.attest(&decision, &state, &candidates).unwrap();
+    let proof = attestor
+        .attest(&token, &decision, &state, &candidates)
+        .unwrap();
 
     // Verify
     let status = verifier.verify(&token, &proof);
     assert_eq!(status, VerificationStatus::Success);
 
     // Execute
-    let result = executor.execute(&token, &proof).unwrap();
+    let verified = mprd_core::verify_for_execution(&verifier, &token, &proof).unwrap();
+    let result = executor.execute(&verified).unwrap();
     assert!(result.success);
 
     // Verify log
@@ -164,6 +176,7 @@ fn e2e_risk_threshold_blocks_high_risk() {
         fields: HashMap::new(),
         policy_inputs: HashMap::new(),
         state_hash: dummy_hash(11),
+        state_ref: mprd_core::StateRef::unknown(),
     };
 
     // Two candidates: one safe, one risky
@@ -217,6 +230,7 @@ fn e2e_crypto_tokens_verify_correctly() {
         fields: HashMap::new(),
         policy_inputs: HashMap::new(),
         state_hash: dummy_hash(21),
+        state_ref: mprd_core::StateRef::unknown(),
     };
 
     let candidates = vec![CandidateAction {
@@ -235,7 +249,9 @@ fn e2e_crypto_tokens_verify_correctly() {
     let decision = selector
         .select(&policy_hash, &state, &candidates, &verdicts)
         .unwrap();
-    let token = token_factory.create(&decision, &state).unwrap();
+    let token = token_factory
+        .create(&decision, &state, None, &dummy_policy_ref())
+        .unwrap();
 
     // Verify signature
     let verify_result = verifying_key.verify_token(&token, &token.signature);
@@ -262,6 +278,7 @@ fn e2e_wrong_key_signature_rejected() {
         fields: HashMap::new(),
         policy_inputs: HashMap::new(),
         state_hash: dummy_hash(31),
+        state_ref: mprd_core::StateRef::unknown(),
     };
 
     let candidates = vec![CandidateAction {
@@ -280,7 +297,9 @@ fn e2e_wrong_key_signature_rejected() {
     let decision = selector
         .select(&policy_hash, &state, &candidates, &verdicts)
         .unwrap();
-    let token = token_factory.create(&decision, &state).unwrap();
+    let token = token_factory
+        .create(&decision, &state, None, &dummy_policy_ref())
+        .unwrap();
 
     // Verify with wrong key should fail
     let verify_result = wrong_verifying_key.verify_token(&token, &token.signature);
@@ -303,7 +322,9 @@ fn e2e_anti_replay_blocks_duplicate_nonce() {
 
     let token = DecisionToken {
         policy_hash: dummy_hash(40),
+        policy_ref: dummy_policy_ref(),
         state_hash: dummy_hash(41),
+        state_ref: mprd_core::StateRef::unknown(),
         chosen_action_hash: dummy_hash(42),
         nonce_or_tx_hash: dummy_hash(43),
         timestamp_ms: std::time::SystemTime::now()
@@ -339,6 +360,7 @@ fn e2e_no_allowed_candidates_returns_error() {
         fields: HashMap::new(),
         policy_inputs: HashMap::new(),
         state_hash: dummy_hash(51),
+        state_ref: mprd_core::StateRef::unknown(),
     };
 
     let candidates = vec![CandidateAction {
@@ -384,6 +406,7 @@ fn e2e_full_pipeline_with_signature_verification() {
         fields: HashMap::from([("user_id".into(), Value::String("alice".into()))]),
         policy_inputs: HashMap::new(),
         state_hash: dummy_hash(61),
+        state_ref: mprd_core::StateRef::unknown(),
     };
 
     let candidates = vec![CandidateAction {
@@ -403,13 +426,18 @@ fn e2e_full_pipeline_with_signature_verification() {
     let decision = selector
         .select(&policy_hash, &state, &candidates, &verdicts)
         .unwrap();
-    let token = token_factory.create(&decision, &state).unwrap();
-    let proof = attestor.attest(&decision, &state, &candidates).unwrap();
+    let token = token_factory
+        .create(&decision, &state, None, &dummy_policy_ref())
+        .unwrap();
+    let proof = attestor
+        .attest(&token, &decision, &state, &candidates)
+        .unwrap();
 
     // Verify ZK
     assert_eq!(verifier.verify(&token, &proof), VerificationStatus::Success);
 
     // Execute with signature check
-    let result = executor.execute(&token, &proof).unwrap();
+    let verified = mprd_core::verify_for_execution(&verifier, &token, &proof).unwrap();
+    let result = executor.execute(&verified).unwrap();
     assert!(result.success);
 }

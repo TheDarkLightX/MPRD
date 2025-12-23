@@ -250,6 +250,7 @@ export interface TrustAnchors {
 
 export interface OperatorSettings {
     version: string;
+    deploymentMode: DeploymentMode;
     apiKeyRequired: boolean;
     insecureDemoEnabled: boolean;
     storeDir: string;
@@ -257,6 +258,7 @@ export interface OperatorSettings {
     storeSensitiveEnabled: boolean;
     decisionRetentionDays: number;
     decisionMax: number;
+    trustAnchorsConfigured: boolean;
     trustAnchors: TrustAnchors;
 }
 

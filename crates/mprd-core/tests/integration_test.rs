@@ -10,8 +10,8 @@ use mprd_core::{
     },
     config::MprdConfig,
     orchestrator::{run_once, RunOnceInputs},
-    CandidateAction, DefaultSelector, Hash32, PolicyEngine, PolicyHash, Proposer, Result,
-    RuleVerdict, StateSnapshot, Value,
+    CandidateAction, DefaultSelector, Hash32, PolicyEngine, PolicyHash, PolicyRef, Proposer,
+    Result, RuleVerdict, StateSnapshot, Value,
 };
 use std::collections::HashMap;
 
@@ -72,6 +72,13 @@ fn dummy_hash(byte: u8) -> Hash32 {
     Hash32([byte; 32])
 }
 
+fn dummy_policy_ref() -> PolicyRef {
+    PolicyRef {
+        policy_epoch: 1,
+        registry_root: dummy_hash(99),
+    }
+}
+
 #[test]
 fn end_to_end_with_crypto_signatures() {
     // Setup configuration (validates settings)
@@ -119,6 +126,10 @@ fn end_to_end_with_crypto_signatures() {
         verifier: &verifier,
         executor: &executor,
         policy_hash: &policy_hash,
+        policy_ref: dummy_policy_ref(),
+        nonce_or_tx_hash: None,
+        metrics: None,
+        audit_recorder: None,
     });
 
     assert!(result.is_ok(), "Pipeline should succeed");
@@ -159,6 +170,10 @@ fn end_to_end_policy_denial() {
         verifier: &verifier,
         executor: &executor,
         policy_hash: &policy_hash,
+        policy_ref: dummy_policy_ref(),
+        nonce_or_tx_hash: None,
+        metrics: None,
+        audit_recorder: None,
     });
 
     assert!(
@@ -202,6 +217,10 @@ fn signature_verification_prevents_tampering() {
         verifier: &verifier,
         executor: &executor,
         policy_hash: &policy_hash,
+        policy_ref: dummy_policy_ref(),
+        nonce_or_tx_hash: None,
+        metrics: None,
+        audit_recorder: None,
     });
 
     assert!(result.is_err(), "Should reject token signed with wrong key");
@@ -227,6 +246,7 @@ fn multiple_candidates_highest_score_selected() {
                         fields: HashMap::new(),
                         policy_inputs: HashMap::new(),
                         state_hash: dummy_hash(0),
+                        state_ref: mprd_core::StateRef::unknown(),
                     })
                     .unwrap();
                 action.pop().unwrap()
@@ -253,6 +273,10 @@ fn multiple_candidates_highest_score_selected() {
         verifier: &verifier,
         executor: &executor,
         policy_hash: &policy_hash,
+        policy_ref: dummy_policy_ref(),
+        nonce_or_tx_hash: None,
+        metrics: None,
+        audit_recorder: None,
     });
 
     assert!(result.is_ok());

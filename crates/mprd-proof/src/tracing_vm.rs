@@ -58,6 +58,11 @@ impl TracingVm {
 
     /// Create a new tracing VM.
     pub fn new(bytecode: &[u8], registers: &[i64]) -> Self {
+        Self::new_with_context(bytecode, registers, [0u8; 32])
+    }
+
+    /// Create a new tracing VM with an external context hash.
+    pub fn new_with_context(bytecode: &[u8], registers: &[i64], context_hash: [u8; 32]) -> Self {
         let bytecode_hash = sha256(bytecode);
         let input_hash = sha256(&registers_to_bytes(registers));
 
@@ -67,7 +72,7 @@ impl TracingVm {
             registers: [0; Self::MAX_REGISTERS],
             initial_fuel: Self::DEFAULT_FUEL,
             fuel: Self::DEFAULT_FUEL,
-            trace: ExecutionTrace::new(bytecode_hash, input_hash),
+            trace: ExecutionTrace::new_with_context(bytecode_hash, input_hash, context_hash),
             step_num: 0,
         };
 
@@ -79,7 +84,20 @@ impl TracingVm {
 
     /// Create with custom fuel.
     pub fn with_fuel(bytecode: &[u8], registers: &[i64], fuel: u32) -> Self {
-        let mut vm = Self::new(bytecode, registers);
+        let mut vm = Self::new_with_context(bytecode, registers, [0u8; 32]);
+        vm.initial_fuel = fuel;
+        vm.fuel = fuel;
+        vm
+    }
+
+    /// Create with custom fuel and external context hash.
+    pub fn with_fuel_and_context(
+        bytecode: &[u8],
+        registers: &[i64],
+        fuel: u32,
+        context_hash: [u8; 32],
+    ) -> Self {
+        let mut vm = Self::new_with_context(bytecode, registers, context_hash);
         vm.initial_fuel = fuel;
         vm.fuel = fuel;
         vm

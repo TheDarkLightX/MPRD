@@ -17,6 +17,7 @@ import type {
     SecurityPosture,
     TrustLevel,
     AvailabilityLevel,
+    DeploymentMode,
 } from '../api/types';
 
 // =============================================================================
@@ -44,6 +45,10 @@ function areAnchorsConfigured(anchors: TrustAnchors): boolean {
         anchors.registryKeyFingerprint &&
         anchors.manifestKeyFingerprint
     );
+}
+
+function anchorsRequiredForMode(mode: DeploymentMode): boolean {
+    return mode === 'trustless' || mode === 'private';
 }
 
 /**
@@ -103,10 +108,11 @@ function computeFailureRates(decisions: DecisionSummary[]): {
  * @invariant I1: Missing anchors → critical
  */
 function computeTrustLevel(
+    anchorsRequired: boolean,
     anchorsConfigured: boolean,
     verifyFailRate: number
 ): TrustLevel {
-    if (!anchorsConfigured) {
+    if (anchorsRequired && !anchorsConfigured) {
         return 'critical';
     }
     if (verifyFailRate > VERIFY_FAIL_DEGRADED_THRESHOLD) {
@@ -138,13 +144,14 @@ function computeAvailabilityLevel(
 function generateReasons(
     trustLevel: TrustLevel,
     availabilityLevel: AvailabilityLevel,
+    anchorsRequired: boolean,
     anchorsConfigured: boolean,
     componentsHealthy: boolean,
     rates: { verifyFailRate: number; execFailRate: number; failRate: number }
 ): string[] {
     const reasons: string[] = [];
 
-    if (!anchorsConfigured) {
+    if (anchorsRequired && !anchorsConfigured) {
         reasons.push('Trust anchors not configured - FAIL-CLOSED');
     }
 
@@ -172,7 +179,9 @@ function generateReasons(
 // =============================================================================
 
 export interface SecurityPostureInput {
+    deploymentMode: DeploymentMode;
     trustAnchors: TrustAnchors;
+    trustAnchorsConfigured?: boolean;
     status: SystemStatus;
     decisions: DecisionSummary[];
     windowMs?: number;
@@ -187,10 +196,19 @@ export interface SecurityPostureInput {
  * @invariant I1: Missing trust anchors → trust_level = critical
  */
 export function computeSecurityPosture(input: SecurityPostureInput): SecurityPosture {
-    const { trustAnchors, status, decisions, windowMs = DEFAULT_WINDOW_MS } = input;
+    const {
+        deploymentMode,
+        trustAnchors,
+        trustAnchorsConfigured,
+        status,
+        decisions,
+        windowMs = DEFAULT_WINDOW_MS,
+    } = input;
+
+    const anchorsRequired = anchorsRequiredForMode(deploymentMode);
 
     // Step 1-2: Check anchor and component configuration
-    const anchorsConfigured = areAnchorsConfigured(trustAnchors);
+    const anchorsConfigured = trustAnchorsConfigured ?? areAnchorsConfigured(trustAnchors);
     const componentsHealthy = areComponentsHealthy(status);
 
     // Step 3: Filter to recent decisions
@@ -204,7 +222,7 @@ export function computeSecurityPosture(input: SecurityPostureInput): SecurityPos
     const decisionRate = recentDecisions.length / Math.max(1, windowMinutes);
 
     // Step 8-9: Determine trust and availability levels
-    const trustLevel = computeTrustLevel(anchorsConfigured, rates.verifyFailRate);
+    const trustLevel = computeTrustLevel(anchorsRequired, anchorsConfigured, rates.verifyFailRate);
     const availabilityLevel = computeAvailabilityLevel(
         componentsHealthy,
         rates.execFailRate,
@@ -215,6 +233,7 @@ export function computeSecurityPosture(input: SecurityPostureInput): SecurityPos
     const reasons = generateReasons(
         trustLevel,
         availabilityLevel,
+        anchorsRequired,
         anchorsConfigured,
         componentsHealthy,
         rates

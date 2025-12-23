@@ -79,11 +79,7 @@ impl LocalPolicyStorage {
 
     /// Compute the hash of policy bytes.
     fn compute_hash(bytes: &[u8]) -> PolicyHash {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(b"MPRD_POLICY_V1");
-        hasher.update(bytes);
-        Hash32(hasher.finalize().into())
+        mprd_core::hash::sha256_domain(mprd_core::hash::POLICY_TAU_DOMAIN_V1, bytes)
     }
 }
 
@@ -241,6 +237,7 @@ impl IpfsPolicyStorage {
     pub fn new(config: IpfsConfig, local_fallback_dir: impl Into<PathBuf>) -> Result<Self> {
         egress::validate_outbound_url(&config.api_url)?;
         let client = reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_millis(config.timeout_ms))
             .build()
             .map_err(|e| MprdError::ConfigError(format!("Failed to create IPFS client: {}", e)))?;

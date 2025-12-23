@@ -1,0 +1,62 @@
+[
+  {
+    "package": "mprd-cli",
+    "file": "crates/mprd-cli/src/operator/auth.rs",
+    "function": {
+      "function_name": "percent_decode",
+      "return_type": "-> Option<String>",
+      "span": {
+        "start": {
+          "line": 13,
+          "column": 1
+        },
+        "end": {
+          "line": 35,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 14,
+        "column": 5
+      },
+      "end": {
+        "line": 34,
+        "column": 32
+      }
+    },
+    "replacement": "Some(\"xyzzy\".into())",
+    "genre": "FnValue"
+  },
+  {
+    "package": "mprd-cli",
+    "file": "crates/mprd-cli/src/operator/auth.rs",
+    "function": {
+      "function_name": "percent_decode",
+      "return_type": "-> Option<String>",
+      "span": {
+        "start": {
+          "line": 13,
+          "column": 1
+        },
+        "end": {
+          "line": 35,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 17,
+        "column": 13
+      },
+      "end": {
+        "line": 17,
+        "column": 14
+      }
+    },
+    "replacement": "==",
+    "genre": "BinaryOperator"
+  }
+]

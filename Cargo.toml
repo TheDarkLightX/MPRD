@@ -5,11 +5,18 @@ members = [
     "crates/mprd-adapters",
     "crates/mprd-proof",
     "crates/mprd-cli",
+    "crates/mprd-mpb",
+    "crates/mprd-models-market",
+    "crates/mprd-asde",
+    "crates/mprd-generators",
+    "crates/mprd-perf",
     "crates/mprd-risc0-shared",
+    "crates/mprd-krr",
     "methods",
 ]
 exclude = [
     "methods/guest",
+    "fuzz",
 ]
 resolver = "2"
 
@@ -17,3 +24,14 @@ resolver = "2"
 
 [patch.crates-io]
 ark-relations = { path = "vendor/ark-relations-0.4.0" }
+
+# Security hardening for release builds
+[profile.release]
+# Detect integer overflow instead of silent wraparound (critical for crypto math)
+overflow-checks = true
+# Abort on panic to prevent unwind-based side channels in crypto code
+panic = "abort"
+# Enable LTO for smaller binaries and potential security benefits
+lto = "thin"
+# Reduce codegen units for better optimization (trade compile time for runtime)
+codegen-units = 1

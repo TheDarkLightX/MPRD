@@ -45,11 +45,17 @@
 use crate::error::{ModeError, ModeResult};
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
+use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
+use curve25519_dalek::ristretto::RistrettoPoint;
+use curve25519_dalek::scalar::Scalar;
 use mprd_core::{StateSnapshot, Value};
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use tracing::{debug, info};
+use zeroize::Zeroize;
 
 // =============================================================================
 // Commitment Schemes
@@ -152,33 +158,19 @@ impl CommitmentGenerator {
         commitment.hash == expected_hash
     }
 
-    /// Generate a random blinding factor.
+    /// Generate a cryptographically random blinding factor.
     ///
-    /// This implementation is careful to avoid unbounded reads from `/dev/urandom`,
-    /// which can be problematic on constrained environments. It first tries to
-    /// read exactly 32 bytes, and if that fails, falls back to a deterministic
-    /// hash of the current time and a fixed domain separator.
+    /// # Security
+    ///
+    /// Uses OsRng (operating system CSPRNG) which is cryptographically secure.
+    /// Panics if the OS RNG is unavailable, as weak blinding breaks commitment
+    /// hiding property.
     fn generate_blinding(&self) -> [u8; 32] {
         let mut blinding = [0u8; 32];
-
-        // Best-effort: read exactly 32 bytes from /dev/urandom
-        if let Ok(mut file) = std::fs::File::open("/dev/urandom") {
-            use std::io::Read as _;
-            if file.read_exact(&mut blinding).is_ok() {
-                return blinding;
-            }
-        }
-
-        // Fallback: deterministic, time-based blinding (not cryptographically
-        // strong, but safe and fast for test environments).
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let mut hasher = Sha256::new();
-        hasher.update(now.to_le_bytes());
-        hasher.update(b"mprd_blinding_fallback_v1");
-        blinding.copy_from_slice(&hasher.finalize());
+        // SECURITY: Use OsRng for cryptographically secure randomness.
+        // This will panic if OS RNG is unavailable, which is the correct
+        // fail-closed behavior - weak blinding breaks commitment hiding.
+        OsRng.fill_bytes(&mut blinding);
         blinding
     }
 
@@ -191,13 +183,29 @@ impl CommitmentGenerator {
                 hasher.update(blinding);
                 hasher.finalize().into()
             }
-            CommitmentScheme::Pedersen | CommitmentScheme::Poseidon => {
-                // For now, fall back to SHA-256
-                // TODO: Implement proper Pedersen/Poseidon when needed
-                let mut hasher = Sha256::new();
-                hasher.update(value);
-                hasher.update(blinding);
-                hasher.finalize().into()
+            CommitmentScheme::Pedersen => {
+                // Ristretto Pedersen commitment:
+                //   C = H_value(value) * G + blinding * H
+                // where H is a fixed, domain-separated generator.
+                //
+                // Commitment bytes are the compressed Ristretto point.
+                use sha2::Sha512;
+
+                let mut v_bytes = Vec::with_capacity(16 + value.len());
+                v_bytes.extend_from_slice(b"MPRD_PEDERSEN_VALUE_V1");
+                v_bytes.extend_from_slice(value);
+                let v = Scalar::hash_from_bytes::<Sha512>(&v_bytes);
+                let r = Scalar::from_bytes_mod_order(*blinding);
+
+                let h_point = RistrettoPoint::hash_from_bytes::<Sha512>(b"MPRD_PEDERSEN_H_V1");
+                (RISTRETTO_BASEPOINT_POINT * v + h_point * r)
+                    .compress()
+                    .to_bytes()
+            }
+            CommitmentScheme::Poseidon => {
+                // Fail fast: Poseidon commitments are not implemented in this crate yet.
+                // Returning a SHA-256 fallback would be misleading and could silently weaken privacy assumptions.
+                panic!("Poseidon commitment scheme is not implemented")
             }
         }
     }
@@ -233,10 +241,21 @@ pub struct EncryptedState {
 }
 
 /// State encryption configuration.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// # Security
+///
+/// The `master_key` field MUST contain actual secret key material from a secure
+/// source (HSM, KMS, secure key file). The encryption key is derived from this
+/// master key using HKDF, NOT from the key_id alone.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EncryptionConfig {
-    /// Key identifier.
+    /// Key identifier (for key management/rotation tracking).
     pub key_id: String,
+
+    /// Master secret key material (32 bytes). MUST be from secure source.
+    /// This is NOT serialized to avoid accidental exposure.
+    #[serde(skip)]
+    pub master_key: Option<[u8; 32]>,
 
     /// Fields to commit individually (for selective disclosure).
     pub committed_fields: Vec<String>,
@@ -248,10 +267,23 @@ pub struct EncryptionConfig {
     pub revealed_fields: Vec<String>,
 }
 
+impl std::fmt::Debug for EncryptionConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EncryptionConfig")
+            .field("key_id", &self.key_id)
+            .field("master_key", &"[REDACTED]")
+            .field("committed_fields", &self.committed_fields)
+            .field("encrypted_fields", &self.encrypted_fields)
+            .field("revealed_fields", &self.revealed_fields)
+            .finish()
+    }
+}
+
 impl Default for EncryptionConfig {
     fn default() -> Self {
         Self {
             key_id: "default".into(),
+            master_key: None, // MUST be set before use
             committed_fields: vec![],
             encrypted_fields: vec![],
             revealed_fields: vec![],
@@ -259,10 +291,42 @@ impl Default for EncryptionConfig {
     }
 }
 
+impl EncryptionConfig {
+    /// Create a new config with the required master key.
+    ///
+    /// # Security
+    ///
+    /// The master_key MUST be cryptographically random, from a secure source
+    /// such as HSM, KMS, or OsRng. Never use deterministic or predictable keys.
+    pub fn with_master_key(key_id: impl Into<String>, master_key: [u8; 32]) -> Self {
+        Self {
+            key_id: key_id.into(),
+            master_key: Some(master_key),
+            committed_fields: vec![],
+            encrypted_fields: vec![],
+            revealed_fields: vec![],
+        }
+    }
+
+    /// Generate a new config with a random master key (for testing only).
+    ///
+    /// # Security
+    ///
+    /// This generates a random key using OsRng. For production, prefer
+    /// loading keys from secure storage (HSM, KMS, Vault).
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn generate_for_testing(key_id: impl Into<String>) -> Self {
+        let mut master_key = [0u8; 32];
+        OsRng.fill_bytes(&mut master_key);
+        Self::with_master_key(key_id, master_key)
+    }
+}
+
 /// State encryptor for Mode C.
 pub struct StateEncryptor {
     config: EncryptionConfig,
     commitment_gen: CommitmentGenerator,
+    nonce_source: Arc<dyn Fn() -> [u8; 12] + Send + Sync>,
 }
 
 impl StateEncryptor {
@@ -271,6 +335,23 @@ impl StateEncryptor {
         Self {
             config,
             commitment_gen: CommitmentGenerator::sha256(),
+            nonce_source: Arc::new(|| {
+                let mut nonce = [0u8; 12];
+                OsRng.fill_bytes(&mut nonce);
+                nonce
+            }),
+        }
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    fn new_with_nonce_source(
+        config: EncryptionConfig,
+        nonce_source: Arc<dyn Fn() -> [u8; 12] + Send + Sync>,
+    ) -> Self {
+        Self {
+            config,
+            commitment_gen: CommitmentGenerator::sha256(),
+            nonce_source,
         }
     }
 
@@ -336,35 +417,88 @@ impl StateEncryptor {
     }
 
     fn serialize_state(&self, state: &StateSnapshot) -> ModeResult<Vec<u8>> {
-        serde_json::to_vec(state).map_err(|e| ModeError::SerializationError(e.to_string()))
+        #[derive(Serialize)]
+        struct CanonicalStateSnapshot<'a> {
+            fields: BTreeMap<&'a str, &'a Value>,
+            policy_inputs: BTreeMap<&'a str, &'a Vec<u8>>,
+            state_hash: &'a mprd_core::StateHash,
+            state_ref: &'a mprd_core::StateRef,
+        }
+
+        let fields = state
+            .fields
+            .iter()
+            .map(|(k, v)| (k.as_str(), v))
+            .collect::<BTreeMap<_, _>>();
+        let policy_inputs = state
+            .policy_inputs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v))
+            .collect::<BTreeMap<_, _>>();
+
+        let canonical = CanonicalStateSnapshot {
+            fields,
+            policy_inputs,
+            state_hash: &state.state_hash,
+            state_ref: &state.state_ref,
+        };
+
+        serde_json::to_vec(&canonical).map_err(|e| ModeError::SerializationError(e.to_string()))
     }
 
     fn serialize_value(&self, value: &Value) -> ModeResult<Vec<u8>> {
         serde_json::to_vec(value).map_err(|e| ModeError::SerializationError(e.to_string()))
     }
 
-    fn derive_key(&self) -> [u8; 32] {
-        let mut hasher = Sha256::new();
-        hasher.update(b"MPRD_ENCRYPTION_KEY_V1");
-        hasher.update(self.config.key_id.as_bytes());
-        hasher.finalize().into()
+    /// Decrypt an encrypted state back into the original snapshot.
+    ///
+    /// This is primarily intended for local debugging and verification workflows.
+    pub fn decrypt(&self, encrypted: &EncryptedState) -> ModeResult<StateSnapshot> {
+        let plaintext = self.decrypt_bytes(&encrypted.ciphertext, &encrypted.nonce)?;
+        serde_json::from_slice(&plaintext).map_err(|e| ModeError::SerializationError(e.to_string()))
     }
 
-    fn derive_nonce(&self, plaintext: &[u8]) -> [u8; 12] {
-        let mut hasher = Sha256::new();
-        hasher.update(b"MPRD_ENCRYPTION_NONCE_V1");
-        hasher.update(self.config.key_id.as_bytes());
-        hasher.update((plaintext.len() as u64).to_le_bytes());
-        hasher.update(&plaintext[..plaintext.len().min(32)]);
-        let bytes: [u8; 32] = hasher.finalize().into();
-        let mut nonce = [0u8; 12];
-        nonce.copy_from_slice(&bytes[..12]);
-        nonce
+    /// Derive encryption key using HKDF from master key.
+    ///
+    /// # Security
+    ///
+    /// Uses HKDF-SHA256 with domain separation. The derived key is bound to
+    /// the key_id, preventing key confusion attacks.
+    fn derive_key(&self) -> ModeResult<[u8; 32]> {
+        let master_key = self.config.master_key.ok_or_else(|| {
+            ModeError::EncryptionError(
+                "Master key not configured. Set EncryptionConfig.master_key before encrypting."
+                    .into(),
+            )
+        })?;
+
+        // HKDF-Extract: PRK = HMAC-SHA256(salt, IKM)
+        // Using key_id as salt for domain separation
+        use hmac::{digest::KeyInit as HmacKeyInit, Hmac, Mac};
+        type HmacSha256 = Hmac<Sha256>;
+
+        let mut extract_mac =
+            <HmacSha256 as HmacKeyInit>::new_from_slice(self.config.key_id.as_bytes())
+                .map_err(|e| ModeError::EncryptionError(format!("HMAC init failed: {}", e)))?;
+        extract_mac.update(&master_key);
+        let prk = extract_mac.finalize().into_bytes();
+
+        // HKDF-Expand: OKM = HMAC-SHA256(PRK, info || 0x01)
+        let mut expand_mac = <HmacSha256 as HmacKeyInit>::new_from_slice(&prk)
+            .map_err(|e| ModeError::EncryptionError(format!("HMAC init failed: {}", e)))?;
+        expand_mac.update(b"MPRD_AES_KEY_V1");
+        expand_mac.update(&[0x01]);
+        let okm = expand_mac.finalize().into_bytes();
+
+        let mut derived = [0u8; 32];
+        derived.copy_from_slice(&okm);
+        Ok(derived)
     }
 
     fn encrypt_bytes(&self, plaintext: &[u8]) -> ModeResult<(Vec<u8>, [u8; 12])> {
-        let key_bytes = self.derive_key();
-        let nonce_bytes = self.derive_nonce(plaintext);
+        let mut key_bytes = self.derive_key()?;
+        // SECURITY: fresh nonce per encryption (default source uses OsRng)
+        let nonce_bytes = (self.nonce_source)();
 
         let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
         let cipher = Aes256Gcm::new(key);
@@ -374,7 +508,24 @@ impl StateEncryptor {
             .encrypt(nonce, plaintext)
             .map_err(|e| ModeError::EncryptionError(e.to_string()))?;
 
+        // SECURITY: Zeroize key material after use
+        key_bytes.zeroize();
+
         Ok((ciphertext, nonce_bytes))
+    }
+
+    fn decrypt_bytes(&self, ciphertext: &[u8], nonce_bytes: &[u8; 12]) -> ModeResult<Vec<u8>> {
+        let mut key_bytes = self.derive_key()?;
+        let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+        let cipher = Aes256Gcm::new(key);
+        let nonce = Nonce::from_slice(nonce_bytes);
+
+        let plaintext = cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|e| ModeError::EncryptionError(e.to_string()))?;
+
+        key_bytes.zeroize();
+        Ok(plaintext)
     }
 }
 
@@ -549,13 +700,42 @@ pub struct PrivateAttestationResult {
 mod tests {
     use super::*;
     use mprd_core::Hash32;
+    use proptest::prelude::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn counter_nonce_source() -> Arc<dyn Fn() -> [u8; 12] + Send + Sync> {
+        let counter = AtomicU64::new(0);
+        Arc::new(move || {
+            let n = counter.fetch_add(1, Ordering::Relaxed);
+            let mut out = [0u8; 12];
+            out[..8].copy_from_slice(&n.to_le_bytes());
+            out
+        })
+    }
+
+    fn state_with(
+        fields: HashMap<String, Value>,
+        policy_inputs: HashMap<String, Vec<u8>>,
+    ) -> StateSnapshot {
+        StateSnapshot {
+            fields,
+            policy_inputs,
+            state_hash: Hash32([1u8; 32]),
+            state_ref: mprd_core::StateRef::unknown(),
+        }
+    }
 
     #[test]
     fn commitment_hiding_and_binding() {
         let gen = CommitmentGenerator::sha256();
         let value = b"secret_value";
 
-        let (commitment, opening) = gen.commit(value);
+        let blinding = [7u8; 32];
+        let commitment = gen.commit_with_blinding(value, blinding);
+        let opening = CommitmentOpening {
+            value: value.to_vec(),
+            blinding,
+        };
 
         // Verify opening works
         assert!(gen.verify(&commitment, &opening));
@@ -588,24 +768,47 @@ mod tests {
     }
 
     #[test]
+    fn pedersen_commitment_roundtrips_and_is_binding() {
+        let gen = CommitmentGenerator::new(CommitmentScheme::Pedersen);
+        let value = b"hello";
+        let blinding = [1u8; 32];
+
+        let commitment = gen.commit_with_blinding(value, blinding);
+        let opening = CommitmentOpening {
+            value: value.to_vec(),
+            blinding,
+        };
+        assert!(gen.verify(&commitment, &opening));
+
+        let wrong_opening = CommitmentOpening {
+            value: b"bye".to_vec(),
+            blinding,
+        };
+        assert!(!gen.verify(&commitment, &wrong_opening));
+    }
+
+    #[test]
     fn state_encryption_roundtrip() {
+        let master_key = [9u8; 32];
+
         let config = EncryptionConfig {
             key_id: "test_key".into(),
+            master_key: Some(master_key),
             committed_fields: vec!["balance".into()],
             encrypted_fields: vec![],
             revealed_fields: vec![],
         };
 
-        let encryptor = StateEncryptor::new(config);
+        let encryptor =
+            StateEncryptor::new_with_nonce_source(config.clone(), counter_nonce_source());
 
-        let state = StateSnapshot {
-            fields: HashMap::from([
+        let state = state_with(
+            HashMap::from([
                 ("balance".into(), Value::UInt(10000)),
                 ("risk".into(), Value::Int(50)),
             ]),
-            policy_inputs: HashMap::new(),
-            state_hash: Hash32([1u8; 32]),
-        };
+            HashMap::new(),
+        );
 
         let (encrypted, witness) = encryptor.encrypt(&state).expect("Should encrypt");
 
@@ -614,33 +817,102 @@ mod tests {
 
         // Verify field commitment exists
         assert!(encrypted.field_commitments.contains_key("balance"));
+        let roundtrip = encryptor.decrypt(&encrypted).expect("decrypt");
+        assert_eq!(roundtrip, state);
+    }
 
-        // Verify AES-GCM decryption roundtrip
-        let state_bytes = serde_json::to_vec(&witness.plaintext_state).expect("serialize state");
+    #[test]
+    fn encryption_fails_without_master_key() {
+        let config = EncryptionConfig::default(); // No master key
+        let encryptor = StateEncryptor::new(config);
 
-        let mut hasher = Sha256::new();
-        hasher.update(b"MPRD_ENCRYPTION_KEY_V1");
-        hasher.update("test_key".as_bytes());
-        let key_bytes: [u8; 32] = hasher.finalize().into();
+        let state = state_with(HashMap::new(), HashMap::new());
 
-        let mut hasher = Sha256::new();
-        hasher.update(b"MPRD_ENCRYPTION_NONCE_V1");
-        hasher.update("test_key".as_bytes());
-        hasher.update((state_bytes.len() as u64).to_le_bytes());
-        hasher.update(&state_bytes[..state_bytes.len().min(32)]);
-        let nonce_seed: [u8; 32] = hasher.finalize().into();
-        let mut nonce_bytes = [0u8; 12];
-        nonce_bytes.copy_from_slice(&nonce_seed[..12]);
+        let result = encryptor.encrypt(&state);
+        assert!(matches!(result, Err(ModeError::EncryptionError(_))));
+    }
 
-        let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
-        let cipher = Aes256Gcm::new(key);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+    #[test]
+    fn different_encryptions_have_different_nonces() {
+        let master_key = [9u8; 32];
 
-        let decrypted = cipher
-            .decrypt(nonce, encrypted.ciphertext.as_ref())
-            .expect("decrypt");
+        let config = EncryptionConfig::with_master_key("test", master_key);
+        let encryptor = StateEncryptor::new_with_nonce_source(config, counter_nonce_source());
 
-        assert_eq!(decrypted, state_bytes);
+        let state = state_with(HashMap::from([("x".into(), Value::Int(1))]), HashMap::new());
+
+        let (enc1, _) = encryptor.encrypt(&state).unwrap();
+        let (enc2, _) = encryptor.encrypt(&state).unwrap();
+
+        // Nonces must be fresh per encryption.
+        assert_ne!(enc1.nonce, enc2.nonce);
+    }
+
+    #[test]
+    fn canonical_state_serialization_ignores_map_insertion_order() {
+        let encryptor = StateEncryptor::new(EncryptionConfig::default());
+
+        let mut fields_a = HashMap::new();
+        fields_a.insert("b".into(), Value::Int(2));
+        fields_a.insert("a".into(), Value::Int(1));
+
+        let mut fields_b = HashMap::new();
+        fields_b.insert("a".into(), Value::Int(1));
+        fields_b.insert("b".into(), Value::Int(2));
+
+        let state_a = state_with(fields_a, HashMap::new());
+        let state_b = state_with(fields_b, HashMap::new());
+
+        let a = encryptor.serialize_state(&state_a).expect("serialize");
+        let b = encryptor.serialize_state(&state_b).expect("serialize");
+        assert_eq!(a, b);
+    }
+
+    fn value_strategy() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            any::<bool>().prop_map(Value::Bool),
+            (-1_000_000i64..=1_000_000).prop_map(Value::Int),
+            (0u64..=1_000_000).prop_map(Value::UInt),
+            "[-_a-zA-Z0-9]{0,32}".prop_map(Value::String),
+            proptest::collection::vec(any::<u8>(), 0..64).prop_map(Value::Bytes),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn canonical_state_serialization_is_order_invariant(
+            fields in proptest::collection::btree_map("[-_a-zA-Z0-9]{1,16}", value_strategy(), 0..16),
+            policy_inputs in proptest::collection::btree_map("[-_a-zA-Z0-9]{1,16}", proptest::collection::vec(any::<u8>(), 0..64), 0..16),
+        ) {
+            let encryptor = StateEncryptor::new(EncryptionConfig::default());
+
+            let mut a_fields = HashMap::new();
+            for (k, v) in fields.iter() {
+                a_fields.insert(k.clone(), v.clone());
+            }
+
+            let mut b_fields = HashMap::new();
+            for (k, v) in fields.iter().rev() {
+                b_fields.insert(k.clone(), v.clone());
+            }
+
+            let mut a_inputs = HashMap::new();
+            for (k, v) in policy_inputs.iter() {
+                a_inputs.insert(k.clone(), v.clone());
+            }
+
+            let mut b_inputs = HashMap::new();
+            for (k, v) in policy_inputs.iter().rev() {
+                b_inputs.insert(k.clone(), v.clone());
+            }
+
+            let state_a = state_with(a_fields, a_inputs);
+            let state_b = state_with(b_fields, b_inputs);
+
+            let sa = encryptor.serialize_state(&state_a).expect("serialize");
+            let sb = encryptor.serialize_state(&state_b).expect("serialize");
+            prop_assert_eq!(sa, sb);
+        }
     }
 
     #[test]

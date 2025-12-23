@@ -25,6 +25,8 @@ import type {
     IncidentExtended,
     AutoAction,
 } from '../api/types';
+import { apiClient, ApiError } from '../api/client';
+import { USE_MOCK_DATA } from '../config';
 import {
     createInitialAutopilotState,
     toAutopilotState,
@@ -74,8 +76,10 @@ const AutopilotContext = createContext<AutopilotContextValue | null>(null);
 
 type AutopilotAction =
     | { type: 'SET_MODE'; mode: AutopilotMode }
+    | { type: 'SET_FROM_BACKEND'; state: AutopilotState }
     | { type: 'ACKNOWLEDGE' }
     | { type: 'ADD_ACTION'; action: AutoAction }
+    | { type: 'SET_ACTIONS'; actions: AutoAction[] }
     | { type: 'PRUNE_OLD_ACTIONS' };
 
 interface AutopilotReducerState {
@@ -97,6 +101,20 @@ function autopilotReducer(
                 },
             };
 
+        case 'SET_FROM_BACKEND': {
+            const pending = Math.max(0, action.state.pendingReviewCount | 0);
+            return {
+                ...state,
+                controllerState: {
+                    ...state.controllerState,
+                    mode: action.state.mode,
+                    lastHumanAck: action.state.lastHumanAck,
+                    autoActionsCount24h: action.state.autoHandled24h | 0,
+                    pendingReviewQueue: Array.from({ length: pending }, () => 'pending'),
+                },
+            };
+        }
+
         case 'ACKNOWLEDGE':
             return {
                 ...state,
@@ -114,6 +132,12 @@ function autopilotReducer(
                     ...state.controllerState,
                     autoActionsCount24h: state.controllerState.autoActionsCount24h + 1,
                 },
+            };
+
+        case 'SET_ACTIONS':
+            return {
+                ...state,
+                recentActions: action.actions.slice(0, 50),
             };
 
         case 'PRUNE_OLD_ACTIONS': {
@@ -139,6 +163,33 @@ export function AutopilotProvider({ children }: { children: ReactNode }) {
         recentActions: [],
     });
 
+    useEffect(() => {
+        if (USE_MOCK_DATA) return;
+        let mounted = true;
+        const refresh = async () => {
+            try {
+                const [state, actions] = await Promise.all([
+                    apiClient.getAutopilot(),
+                    apiClient.listAutopilotActivity(50),
+                ]);
+                if (!mounted) return;
+                dispatch({ type: 'SET_FROM_BACKEND', state });
+                dispatch({ type: 'SET_ACTIONS', actions });
+            } catch {
+            }
+        };
+
+        void refresh();
+        const interval = window.setInterval(() => {
+            void refresh();
+        }, 10_000);
+
+        return () => {
+            mounted = false;
+            window.clearInterval(interval);
+        };
+    }, []);
+
     // Prune old actions periodically
     useEffect(() => {
         const interval = setInterval(() => {
@@ -161,16 +212,61 @@ export function AutopilotProvider({ children }: { children: ReactNode }) {
             incidents
         );
 
-        if (result.success) {
+        if (!result.success) return result;
+        if (USE_MOCK_DATA) {
             dispatch({ type: 'SET_MODE', mode: targetMode });
+            return result;
         }
+        void (async () => {
+            try {
+                const next = await apiClient.setAutopilotMode(targetMode);
+                dispatch({ type: 'SET_FROM_BACKEND', state: next });
+            } catch (e) {
+                const msg =
+                    e instanceof ApiError
+                        ? e.status === 0
+                            ? 'Backend unreachable (cannot change autopilot mode)'
+                            : e.message
+                        : 'Failed to change autopilot mode';
+                dispatch({
+                    type: 'ADD_ACTION',
+                    action: {
+                        id: `auto_degrade_${Date.now()}`,
+                        type: 'auto_degrade',
+                        target: 'autopilot_mode',
+                        timestamp: Date.now(),
+                        reversible: false,
+                        explanation: {
+                            summary: 'Autopilot mode change failed',
+                            evidence: msg,
+                            confidence: 1.0,
+                            counterfactual: 'If backend connectivity/auth is restored, retry the mode change.',
+                            auditId: `ui_${Date.now()}`,
+                            timestamp: Date.now(),
+                            operatorCanOverride: false,
+                        },
+                    },
+                });
+            }
+        })();
 
         return result;
     }, [reducerState.controllerState]);
 
     // Acknowledge presence
     const acknowledgePresence = useCallback(() => {
-        dispatch({ type: 'ACKNOWLEDGE' });
+        if (USE_MOCK_DATA) {
+            dispatch({ type: 'ACKNOWLEDGE' });
+            return;
+        }
+        void (async () => {
+            try {
+                const next = await apiClient.ackAutopilot();
+                dispatch({ type: 'SET_FROM_BACKEND', state: next });
+            } catch {
+                dispatch({ type: 'ACKNOWLEDGE' });
+            }
+        })();
     }, []);
 
     // Add auto action
@@ -190,8 +286,18 @@ export function AutopilotProvider({ children }: { children: ReactNode }) {
         );
 
         if (degradeResult) {
-            dispatch({ type: 'SET_MODE', mode: degradeResult.toMode });
-            // In a real app, we'd also log this and show a notification
+            if (USE_MOCK_DATA) {
+                dispatch({ type: 'SET_MODE', mode: degradeResult.toMode });
+                return;
+            }
+            void (async () => {
+                try {
+                    const next = await apiClient.setAutopilotMode(degradeResult.toMode, degradeResult.reason);
+                    dispatch({ type: 'SET_FROM_BACKEND', state: next });
+                } catch {
+                    dispatch({ type: 'SET_MODE', mode: degradeResult.toMode });
+                }
+            })();
         }
     }, [reducerState.controllerState]);
 

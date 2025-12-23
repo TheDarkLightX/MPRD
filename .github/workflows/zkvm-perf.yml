@@ -1,0 +1,32 @@
+name: zkvm-perf
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Perf harness (release)
+        env:
+          RISC0_SKIP_BUILD: "1"
+        run: |
+          cargo run -p mprd-perf --release -- --json --iters 20000 --mpb-ops 512 > perf.json
+          cat perf.json
+
+      - name: Upload perf artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zkvm-perf
+          path: perf.json
+

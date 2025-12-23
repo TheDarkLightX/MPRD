@@ -14,6 +14,10 @@ This crate provides adapters for integrating MPRD with external systems:
 
 Adapters implement standard traits to allow MPRD to communicate with external systems while maintaining the safety invariant that the model can only propose, never execute.
 
+### Proposers
+
+- `HttpProposer`: calls an HTTP endpoint to fetch candidate actions for a given state snapshot.
+
 ## Testing
 
 ```bash

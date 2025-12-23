@@ -190,7 +190,7 @@ pub struct ExtendedVerificationResult {
 }
 
 /// A single verification step.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerificationStep {
     pub name: String,
     pub passed: bool,
@@ -252,6 +252,7 @@ impl MpbTrustlessAttestor {
 impl ZkAttestor for MpbTrustlessAttestor {
     fn attest(
         &self,
+        _token: &DecisionToken,
         decision: &Decision,
         state: &StateSnapshot,
         candidates: &[CandidateAction],
@@ -281,6 +282,11 @@ impl ZkAttestor for MpbTrustlessAttestor {
             state_hash: state.state_hash.clone(),
             candidate_set_hash,
             chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            limits_hash: mprd_core::limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: mprd_core::hash::candidate_hash_preimage(
+                &decision.chosen_action,
+            ),
             risc0_receipt: vec![], // No Risc0 receipt in B-Lite
             attestation_metadata: metadata,
         })
@@ -365,6 +371,7 @@ impl Risc0TrustlessAttestor {
 impl ZkAttestor for Risc0TrustlessAttestor {
     fn attest(
         &self,
+        _token: &DecisionToken,
         _decision: &Decision,
         _state: &StateSnapshot,
         candidates: &[CandidateAction],
@@ -523,6 +530,7 @@ impl PrivateAttestor {
 impl ZkAttestor for PrivateAttestor {
     fn attest(
         &self,
+        _token: &DecisionToken,
         _decision: &Decision,
         _state: &StateSnapshot,
         _candidates: &[CandidateAction],
@@ -601,6 +609,7 @@ struct LegacyLocalTrustedAttestorDisabled;
 impl ZkAttestor for LegacyLocalTrustedAttestorDisabled {
     fn attest(
         &self,
+        _token: &DecisionToken,
         _decision: &Decision,
         _state: &StateSnapshot,
         _candidates: &[CandidateAction],
@@ -626,22 +635,24 @@ impl ZkLocalVerifier for LegacyLocalTrustedVerifierDisabled {
 // =============================================================================
 
 fn compute_candidate_set_hash(candidates: &[CandidateAction]) -> Hash32 {
-    use sha2::{Digest, Sha256};
-
-    let mut hasher = Sha256::new();
-    for candidate in candidates {
-        hasher.update(candidate.candidate_hash.0);
-    }
-    Hash32(hasher.finalize().into())
+    mprd_core::hash::hash_candidate_set(candidates)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mprd_core::PolicyRef;
     use mprd_core::Score;
 
     fn dummy_hash(byte: u8) -> Hash32 {
         Hash32([byte; 32])
+    }
+
+    fn dummy_policy_ref() -> PolicyRef {
+        PolicyRef {
+            policy_epoch: 1,
+            registry_root: dummy_hash(99),
+        }
     }
 
     #[test]
@@ -652,6 +663,30 @@ mod tests {
         let mode_b_lite = ModeConfig::mode_b_lite();
         assert_eq!(mode_b_lite.mode, DeploymentMode::TrustlessLite);
         assert_eq!(mode_b_lite.mpb_spot_checks, 64);
+    }
+
+    #[test]
+    fn mode_b_full_sets_expected_fields() {
+        let image_id = [7u8; 32];
+        let cfg = ModeConfig::mode_b_full(image_id);
+
+        assert_eq!(cfg.mode, DeploymentMode::TrustlessFull);
+        assert_eq!(cfg.mpb_spot_checks, 0);
+        assert_eq!(cfg.risc0_image_id, Some(image_id));
+        assert!(!cfg.encrypt_inputs);
+        assert_eq!(cfg.encryption_key_id, None);
+    }
+
+    #[test]
+    fn mode_c_sets_expected_fields() {
+        let image_id = [9u8; 32];
+        let cfg = ModeConfig::mode_c(image_id, "k1");
+
+        assert_eq!(cfg.mode, DeploymentMode::Private);
+        assert_eq!(cfg.mpb_spot_checks, 0);
+        assert_eq!(cfg.risc0_image_id, Some(image_id));
+        assert!(cfg.encrypt_inputs);
+        assert_eq!(cfg.encryption_key_id.as_deref(), Some("k1"));
     }
 
     #[test]
@@ -676,13 +711,27 @@ mod tests {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(1),
+            state_ref: mprd_core::StateRef::unknown(),
         };
 
-        assert!(attestor.attest(&decision, &state, &[]).is_err());
+        let token_for_attest = DecisionToken {
+            policy_hash: decision.policy_hash.clone(),
+            policy_ref: dummy_policy_ref(),
+            state_hash: state.state_hash.clone(),
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            nonce_or_tx_hash: dummy_hash(9),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let result = attestor.attest(&token_for_attest, &decision, &state, &[]);
+        assert!(result.is_err());
 
         let token = DecisionToken {
             policy_hash: dummy_hash(1),
+            policy_ref: dummy_policy_ref(),
             state_hash: dummy_hash(2),
+            state_ref: mprd_core::StateRef::unknown(),
             chosen_action_hash: dummy_hash(3),
             nonce_or_tx_hash: dummy_hash(4),
             timestamp_ms: 0,
@@ -693,6 +742,9 @@ mod tests {
             state_hash: dummy_hash(2),
             candidate_set_hash: dummy_hash(5),
             chosen_action_hash: dummy_hash(3),
+            limits_hash: dummy_hash(6),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
             risc0_receipt: vec![],
             attestation_metadata: HashMap::new(),
         };
@@ -710,6 +762,7 @@ mod tests {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
             state_hash: dummy_hash(1),
+            state_ref: mprd_core::StateRef::unknown(),
         };
 
         let decision = Decision {
@@ -724,7 +777,18 @@ mod tests {
             decision_commitment: dummy_hash(4),
         };
 
-        let result = attestor.attest(&decision, &state, &[]);
+        let token = DecisionToken {
+            policy_hash: decision.policy_hash.clone(),
+            policy_ref: dummy_policy_ref(),
+            state_hash: state.state_hash.clone(),
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            nonce_or_tx_hash: dummy_hash(9),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+
+        let result = attestor.attest(&token, &decision, &state, &[]);
         assert!(result.is_ok());
 
         let proof = result.unwrap();
@@ -740,7 +804,9 @@ mod tests {
 
         let token = DecisionToken {
             policy_hash: dummy_hash(1),
+            policy_ref: dummy_policy_ref(),
             state_hash: dummy_hash(2),
+            state_ref: mprd_core::StateRef::unknown(),
             chosen_action_hash: dummy_hash(3),
             nonce_or_tx_hash: dummy_hash(4),
             timestamp_ms: 0,
@@ -755,6 +821,9 @@ mod tests {
             state_hash: dummy_hash(2),
             candidate_set_hash: dummy_hash(5),
             chosen_action_hash: dummy_hash(3),
+            limits_hash: dummy_hash(6),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
             risc0_receipt: vec![],
             attestation_metadata: metadata,
         };
@@ -768,7 +837,9 @@ mod tests {
 
         let token = DecisionToken {
             policy_hash: dummy_hash(1),
+            policy_ref: dummy_policy_ref(),
             state_hash: dummy_hash(2),
+            state_ref: mprd_core::StateRef::unknown(),
             chosen_action_hash: dummy_hash(3),
             nonce_or_tx_hash: dummy_hash(4),
             timestamp_ms: 0,
@@ -783,6 +854,9 @@ mod tests {
             state_hash: dummy_hash(2),
             candidate_set_hash: dummy_hash(5),
             chosen_action_hash: dummy_hash(3),
+            limits_hash: dummy_hash(6),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
             risc0_receipt: vec![],
             attestation_metadata: metadata,
         };

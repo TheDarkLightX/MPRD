@@ -136,11 +136,13 @@ mod tests {
     #[test]
     fn error_display() {
         let err = ModeError::config("test error");
-        assert!(err.to_string().contains("test error"));
+        assert_eq!(err.to_string(), "Invalid mode configuration: test error");
 
         let err = ModeError::invariant("S1", "action not allowed");
-        assert!(err.to_string().contains("S1"));
-        assert!(err.to_string().contains("action not allowed"));
+        assert_eq!(
+            err.to_string(),
+            "Security invariant violated: S1 - action not allowed"
+        );
     }
 
     #[test]

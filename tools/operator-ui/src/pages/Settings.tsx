@@ -15,6 +15,8 @@ import { useAutopilot } from '../context/AutopilotContext';
 import { AutopilotStatusBadge, ModeTransitionModal } from '../components/autopilot';
 import { CheckCircle, XCircle, AlertTriangle, Zap, User, Bot } from 'lucide-react';
 import type { AutopilotMode, SecurityPosture, IncidentExtended, OperatorSettingsUpdate } from '../api/types';
+import { useOperatorIncidents } from '../hooks';
+import { computeSecurityPosture } from '../algorithms/securityPosture';
 
 // Precondition check display
 function PreconditionItem({ label, met }: { label: string; met: boolean }) {
@@ -46,7 +48,7 @@ function ModeButton({
     const config = {
         manual: { icon: User, label: 'Manual', desc: 'All decisions require human action' },
         assisted: { icon: Zap, label: 'Assisted', desc: 'Auto-correlate, suggest actions' },
-        autopilot: { icon: Bot, label: 'Autopilot', desc: 'Auto-dismiss, auto-execute low-risk' },
+        autopilot: { icon: Bot, label: 'Autopilot', desc: 'Auto-triage incidents (never bypasses verification)' },
     };
     const { icon: Icon, label, desc } = config[mode];
 
@@ -111,28 +113,90 @@ export function SettingsPage() {
     const retentionDays = retentionDaysDraft ?? String(settings?.decisionRetentionDays ?? 0);
     const decisionMax = decisionMaxDraft ?? String(settings?.decisionMax ?? 0);
 
+    const statusQuery = useQuery({
+        queryKey: ['status'],
+        queryFn: () => apiClient.getStatus(),
+        enabled: !USE_MOCK_DATA,
+        refetchInterval: 5000,
+    });
+
+    const recentDecisionsQuery = useQuery({
+        queryKey: ['decisions_recent'],
+        queryFn: () => apiClient.listDecisions(1, 200, { startDate: Date.now() - 60 * 60 * 1000 }),
+        enabled: !USE_MOCK_DATA,
+        refetchInterval: 10_000,
+    });
+
+    const { incidents: incidentSummaries } = useOperatorIncidents(50, false, true);
+
+    const incidentsForAutopilot = useMemo((): IncidentExtended[] => {
+        return incidentSummaries.map((s) => ({
+            id: s.id,
+            severity: s.severity,
+            title: s.title,
+            count: s.count,
+            unacked: s.unacked,
+            firstSeen: s.firstSeen,
+            lastSeen: s.lastSeen,
+            primary: {
+                id: s.primaryAlertId,
+                timestamp: s.lastSeen,
+                severity: s.severity,
+                type: 'anomaly',
+                message: s.title,
+                acknowledged: !s.unacked,
+            },
+            state: s.unacked ? 'open' : 'acknowledged',
+            flapping: s.flapping ?? false,
+            priority:
+                (s.severity === 'critical' ? 1_000_000 : s.severity === 'warning' ? 100_000 : 10_000) +
+                (s.unacked ? 50_000 : 0) +
+                s.lastSeen,
+        }));
+    }, [incidentSummaries]);
+
+    const posture = useMemo((): SecurityPosture => {
+        if (USE_MOCK_DATA) {
+            return {
+                trustLevel: 'healthy',
+                availabilityLevel: 'healthy',
+                reasons: [],
+                metrics: { failRate: 0.01, verifyFailRate: 0.005, execFailRate: 0.005, decisionRate: 2.5 },
+            };
+        }
+
+        const status = statusQuery.data;
+        if (!settings || !status) {
+            return {
+                trustLevel: 'critical',
+                availabilityLevel: 'critical',
+                reasons: ['Backend data unavailable - FAIL-CLOSED'],
+                metrics: { failRate: 1.0, verifyFailRate: 1.0, execFailRate: 1.0, decisionRate: 0 },
+            };
+        }
+
+        const decisions = recentDecisionsQuery.data?.data ?? [];
+        return computeSecurityPosture({
+            deploymentMode: settings.deploymentMode,
+            trustAnchors: settings.trustAnchors,
+            trustAnchorsConfigured: settings.trustAnchorsConfigured,
+            status,
+            decisions,
+        });
+    }, [recentDecisionsQuery.data?.data, settings, statusQuery.data]);
+
     useEffect(() => {
         if (pruneStatus !== 'done') return;
         const t = window.setTimeout(() => setPruneStatus('idle'), 3000);
         return () => window.clearTimeout(t);
     }, [pruneStatus]);
 
-    // Mock security posture and incidents for demo
-    const mockPosture: SecurityPosture = useMemo(() => ({
-        trustLevel: 'healthy',
-        availabilityLevel: 'healthy',
-        reasons: [],
-        metrics: { failRate: 0.01, verifyFailRate: 0.005, execFailRate: 0.005, decisionRate: 2.5 },
-    }), []);
-
-    const mockIncidents: IncidentExtended[] = [];
-
     const handleModeClick = (mode: AutopilotMode) => {
         if (mode === autopilotState.mode) return;
         setTargetMode(mode);
 
         // Check preconditions before showing modal (preview only, no transition yet)
-        const result = checkModeTransition(mode, mockPosture, mockIncidents);
+        const result = checkModeTransition(mode, posture, incidentsForAutopilot);
         if (!result.success) {
             setViolations(result.violations ?? [result.error ?? 'Unknown error']);
         } else {
@@ -143,7 +207,7 @@ export function SettingsPage() {
 
     const handleConfirm = () => {
         // Actually perform the transition
-        const result = requestModeTransition(targetMode, mockPosture, mockIncidents);
+        const result = requestModeTransition(targetMode, posture, incidentsForAutopilot);
         if (result.success) {
             setModalOpen(false);
         }
@@ -190,9 +254,9 @@ export function SettingsPage() {
 
     // Preconditions status
     const preconditions = [
-        { label: 'Trust anchors configured', met: mockPosture.trustLevel !== 'critical' },
-        { label: 'Verification failure rate < 5%', met: mockPosture.metrics.verifyFailRate < 0.05 },
-        { label: 'No unacked critical incidents', met: mockIncidents.filter(i => i.severity === 'critical' && i.unacked).length === 0 },
+        { label: 'Trust anchors configured (if required)', met: posture.trustLevel !== 'critical' },
+        { label: 'Verification failure rate < 5%', met: posture.metrics.verifyFailRate < 0.05 },
+        { label: 'No unacked critical incidents', met: incidentsForAutopilot.filter(i => i.severity === 'critical' && i.unacked).length === 0 },
         { label: 'Recent human acknowledgment', met: now - autopilotState.lastHumanAck < 4 * 60 * 60 * 1000 },
     ];
 

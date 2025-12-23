@@ -85,6 +85,12 @@ pub struct ExecutionTrace {
     /// Hash of input registers.
     pub input_hash: Hash256,
 
+    /// External context hash bound into the proof statement (Fiat-Shamir).
+    ///
+    /// This is used to bind non-VM context (e.g., `nonce_or_tx_hash`) to the proof so it cannot
+    /// be replayed across distinct decisions with identical bytecode/registers.
+    pub context_hash: Hash256,
+
     /// Total fuel consumed.
     pub fuel_consumed: u32,
 }
@@ -97,7 +103,20 @@ impl ExecutionTrace {
             final_result: 0,
             bytecode_hash,
             input_hash,
+            context_hash: [0u8; 32],
             fuel_consumed: 0,
+        }
+    }
+
+    /// Create a new empty trace with an explicit context hash.
+    pub fn new_with_context(
+        bytecode_hash: Hash256,
+        input_hash: Hash256,
+        context_hash: Hash256,
+    ) -> Self {
+        Self {
+            context_hash,
+            ..Self::new(bytecode_hash, input_hash)
         }
     }
 

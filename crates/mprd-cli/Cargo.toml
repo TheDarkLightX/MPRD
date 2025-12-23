@@ -13,6 +13,10 @@ mprd-core = { path = "../mprd-core" }
 mprd-zk = { path = "../mprd-zk" }
 mprd-adapters = { path = "../mprd-adapters" }
 mprd_risc0_methods = { package = "mprd-risc0-methods", path = "../../methods" }
+mprd-risc0-shared = { path = "../mprd-risc0-shared" }
+mprd-mpb = { path = "../mprd-mpb" }
+mprd-models-market = { path = "../mprd-models-market" }
+mprd-asde = { path = "../mprd-asde" }
 
 clap = { version = "4.4", features = ["derive", "env"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -21,9 +25,16 @@ tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1.0"
+thiserror = "1.0"
 hex = "0.4"
 dirs = "5.0"
 base64 = "0.21"
-reqwest = { version = "0.12", features = ["blocking", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 sha2 = "0.10"
-axum = { version = "0.7", features = ["macros", "json"] }
+axum = { version = "0.7", features = ["macros", "json", "ws"] }
+futures-util = "0.3"
+
+[dev-dependencies]
+proptest = "1.4"
+tempfile = "3"
+tower = "0.5"

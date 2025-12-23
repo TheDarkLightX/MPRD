@@ -1,0 +1,41 @@
+--- crates/mprd-cli/src/operator/auth.rs
++++ replace percent_decode -> Option<String> with Some("xyzzy".into())
+@@ -6,37 +6,17 @@
+ 
+ #[derive(Clone, Debug)]
+ pub struct ApiKeyConfig {
+     /// If `None`, API key auth is disabled (local dev).
+     pub api_key: Option<String>,
+ }
+ 
+ fn percent_decode(input: &str) -> Option<String> {
+-    let mut out: Vec<u8> = Vec::with_capacity(input.len());
+-    let bytes = input.as_bytes();
+-    let mut i = 0usize;
+-    while i < bytes.len() {
+-        match bytes[i] {
+-            b'%' => {
+-                if i + 2 >= bytes.len() {
+-                    return None;
+-                }
+-                let hi = (bytes[i + 1] as char).to_digit(16)? as u8;
+-                let lo = (bytes[i + 2] as char).to_digit(16)? as u8;
+-                out.push((hi << 4) | lo);
+-                i += 3;
+-            }
+-            b => {
+-                out.push(b);
+-                i += 1;
+-            }
+-        }
+-    }
+-    String::from_utf8(out).ok()
++    Some("xyzzy".into()) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn api_key_from_query(req: &Request<axum::body::Body>) -> Option<String> {
+     let query = req.uri().query()?;
+     for part in query.split('&') {
+         let (k, v) = match part.split_once('=') {
+             Some(pair) => pair,
+             None => continue,

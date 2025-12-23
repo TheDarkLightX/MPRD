@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 655e5c63b12bcc0413d48369d75c83bd60c4142895bf04c1a7ddd1a0b14465a2 # shrinks to kvs = {"9s_": [], "pb9-": []}
+cc 87074bd6ee08a3d6aee00536b92bc3ce7985d29c13f617772f0775a1450ce466 # shrinks to kvs = {"e2f3j_6c//_/h_r29l2__q": [], "pfhkh/": []}
+cc 1666c26736ec820d554205c235367f4808538fe92d315c660e29481169c258de # shrinks to kvs = {"4_rz___1hr_o/t": [], "_5_x": [], "llfj": []}

@@ -29,7 +29,17 @@ export function useDashboardData() {
   });
 
   const error = statusQuery.error || metricsQuery.error || null;
-  const errorStatus = error instanceof ApiError ? error.status : null;
+  const statusErr = statusQuery.error instanceof ApiError ? statusQuery.error : null;
+  const metricsErr = metricsQuery.error instanceof ApiError ? metricsQuery.error : null;
+  const anyNetworkError = statusErr?.status === 0 || metricsErr?.status === 0;
+  const anyAuthError = statusErr?.status === 401 || metricsErr?.status === 401;
+  const errorStatus = anyNetworkError
+    ? 0
+    : anyAuthError
+      ? 401
+      : error instanceof ApiError
+        ? error.status
+        : null;
 
   return {
     status: statusQuery.data ?? null,
@@ -38,7 +48,7 @@ export function useDashboardData() {
     loading: statusQuery.isLoading || metricsQuery.isLoading,
     error: error instanceof Error ? error : null,
     errorStatus,
-    isOffline: errorStatus === 0,
+    isOffline: anyNetworkError,
     refetch: async () => {
       await Promise.all([statusQuery.refetch(), metricsQuery.refetch()]);
     },

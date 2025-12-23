@@ -65,6 +65,7 @@ pub fn run(check_tau: bool, check_ipfs: bool, config_path: Option<PathBuf>) -> R
             println!();
         } else {
             let client = reqwest::blocking::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
                 .timeout(std::time::Duration::from_secs(5))
                 .build()?;
 

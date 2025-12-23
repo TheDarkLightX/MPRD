@@ -15,6 +15,12 @@ const sizeClasses = {
     lg: 'w-8 h-8',
 };
 
+function stableSkeletonWidthPct(index: number, columns: number): number {
+    // Deterministic (render-pure) “variation” to avoid jitter from Math.random().
+    const spread = 41; // 0..40 -> 60..100
+    return 60 + ((index * 17 + columns * 7) % spread);
+}
+
 export function LoadingSpinner({ size = 'md', className = '' }: LoadingSpinnerProps) {
     return (
         <svg
@@ -88,7 +94,10 @@ export function TableRowSkeleton({ columns = 5 }: { columns?: number }) {
         <tr>
             {Array.from({ length: columns }).map((_, i) => (
                 <td key={i} className="py-3 px-4">
-                    <div className="skeleton-shimmer h-4 bg-dark-800 rounded" style={{ width: `${60 + Math.random() * 40}%` }} />
+                    <div
+                        className="skeleton-shimmer h-4 bg-dark-800 rounded"
+                        style={{ width: `${stableSkeletonWidthPct(i, columns)}%` }}
+                    />
                 </td>
             ))}
         </tr>

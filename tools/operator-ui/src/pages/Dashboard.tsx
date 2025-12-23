@@ -9,6 +9,7 @@
  */
 
 import { useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { SystemStatusGrid } from '../components/health';
 import { LivePipeline } from '../components/pipeline';
 import { AlertFeed } from '../components/alerts';
@@ -31,6 +32,8 @@ import { useAutopilot } from '../context/AutopilotContext';
 import { AutopilotActivitySidebar } from '../components/autopilot';
 import { SecurityPosturePanel } from '../components/security';
 import { renderGlanceable, createLoadingGlanceableView } from '../algorithms/glanceableRenderer';
+import { computeSecurityPosture } from '../algorithms/securityPosture';
+import { apiClient } from '../api/client';
 import type { IncidentExtended, SecurityPosture } from '../api/types';
 
 // =============================================================================
@@ -86,6 +89,20 @@ export function DashboardPage() {
     const pipelineState = USE_MOCK_DATA ? mockPipelineState : livePipelineState;
     const navigate = useNavigate();
 
+    const settingsQuery = useQuery({
+        queryKey: ['settings'],
+        queryFn: () => apiClient.getSettings(),
+        enabled: !USE_MOCK_DATA,
+        refetchInterval: 10_000,
+    });
+
+    const recentDecisionsQuery = useQuery({
+        queryKey: ['decisions_recent'],
+        queryFn: () => apiClient.listDecisions(1, 200, { startDate: Date.now() - 60 * 60 * 1000 }),
+        enabled: !USE_MOCK_DATA,
+        refetchInterval: 10_000,
+    });
+
     // Generate mock sparkline data (in real app, would come from metrics history)
     const sparklines = useMemo(() => ({
         decisions: sparklineFromValue(metrics?.decisions.total ? metrics.decisions.total / 100 : 50, 12, 20),
@@ -121,23 +138,44 @@ export function DashboardPage() {
         }));
     }, [incidentSummaries]);
 
-    // Compute glanceable view using Algorithm 12
+    const posture = useMemo((): SecurityPosture => {
+        if (USE_MOCK_DATA) {
+            return {
+                trustLevel: status?.overall === 'critical' ? 'critical' : status?.overall === 'degraded' ? 'degraded' : 'healthy',
+                availabilityLevel: status?.overall === 'critical' ? 'critical' : status?.overall === 'degraded' ? 'degraded' : 'healthy',
+                reasons: [],
+                metrics: {
+                    failRate: metrics ? (1 - metrics.successRate.value / 100) : 0,
+                    verifyFailRate: 0,
+                    execFailRate: 0,
+                    decisionRate: metrics ? metrics.decisions.total / (24 * 60) : 0,
+                },
+            };
+        }
+
+        if (!status || !settingsQuery.data) {
+            return {
+                trustLevel: 'critical',
+                availabilityLevel: 'critical',
+                reasons: ['Backend data unavailable - FAIL-CLOSED'],
+                metrics: { failRate: 1.0, verifyFailRate: 1.0, execFailRate: 1.0, decisionRate: 0 },
+            };
+        }
+
+        const decisions = recentDecisionsQuery.data?.data ?? [];
+        return computeSecurityPosture({
+            deploymentMode: settingsQuery.data.deploymentMode,
+            trustAnchors: settingsQuery.data.trustAnchors,
+            trustAnchorsConfigured: settingsQuery.data.trustAnchorsConfigured,
+            status,
+            decisions,
+        });
+    }, [metrics, recentDecisionsQuery.data?.data, settingsQuery.data, status]);
+
     const glanceableView = useMemo(() => {
         if (loading || !status) {
             return createLoadingGlanceableView();
         }
-
-        const posture: SecurityPosture = {
-            trustLevel: status.overall === 'critical' ? 'critical' : status.overall === 'degraded' ? 'degraded' : 'healthy',
-            availabilityLevel: status.overall === 'critical' ? 'critical' : status.overall === 'degraded' ? 'degraded' : 'healthy',
-            reasons: [],
-            metrics: {
-                failRate: metrics ? (1 - metrics.successRate.value / 100) : 0,
-                verifyFailRate: 0,
-                execFailRate: 0,
-                decisionRate: metrics ? metrics.decisions.total / (24 * 60) : 0,
-            },
-        };
 
         return renderGlanceable({
             posture,
@@ -147,19 +185,7 @@ export function DashboardPage() {
             previousIncidentCount: 0,
             previousCriticalCount: 3,
         });
-    }, [loading, status, metrics, incidents, autopilotState]);
-
-    const posture = useMemo((): SecurityPosture => ({
-        trustLevel: status?.overall === 'critical' ? 'critical' : status?.overall === 'degraded' ? 'degraded' : 'healthy',
-        availabilityLevel: status?.overall === 'critical' ? 'critical' : status?.overall === 'degraded' ? 'degraded' : 'healthy',
-        reasons: [],
-        metrics: {
-            failRate: metrics ? (1 - metrics.successRate.value / 100) : 0,
-            verifyFailRate: 0,
-            execFailRate: 0,
-            decisionRate: metrics ? metrics.decisions.total / (24 * 60) : 0,
-        },
-    }), [status, metrics]);
+    }, [autopilotState, incidents, loading, posture, status]);
 
     if (loading) {
         return (
@@ -170,25 +196,6 @@ export function DashboardPage() {
     }
 
     if (error) {
-        if (errorStatus === 401) {
-            return (
-                <div className="max-w-2xl mx-auto mt-12">
-                    <NoticeCard
-                        variant="error"
-                        title="Authentication required"
-                        message="The backend requires an API key. Set it in Settings (or unset `MPRD_OPERATOR_API_KEY` on the server for localhost-only development)."
-                        actions={
-                            <button
-                                className="btn-secondary mt-4"
-                                onClick={() => navigate('/settings')}
-                            >
-                                Open Settings
-                            </button>
-                        }
-                    />
-                </div>
-            );
-        }
         if (isOffline) {
             return (
                 <div className="max-w-2xl mx-auto mt-12">
@@ -205,6 +212,25 @@ export function DashboardPage() {
                                     Retry
                                 </button>
                             </div>
+                        }
+                    />
+                </div>
+            );
+        }
+        if (errorStatus === 401) {
+            return (
+                <div className="max-w-2xl mx-auto mt-12">
+                    <NoticeCard
+                        variant="error"
+                        title="Authentication required"
+                        message="The backend requires an API key. Set it in Settings (or unset `MPRD_OPERATOR_API_KEY` on the server for localhost-only development)."
+                        actions={
+                            <button
+                                className="btn-secondary mt-4"
+                                onClick={() => navigate('/settings')}
+                            >
+                                Open Settings
+                            </button>
                         }
                     />
                 </div>
