@@ -574,11 +574,14 @@ impl RedisDistributedNonceStore {
     }
 
     fn connect(&self) -> Result<RedisConnection> {
-        let addr = format!("{}:{}", self.endpoint.host, self.endpoint.port);
-        let mut addrs = addr.to_socket_addrs().map_err(|e| {
-            MprdError::ExecutionError(format!("Redis DNS resolution failed: {}", e))
-        })?;
-        let sock = addrs.next().ok_or_else(|| {
+        // Use tuple-based resolution to handle IPv6 correctly (avoids `::1:6379` format issue)
+        let addrs: Vec<_> = (self.endpoint.host.as_str(), self.endpoint.port)
+            .to_socket_addrs()
+            .map_err(|e| {
+                MprdError::ExecutionError(format!("Redis DNS resolution failed: {}", e))
+            })?
+            .collect();
+        let sock = addrs.first().ok_or_else(|| {
             MprdError::ExecutionError("Redis DNS resolution returned no addresses".into())
         })?;
 
