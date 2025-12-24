@@ -275,6 +275,20 @@ impl Risc0Attestor {
             return Err(MprdError::ZkError("state_attestation_hash mismatch".into()));
         }
 
+        // Bind journal commitments to the token/decision/proof.
+        if Hash32(journal.policy_hash) != token.policy_hash {
+            return Err(MprdError::ZkError("Policy hash mismatch".into()));
+        }
+        if Hash32(journal.state_hash) != token.state_hash {
+            return Err(MprdError::ZkError("State hash mismatch".into()));
+        }
+        if Hash32(journal.chosen_action_hash) != token.chosen_action_hash {
+            return Err(MprdError::ZkError("Chosen action hash mismatch".into()));
+        }
+        if Hash32(journal.nonce_or_tx_hash) != token.nonce_or_tx_hash {
+            return Err(MprdError::ZkError("nonce_or_tx_hash mismatch".into()));
+        }
+
         // Verify selector contract was satisfied
         if !journal.allowed {
             return Err(MprdError::ZkError(

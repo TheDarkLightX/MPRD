@@ -31,7 +31,7 @@ use mprd_core::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -159,6 +159,9 @@ struct ExecuteResponse {
     message: Option<String>,
 }
 
+/// Maximum response body size from executor endpoints (DoS prevention).
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024; // 1 MiB
+
 /// Maximum total retry delay in milliseconds (5 seconds).
 const MAX_TOTAL_RETRY_DELAY_MS: u64 = 5000;
 
@@ -206,23 +209,44 @@ impl ExecutorAdapter for HttpExecutor {
             request = request.header("Idempotency-Key", hex::encode(token.nonce_or_tx_hash.0));
 
             match request.send() {
-                Ok(response) => {
+                Ok(mut response) => {
                     let status = response.status();
                     if status.is_success() {
-                        match response.json::<ExecuteResponse>() {
-                            Ok(resp) => {
-                                return Ok(ExecutionResult {
-                                    success: resp.success,
-                                    message: resp.message,
-                                });
-                            }
-                            Err(e) => {
-                                return Err(MprdError::ExecutionError(format!(
-                                    "Failed to parse response: {}",
-                                    e
+                        // Check Content-Length before reading body (DoS prevention fast path).
+                        if let Some(content_length) = response.content_length() {
+                            if content_length > MAX_RESPONSE_BYTES as u64 {
+                                return Err(MprdError::BoundedValueExceeded(format!(
+                                    "executor response too large: {} bytes (max {})",
+                                    content_length, MAX_RESPONSE_BYTES
                                 )));
                             }
                         }
+
+                        // Bounded streaming read: stop reading if we exceed the limit.
+                        let mut limited_reader = response.take((MAX_RESPONSE_BYTES + 1) as u64);
+                        let mut buf = Vec::with_capacity(MAX_RESPONSE_BYTES);
+                        limited_reader.read_to_end(&mut buf).map_err(|e| {
+                            MprdError::ExecutionError(format!(
+                                "Failed to read executor response: {}",
+                                e
+                            ))
+                        })?;
+
+                        if buf.len() > MAX_RESPONSE_BYTES {
+                            return Err(MprdError::BoundedValueExceeded(format!(
+                                "executor response too large: >{} bytes (max {})",
+                                MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES
+                            )));
+                        }
+
+                        let resp: ExecuteResponse = serde_json::from_slice(&buf).map_err(|e| {
+                            MprdError::ExecutionError(format!("Failed to parse response: {}", e))
+                        })?;
+
+                        return Ok(ExecutionResult {
+                            success: resp.success,
+                            message: resp.message,
+                        });
                     } else if status.is_client_error() {
                         // SECURITY: 4xx errors are non-retryable client errors
                         // Retrying would cause duplicate submissions on idempotent endpoints

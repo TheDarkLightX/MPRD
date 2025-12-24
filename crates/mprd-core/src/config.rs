@@ -99,8 +99,10 @@ pub struct LowTrustConfig {
     /// - `redis://host:port`
     /// - `redis://:password@host:port`
     /// - `redis://user:password@host:port`
+    /// - `rediss://host:port` (TLS)
     ///
-    /// TLS (`rediss://`) is not supported in this build.
+    /// Security: non-loopback `redis://` is plaintext and requires
+    /// `MPRD_ALLOW_INSECURE_REDIS=1`.
     #[serde(default)]
     pub redis_url: Option<String>,
 

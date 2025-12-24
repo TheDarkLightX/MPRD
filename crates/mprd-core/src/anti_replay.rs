@@ -17,12 +17,13 @@
 //! 4. Replicate nonce state across nodes in distributed deployments
 
 use crate::{DecisionToken, MprdError, NonceHash, PolicyHash, Result};
+use rustls::{ClientConfig, RootCertStore};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
@@ -333,20 +334,65 @@ struct RedisEndpoint {
     username: Option<String>,
     password: Option<String>,
     db: u32,
+    use_tls: bool,
+}
+
+type RedisTlsStream = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
+
+enum RedisConnection {
+    Plain(TcpStream),
+    Tls(RedisTlsStream),
+}
+
+impl std::fmt::Debug for RedisConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RedisConnection::Plain(_) => f.write_str("RedisConnection::Plain"),
+            RedisConnection::Tls(_) => f.write_str("RedisConnection::Tls"),
+        }
+    }
+}
+
+impl Read for RedisConnection {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            RedisConnection::Plain(stream) => stream.read(buf),
+            RedisConnection::Tls(stream) => stream.read(buf),
+        }
+    }
+}
+
+impl Write for RedisConnection {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            RedisConnection::Plain(stream) => stream.write(buf),
+            RedisConnection::Tls(stream) => stream.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            RedisConnection::Plain(stream) => stream.flush(),
+            RedisConnection::Tls(stream) => stream.flush(),
+        }
+    }
 }
 
 fn parse_redis_url(url: &str) -> Result<RedisEndpoint> {
     // Supported: redis://[user[:password]@]host[:port][/db]
-    // Explicitly not supported: rediss:// (TLS) or unix sockets.
-    const PREFIX: &str = "redis://";
-    if url.starts_with("rediss://") {
+    //            rediss://[user[:password]@]host[:port][/db] (TLS)
+    // Security: redis:// is plaintext; use rediss:// for non-loopback deployments.
+    const REDIS_PREFIX: &str = "redis://";
+    const REDISS_PREFIX: &str = "rediss://";
+    let (rest, use_tls) = if let Some(rest) = url.strip_prefix(REDISS_PREFIX) {
+        (rest, true)
+    } else if let Some(rest) = url.strip_prefix(REDIS_PREFIX) {
+        (rest, false)
+    } else {
         return Err(MprdError::ConfigError(
-            "Redis TLS (rediss://) is not supported in this build".into(),
+            "redis_url must start with redis:// or rediss://".into(),
         ));
-    }
-    let rest = url
-        .strip_prefix(PREFIX)
-        .ok_or_else(|| MprdError::ConfigError("redis_url must start with redis://".into()))?;
+    };
 
     let (authority, path) = match rest.split_once('/') {
         Some((a, p)) => (a, Some(p)),
@@ -423,15 +469,78 @@ fn parse_redis_url(url: &str) -> Result<RedisEndpoint> {
         username,
         password,
         db,
+        use_tls,
     })
 }
 
+const ALLOW_INSECURE_REDIS_ENV: &str = "MPRD_ALLOW_INSECURE_REDIS";
+
+fn allow_insecure_redis_from_env() -> bool {
+    let Ok(value) = std::env::var(ALLOW_INSECURE_REDIS_ENV) else {
+        return false;
+    };
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false)
+}
+
+fn enforce_redis_tls_policy(endpoint: &RedisEndpoint, allow_insecure_redis: bool) -> Result<()> {
+    if endpoint.use_tls || is_loopback_host(&endpoint.host) {
+        return Ok(());
+    }
+    if allow_insecure_redis {
+        warn!(
+            "Redis is configured without TLS for non-loopback host {}; traffic (including AUTH) \
+             is sent in plaintext. Use rediss:// for production.",
+            endpoint.host
+        );
+        return Ok(());
+    }
+    Err(MprdError::ConfigError(format!(
+        "redis_url points to a non-loopback host without TLS; use rediss:// or set {}=1 to allow insecure redis",
+        ALLOW_INSECURE_REDIS_ENV
+    )))
+}
+
+fn redis_tls_server_name(host: &str) -> Result<rustls::pki_types::ServerName<'static>> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok(rustls::pki_types::ServerName::IpAddress(ip.into()));
+    }
+    rustls::pki_types::ServerName::try_from(host.to_owned())
+        .map_err(|_| MprdError::ConfigError("redis_url has invalid TLS server name".into()))
+}
+
+fn redis_tls_config() -> Arc<ClientConfig> {
+    static TLS_CONFIG: OnceLock<Arc<ClientConfig>> = OnceLock::new();
+    Arc::clone(TLS_CONFIG.get_or_init(|| {
+        let mut roots = RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        Arc::new(ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth())
+    }))
+}
+
+/// Distributed nonce store backed by Redis.
+///
+/// # Security
+/// - Prefer `rediss://` to enforce TLS for remote Redis endpoints.
+/// - Non-loopback `redis://` is plaintext; set `MPRD_ALLOW_INSECURE_REDIS=1` only
+///   for trusted local networks and be aware credentials/nonce traffic are exposed.
 #[derive(Debug)]
 pub struct RedisDistributedNonceStore {
     endpoint: RedisEndpoint,
     key_prefix: String,
     io_timeout: Duration,
-    conn: Mutex<Option<TcpStream>>,
+    conn: Mutex<Option<RedisConnection>>,
 }
 
 impl RedisDistributedNonceStore {
@@ -448,6 +557,8 @@ impl RedisDistributedNonceStore {
             ));
         }
         let endpoint = parse_redis_url(redis_url)?;
+        let allow_insecure_redis = allow_insecure_redis_from_env();
+        enforce_redis_tls_policy(&endpoint, allow_insecure_redis)?;
         Ok(Self {
             endpoint,
             key_prefix: key_prefix.to_string(),
@@ -462,7 +573,7 @@ impl RedisDistributedNonceStore {
         format!("{}:{}:{}", self.key_prefix, policy, nonce)
     }
 
-    fn connect(&self) -> Result<TcpStream> {
+    fn connect(&self) -> Result<RedisConnection> {
         let addr = format!("{}:{}", self.endpoint.host, self.endpoint.port);
         let mut addrs = addr.to_socket_addrs().map_err(|e| {
             MprdError::ExecutionError(format!("Redis DNS resolution failed: {}", e))
@@ -484,12 +595,22 @@ impl RedisDistributedNonceStore {
                 MprdError::ExecutionError(format!("Redis set_write_timeout failed: {}", e))
             })?;
 
-        let mut stream = stream;
-        self.initialize_connection(&mut stream)?;
-        Ok(stream)
+        let mut conn = if self.endpoint.use_tls {
+            let server_name = redis_tls_server_name(&self.endpoint.host)?;
+            let config = redis_tls_config();
+            let tls = rustls::ClientConnection::new(config, server_name).map_err(|e| {
+                MprdError::ExecutionError(format!("Redis TLS configuration failed: {}", e))
+            })?;
+            RedisConnection::Tls(rustls::StreamOwned::new(tls, stream))
+        } else {
+            RedisConnection::Plain(stream)
+        };
+
+        self.initialize_connection(&mut conn)?;
+        Ok(conn)
     }
 
-    fn initialize_connection(&self, stream: &mut TcpStream) -> Result<()> {
+    fn initialize_connection(&self, stream: &mut RedisConnection) -> Result<()> {
         if let Some(ref pass) = self.endpoint.password {
             let mut args: Vec<&[u8]> = Vec::new();
             args.push(b"AUTH");
@@ -520,7 +641,7 @@ impl RedisDistributedNonceStore {
         Ok(())
     }
 
-    fn with_connection<T>(&self, f: impl FnOnce(&mut TcpStream) -> Result<T>) -> Result<T> {
+    fn with_connection<T>(&self, f: impl FnOnce(&mut RedisConnection) -> Result<T>) -> Result<T> {
         let stream = self
             .conn
             .lock()
@@ -648,7 +769,7 @@ fn redis_encode_command(args: &[&[u8]]) -> Vec<u8> {
     out
 }
 
-fn redis_roundtrip(stream: &mut TcpStream, args: &[&[u8]]) -> Result<RedisValue> {
+fn redis_roundtrip(stream: &mut (impl Read + Write), args: &[&[u8]]) -> Result<RedisValue> {
     let cmd = redis_encode_command(args);
     stream
         .write_all(&cmd)
@@ -1457,6 +1578,7 @@ mod tests {
         assert_eq!(e.db, 0);
         assert!(e.username.is_none());
         assert!(e.password.is_none());
+        assert!(!e.use_tls);
 
         let e = parse_redis_url("redis://:pw@127.0.0.1:6380/2").expect("url");
         assert_eq!(e.host, "127.0.0.1");
@@ -1464,6 +1586,7 @@ mod tests {
         assert_eq!(e.db, 2);
         assert_eq!(e.username, None);
         assert_eq!(e.password.as_deref(), Some("pw"));
+        assert!(!e.use_tls);
 
         let e = parse_redis_url("redis://user:pw@[::1]:6379/0").expect("url");
         assert_eq!(e.host, "::1");
@@ -1471,6 +1594,13 @@ mod tests {
         assert_eq!(e.db, 0);
         assert_eq!(e.username.as_deref(), Some("user"));
         assert_eq!(e.password.as_deref(), Some("pw"));
+        assert!(!e.use_tls);
+
+        let e = parse_redis_url("rediss://redis.example.com:6380/1").expect("url");
+        assert_eq!(e.host, "redis.example.com");
+        assert_eq!(e.port, 6380);
+        assert_eq!(e.db, 1);
+        assert!(e.use_tls);
     }
 
     #[test]

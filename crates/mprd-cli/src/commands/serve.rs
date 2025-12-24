@@ -252,6 +252,8 @@ async fn run_handler(
 #[serde(rename_all = "camelCase")]
 struct DecisionsQuery {
     #[serde(default)]
+    filter: Option<String>,
+    #[serde(default)]
     page: Option<u32>,
     #[serde(default)]
     page_size: Option<u32>,
@@ -271,6 +273,135 @@ struct DecisionsQuery {
     execution_status: Option<String>,
     #[serde(default)]
     q: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DecisionFilter {
+    All,
+    Allowed,
+    Denied,
+    Executed,
+    Failed,
+    Pending,
+}
+
+impl TryFrom<&str> for DecisionFilter {
+    type Error = &'static str;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let normalized = value.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "all" => Ok(Self::All),
+            "allowed" => Ok(Self::Allowed),
+            "denied" => Ok(Self::Denied),
+            "executed" => Ok(Self::Executed),
+            "failed" => Ok(Self::Failed),
+            "pending" => Ok(Self::Pending),
+            _ => Err("unsupported decision filter"),
+        }
+    }
+}
+
+impl DecisionFilter {
+    fn matches(self, decision: &op_api::DecisionSummary) -> bool {
+        match self {
+            DecisionFilter::All => true,
+            DecisionFilter::Allowed => matches!(decision.verdict, op_api::Verdict::Allowed),
+            DecisionFilter::Denied => matches!(decision.verdict, op_api::Verdict::Denied),
+            DecisionFilter::Executed => {
+                !matches!(decision.execution_status, op_api::ExecutionStatus::Skipped)
+            }
+            DecisionFilter::Failed => {
+                matches!(decision.proof_status, op_api::ProofStatus::Failed)
+                    || matches!(decision.execution_status, op_api::ExecutionStatus::Failed)
+            }
+            DecisionFilter::Pending => matches!(decision.proof_status, op_api::ProofStatus::Pending),
+        }
+    }
+}
+
+struct Pagination {
+    page: u32,
+    page_size: u32,
+}
+
+impl Pagination {
+    fn from_query(q: &DecisionsQuery) -> Self {
+        let page = q.page.unwrap_or(1).max(1);
+        let page_size = q.page_size.unwrap_or(50).clamp(1, 200);
+        Self { page, page_size }
+    }
+
+    fn paginate<T: Clone>(&self, items: &[T]) -> op_api::PaginatedResponse<T> {
+        let total = items.len() as u64;
+        let (start_idx, end_idx) = page_bounds(items.len(), self.page, self.page_size);
+        let data = if start_idx >= items.len() {
+            Vec::new()
+        } else {
+            items[start_idx..end_idx].to_vec()
+        };
+
+        op_api::PaginatedResponse {
+            data,
+            page: self.page,
+            page_size: self.page_size,
+            total,
+            has_more: end_idx < items.len(),
+        }
+    }
+}
+
+impl DecisionsQuery {
+    fn decision_filter(&self) -> Result<DecisionFilter, StatusCode> {
+        self.filter
+            .as_deref()
+            .map(DecisionFilter::try_from)
+            .transpose()
+            .map_err(|_| StatusCode::BAD_REQUEST)
+            .map(|filter| filter.unwrap_or(DecisionFilter::All))
+    }
+
+    fn apply_filters(
+        &self,
+        filter: DecisionFilter,
+        items: &mut Vec<op_api::DecisionSummary>,
+    ) {
+        if !matches!(filter, DecisionFilter::All) {
+            items.retain(|d| filter.matches(d));
+        }
+
+        if let Some(start) = self.start_date {
+            items.retain(|d| d.timestamp >= start);
+        }
+        if let Some(end) = self.end_date {
+            items.retain(|d| d.timestamp <= end);
+        }
+        if let Some(ref ph) = self.policy_hash {
+            items.retain(|d| d.policy_hash == *ph);
+        }
+        if let Some(ref at) = self.action_type {
+            items.retain(|d| d.action_type == *at);
+        }
+        if let Some(ref v) = self.verdict {
+            items.retain(|d| format!("{:?}", d.verdict).eq_ignore_ascii_case(v));
+        }
+        if let Some(ref ps) = self.proof_status {
+            items.retain(|d| format!("{:?}", d.proof_status).eq_ignore_ascii_case(ps));
+        }
+        if let Some(ref es) = self.execution_status {
+            items.retain(|d| format!("{:?}", d.execution_status).eq_ignore_ascii_case(es));
+        }
+        if let Some(ref query) = self.q {
+            let needle = query.trim().to_lowercase();
+            if !needle.is_empty() {
+                items.retain(|d| {
+                    d.id.to_lowercase().contains(&needle)
+                        || d.policy_hash.to_lowercase().contains(&needle)
+                        || d.action_type.to_lowercase().contains(&needle)
+                });
+            }
+        }
+    }
 }
 
 async fn api_settings(State(state): State<AppState>) -> Json<op_api::OperatorSettings> {
@@ -1265,61 +1396,16 @@ async fn api_decisions(
     State(state): State<AppState>,
     Query(q): Query<DecisionsQuery>,
 ) -> Result<Json<op_api::PaginatedResponse<op_api::DecisionSummary>>, StatusCode> {
-    let page = q.page.unwrap_or(1).max(1);
-    let page_size = q.page_size.unwrap_or(50).clamp(1, 200);
-
+    let pagination = Pagination::from_query(&q);
+    let filter = q.decision_filter()?;
     let mut items = state
         .store
         .list_summaries(Duration::from_millis(250))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    if let Some(start) = q.start_date {
-        items.retain(|d| d.timestamp >= start);
-    }
-    if let Some(end) = q.end_date {
-        items.retain(|d| d.timestamp <= end);
-    }
-    if let Some(ref ph) = q.policy_hash {
-        items.retain(|d| d.policy_hash == *ph);
-    }
-    if let Some(ref at) = q.action_type {
-        items.retain(|d| d.action_type == *at);
-    }
-    if let Some(ref v) = q.verdict {
-        items.retain(|d| format!("{:?}", d.verdict).eq_ignore_ascii_case(v));
-    }
-    if let Some(ref ps) = q.proof_status {
-        items.retain(|d| format!("{:?}", d.proof_status).eq_ignore_ascii_case(ps));
-    }
-    if let Some(ref es) = q.execution_status {
-        items.retain(|d| format!("{:?}", d.execution_status).eq_ignore_ascii_case(es));
-    }
-    if let Some(ref query) = q.q {
-        let needle = query.trim().to_lowercase();
-        if !needle.is_empty() {
-            items.retain(|d| {
-                d.id.to_lowercase().contains(&needle)
-                    || d.policy_hash.to_lowercase().contains(&needle)
-                    || d.action_type.to_lowercase().contains(&needle)
-            });
-        }
-    }
+    q.apply_filters(filter, &mut items);
 
-    let total = items.len() as u64;
-    let (start_idx, end_idx) = page_bounds(items.len(), page, page_size);
-    let data = if start_idx >= items.len() {
-        Vec::new()
-    } else {
-        items[start_idx..end_idx].to_vec()
-    };
-
-    Ok(Json(op_api::PaginatedResponse {
-        data,
-        page,
-        page_size,
-        total,
-        has_more: end_idx < items.len(),
-    }))
+    Ok(Json(pagination.paginate(&items)))
 }
 
 async fn api_decision_detail(

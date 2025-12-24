@@ -622,6 +622,98 @@ impl ExecutorAdapter for AntiReplayBoxedExecutor {
     }
 }
 
+const ERR_LOW_TRUST_SHARED_FS_DIR: &str =
+    "LowTrust requires anti_replay.nonce_store_dir for SharedFs nonce coordination";
+const ERR_LOW_TRUST_REDIS_URL: &str = "LowTrust Redis requires low_trust.redis_url";
+const ERR_LOW_TRUST_BACKEND_UNSUPPORTED: &str =
+    "LowTrust distributed nonce backend not implemented in this build; use redis (recommended) or shared_fs for pre-testnet";
+
+fn config_error(message: &'static str) -> crate::MprdError {
+    crate::MprdError::ConfigError(message.into())
+}
+
+fn require_config_str<'a>(value: Option<&'a str>, message: &'static str) -> Result<&'a str> {
+    value.ok_or_else(|| config_error(message))
+}
+
+fn build_low_trust_tracker(
+    config: &crate::MprdConfig,
+    tracker_config: CoreAntiReplayConfig,
+) -> Result<Arc<dyn NonceValidator>> {
+    match config.low_trust.nonce_store_backend {
+        crate::config::DistributedNonceBackend::SharedFs => {
+            build_low_trust_shared_fs_tracker(config, tracker_config)
+        }
+        crate::config::DistributedNonceBackend::Redis => {
+            build_low_trust_redis_tracker(config, tracker_config)
+        }
+        crate::config::DistributedNonceBackend::PostgreSql
+        | crate::config::DistributedNonceBackend::Etcd
+        | crate::config::DistributedNonceBackend::OnChain => {
+            Err(config_error(ERR_LOW_TRUST_BACKEND_UNSUPPORTED))
+        }
+    }
+}
+
+fn build_high_trust_tracker(
+    config: &crate::MprdConfig,
+    tracker_config: CoreAntiReplayConfig,
+) -> Result<Arc<dyn NonceValidator>> {
+    match config.anti_replay.nonce_store_dir.as_deref() {
+        Some(dir) => build_file_tracker(dir, tracker_config),
+        None => build_memory_tracker(tracker_config),
+    }
+}
+
+fn build_low_trust_shared_fs_tracker(
+    config: &crate::MprdConfig,
+    tracker_config: CoreAntiReplayConfig,
+) -> Result<Arc<dyn NonceValidator>> {
+    let dir = require_config_str(
+        config.anti_replay.nonce_store_dir.as_deref(),
+        ERR_LOW_TRUST_SHARED_FS_DIR,
+    )?;
+    let store = SharedFsDistributedNonceStore::new(dir)?;
+    Ok(Arc::new(DistributedNonceTracker::new(
+        store,
+        tracker_config,
+    )))
+}
+
+fn build_low_trust_redis_tracker(
+    config: &crate::MprdConfig,
+    tracker_config: CoreAntiReplayConfig,
+) -> Result<Arc<dyn NonceValidator>> {
+    let redis_url = require_config_str(
+        config.low_trust.redis_url.as_deref(),
+        ERR_LOW_TRUST_REDIS_URL,
+    )?;
+    let store = RedisDistributedNonceStore::new(
+        redis_url,
+        &config.low_trust.redis_key_prefix,
+        std::time::Duration::from_millis(config.low_trust.redis_timeout_ms),
+    )?;
+    Ok(Arc::new(DistributedNonceTracker::new(
+        store,
+        tracker_config,
+    )))
+}
+
+fn build_file_tracker(
+    dir: &str,
+    tracker_config: CoreAntiReplayConfig,
+) -> Result<Arc<dyn NonceValidator>> {
+    // HighTrust: fail closed if persistence is configured but cannot be initialized.
+    let store = FileNonceStore::new(dir)?;
+    Ok(Arc::new(PersistentNonceTracker::new(store, tracker_config)))
+}
+
+fn build_memory_tracker(tracker_config: CoreAntiReplayConfig) -> Result<Arc<dyn NonceValidator>> {
+    Ok(Arc::new(InMemoryNonceTracker::with_config(
+        tracker_config,
+    )))
+}
+
 fn nonce_tracker_from_config(config: &crate::MprdConfig) -> Result<Arc<dyn NonceValidator>> {
     // SECURITY: translate the user-provided anti-replay settings into the core nonce tracker.
     // Any omitted fields use the core defaults; this must remain conservative (fail-closed)
@@ -633,53 +725,10 @@ fn nonce_tracker_from_config(config: &crate::MprdConfig) -> Result<Arc<dyn Nonce
         config.anti_replay.max_tracked_nonces,
     )?;
 
-    if config.trust_mode == crate::config::TrustMode::LowTrust {
-        match config.low_trust.nonce_store_backend {
-            crate::config::DistributedNonceBackend::SharedFs => {
-                let Some(ref dir) = config.anti_replay.nonce_store_dir else {
-                    return Err(crate::MprdError::ConfigError(
-                        "LowTrust requires anti_replay.nonce_store_dir for SharedFs nonce coordination".into(),
-                    ));
-                };
-                let store = SharedFsDistributedNonceStore::new(dir)?;
-                return Ok(Arc::new(DistributedNonceTracker::new(
-                    store,
-                    tracker_config,
-                )));
-            }
-            crate::config::DistributedNonceBackend::Redis => {
-                let Some(ref redis_url) = config.low_trust.redis_url else {
-                    return Err(crate::MprdError::ConfigError(
-                        "LowTrust Redis requires low_trust.redis_url".into(),
-                    ));
-                };
-                let store = RedisDistributedNonceStore::new(
-                    redis_url,
-                    &config.low_trust.redis_key_prefix,
-                    std::time::Duration::from_millis(config.low_trust.redis_timeout_ms),
-                )?;
-                return Ok(Arc::new(DistributedNonceTracker::new(
-                    store,
-                    tracker_config,
-                )));
-            }
-            crate::config::DistributedNonceBackend::PostgreSql
-            | crate::config::DistributedNonceBackend::Etcd
-            | crate::config::DistributedNonceBackend::OnChain => {
-                return Err(crate::MprdError::ConfigError(
-                    "LowTrust distributed nonce backend not implemented in this build; use redis (recommended) or shared_fs for pre-testnet".into(),
-                ));
-            }
-        }
+    match config.trust_mode {
+        crate::config::TrustMode::LowTrust => build_low_trust_tracker(config, tracker_config),
+        crate::config::TrustMode::HighTrust => build_high_trust_tracker(config, tracker_config),
     }
-
-    if let Some(ref dir) = config.anti_replay.nonce_store_dir {
-        // HighTrust: fail closed if persistence is configured but cannot be initialized.
-        let store = FileNonceStore::new(dir)?;
-        return Ok(Arc::new(PersistentNonceTracker::new(store, tracker_config)));
-    }
-
-    Ok(Arc::new(InMemoryNonceTracker::with_config(tracker_config)))
 }
 
 fn verifying_key_from_config(

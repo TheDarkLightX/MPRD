@@ -111,6 +111,46 @@ pub struct VerificationResponse {
     pub verified_at: i64,
 }
 
+struct StepLogger<'a> {
+    steps: &'a mut Vec<VerificationStep>,
+}
+
+impl<'a> StepLogger<'a> {
+    fn new(steps: &'a mut Vec<VerificationStep>) -> Self {
+        Self { steps }
+    }
+
+    fn record(&mut self, name: &str, passed: bool, details: Option<String>) {
+        self.steps.push(VerificationStep {
+            name: name.into(),
+            passed,
+            details,
+        });
+    }
+
+    fn pass(&mut self, name: &str, details: Option<String>) {
+        self.record(name, true, details);
+    }
+
+    fn fail(&mut self, name: &str, details: Option<String>) {
+        self.record(name, false, details);
+    }
+
+    fn fail_with<T>(&mut self, name: &str, details: Option<String>, err: &str) -> Result<T, String> {
+        self.fail(name, details);
+        Err(err.into())
+    }
+}
+
+struct MpbLiteMeta {
+    expected_spot_checks: usize,
+    expected_fuel_limit: u32,
+}
+
+struct MpbBindings {
+    expected_registers: Vec<i64>,
+}
+
 /// External verifier for MPRD proofs.
 ///
 /// This verifier operates without access to the original state or candidates,
@@ -320,184 +360,323 @@ impl ExternalVerifier {
         request: &VerificationRequest,
         steps: &mut Vec<VerificationStep>,
     ) -> Result<(), String> {
-        // Check mode marker
+        let mut log = StepLogger::new(steps);
+
+        Self::verify_mpb_lite_marker(request, &mut log)?;
+        Self::verify_mpb_lite_backend(request, &mut log)?;
+        let meta = Self::parse_mpb_lite_meta(request, &mut log)?;
+        let artifact = Self::decode_mpb_lite_artifact(request, &mut log)?;
+        Self::verify_mpb_lite_header(&artifact, &mut log)?;
+        Self::verify_mpb_lite_bindings(request, &meta, &artifact, &mut log)?;
+        let bindings = Self::verify_mpb_registers(&artifact, &mut log)?;
+        Self::verify_mpb_proof_bundle(&artifact, &meta, &bindings, &mut log)?;
+        Ok(())
+    }
+
+    fn verify_mpb_lite_marker(
+        request: &VerificationRequest,
+        log: &mut StepLogger<'_>,
+    ) -> Result<(), String> {
         let mode_marker = request.metadata.get("mode");
         let is_mpb = mode_marker.map(|m| m == "B-Lite").unwrap_or(false);
-
-        steps.push(VerificationStep {
-            name: "Mode B-Lite marker".into(),
-            passed: is_mpb,
-            details: Some(format!("Mode marker: {:?}", mode_marker)),
-        });
-
-        if !is_mpb {
-            return Err(ERR_MISSING_B_LITE_MODE_MARKER.into());
+        log.record(
+            "Mode B-Lite marker",
+            is_mpb,
+            Some(format!("Mode marker: {:?}", mode_marker)),
+        );
+        if is_mpb {
+            Ok(())
+        } else {
+            Err(ERR_MISSING_B_LITE_MODE_MARKER.into())
         }
+    }
 
+    fn verify_mpb_lite_backend(
+        request: &VerificationRequest,
+        log: &mut StepLogger<'_>,
+    ) -> Result<(), String> {
         let backend = request.metadata.get("proof_backend").map(|s| s.as_str());
         if backend != Some("mpb_lite_v1") {
-            steps.push(VerificationStep {
-                name: "MPB backend".into(),
-                passed: false,
-                details: Some(format!("expected mpb_lite_v1, got: {:?}", backend)),
-            });
-            return Err(ERR_MPB_METADATA_MISSING.into());
+            return log.fail_with(
+                "MPB backend",
+                Some(format!("expected mpb_lite_v1, got: {:?}", backend)),
+                ERR_MPB_METADATA_MISSING,
+            );
         }
-        steps.push(VerificationStep {
-            name: "MPB backend".into(),
-            passed: true,
-            details: Some("mpb_lite_v1".into()),
-        });
+        log.pass("MPB backend", Some("mpb_lite_v1".into()));
+        Ok(())
+    }
 
-        let expected_spot_checks: usize = request
-            .metadata
-            .get("spot_checks")
-            .and_then(|s| s.parse::<usize>().ok())
-            .ok_or_else(|| ERR_MPB_METADATA_MISSING.to_string())?;
-        let expected_fuel_limit: u32 = request
-            .metadata
-            .get("fuel_limit")
-            .and_then(|s| s.parse::<u32>().ok())
-            .ok_or_else(|| ERR_MPB_METADATA_MISSING.to_string())?;
+    fn parse_mpb_lite_meta(
+        request: &VerificationRequest,
+        log: &mut StepLogger<'_>,
+    ) -> Result<MpbLiteMeta, String> {
+        let expected_spot_checks = Self::parse_meta_usize(request, "spot_checks")?;
+        let expected_fuel_limit = Self::parse_meta_u32(request, "fuel_limit")?;
 
-        // Mirror ModeConfig security floor for mpb_lite_v1.
         let spot_checks_ok = expected_spot_checks >= 16;
-        steps.push(VerificationStep {
-            name: "MPB spot checks".into(),
-            passed: spot_checks_ok,
-            details: Some(format!("expected_spot_checks={expected_spot_checks}")),
-        });
+        log.record(
+            "MPB spot checks",
+            spot_checks_ok,
+            Some(format!("expected_spot_checks={expected_spot_checks}")),
+        );
         if !spot_checks_ok {
             return Err(ERR_MPB_METADATA_MISSING.into());
         }
+
         let fuel_ok = expected_fuel_limit > 0;
-        steps.push(VerificationStep {
-            name: "MPB fuel limit".into(),
-            passed: fuel_ok,
-            details: Some(format!("expected_fuel_limit={expected_fuel_limit}")),
-        });
+        log.record(
+            "MPB fuel limit",
+            fuel_ok,
+            Some(format!("expected_fuel_limit={expected_fuel_limit}")),
+        );
         if !fuel_ok {
             return Err(ERR_MPB_METADATA_MISSING.into());
         }
 
-        let artifact: crate::mpb_lite::MpbLiteArtifactV1 =
-            match crate::bounded_deser::deserialize_mpb_artifact(&request.proof_data) {
-                Ok(a) => a,
-                Err(e) => {
-                    steps.push(VerificationStep {
-                        name: "MPB artifact decode".into(),
-                        passed: false,
-                        details: Some(e.to_string()),
-                    });
-                    return Err(ERR_FAILED_DECODE_MPB_ARTIFACT.into());
-                }
-            };
-        steps.push(VerificationStep {
-            name: "MPB artifact decode".into(),
-            passed: true,
-            details: Some(format!("bytes={}", request.proof_data.len())),
-        });
+        Ok(MpbLiteMeta {
+            expected_spot_checks,
+            expected_fuel_limit,
+        })
+    }
 
-        if let Err(e) = crate::mpb_lite::verify_artifact_header(&artifact) {
-            steps.push(VerificationStep {
-                name: "MPB artifact header".into(),
-                passed: false,
-                details: Some(e.to_string()),
-            });
-            return Err(ERR_MPB_ARTIFACT_INVALID.into());
+    fn decode_mpb_lite_artifact(
+        request: &VerificationRequest,
+        log: &mut StepLogger<'_>,
+    ) -> Result<crate::mpb_lite::MpbLiteArtifactV1, String> {
+        let artifact = match crate::bounded_deser::deserialize_mpb_artifact(&request.proof_data) {
+            Ok(a) => a,
+            Err(e) => {
+                return log.fail_with(
+                    "MPB artifact decode",
+                    Some(e.to_string()),
+                    ERR_FAILED_DECODE_MPB_ARTIFACT,
+                );
+            }
+        };
+        log.pass(
+            "MPB artifact decode",
+            Some(format!("bytes={}", request.proof_data.len())),
+        );
+        Ok(artifact)
+    }
+
+    fn verify_mpb_lite_header(
+        artifact: &crate::mpb_lite::MpbLiteArtifactV1,
+        log: &mut StepLogger<'_>,
+    ) -> Result<(), String> {
+        if let Err(e) = crate::mpb_lite::verify_artifact_header(artifact) {
+            return log.fail_with(
+                "MPB artifact header",
+                Some(e.to_string()),
+                ERR_MPB_ARTIFACT_INVALID,
+            );
         }
-        steps.push(VerificationStep {
-            name: "MPB artifact header".into(),
-            passed: true,
-            details: Some("ok".into()),
-        });
+        log.pass("MPB artifact header", Some("ok".into()));
+        Ok(())
+    }
 
-        // Binding checks: artifact must be self-consistent and match the request commitments.
+    fn verify_mpb_lite_bindings(
+        request: &VerificationRequest,
+        meta: &MpbLiteMeta,
+        artifact: &crate::mpb_lite::MpbLiteArtifactV1,
+        log: &mut StepLogger<'_>,
+    ) -> Result<(), String> {
         let state_hash = mprd_core::hash::hash_state_preimage_v1(&artifact.state_preimage).0;
-        if state_hash != request.state_hash {
-            steps.push(VerificationStep {
-                name: "MPB binding".into(),
-                passed: false,
-                details: Some("state_hash mismatch".into()),
-            });
-            return Err(ERR_MPB_BINDING_MISMATCH.into());
-        }
+        Self::ensure_mpb_binding(log, state_hash == request.state_hash, "state_hash mismatch")?;
 
         let chosen_action_hash =
             mprd_core::hash::hash_candidate_preimage_v1(&artifact.chosen_action_preimage).0;
-        if chosen_action_hash != request.chosen_action_hash {
-            steps.push(VerificationStep {
-                name: "MPB binding".into(),
-                passed: false,
-                details: Some("chosen_action_hash mismatch".into()),
-            });
-            return Err(ERR_MPB_BINDING_MISMATCH.into());
-        }
+        Self::ensure_mpb_binding(
+            log,
+            chosen_action_hash == request.chosen_action_hash,
+            "chosen_action_hash mismatch",
+        )?;
 
-        let mut set_preimage = Vec::with_capacity(4 + artifact.candidate_hashes.len() * 32);
-        set_preimage.extend_from_slice(&(artifact.candidate_hashes.len() as u32).to_le_bytes());
-        for h in &artifact.candidate_hashes {
-            set_preimage.extend_from_slice(h);
-        }
-        let candidate_set_hash = mprd_core::hash::hash_candidate_set_preimage_v1(&set_preimage).0;
-        if candidate_set_hash != request.candidate_set_hash {
-            steps.push(VerificationStep {
-                name: "MPB binding".into(),
-                passed: false,
-                details: Some("candidate_set_hash mismatch".into()),
-            });
-            return Err(ERR_MPB_BINDING_MISMATCH.into());
-        }
+        let candidate_set_hash = Self::candidate_set_hash(artifact);
+        Self::ensure_mpb_binding(
+            log,
+            candidate_set_hash == request.candidate_set_hash,
+            "candidate_set_hash mismatch",
+        )?;
 
-        let idx = artifact.chosen_index as usize;
-        if idx >= artifact.candidate_hashes.len()
-            || artifact.candidate_hashes[idx] != request.chosen_action_hash
-        {
-            steps.push(VerificationStep {
-                name: "MPB binding".into(),
-                passed: false,
-                details: Some("chosen_index does not select chosen_action_hash".into()),
-            });
-            return Err(ERR_MPB_BINDING_MISMATCH.into());
-        }
+        Self::ensure_chosen_index_binding(request, artifact, log)?;
 
         let policy_hash = crate::mpb_lite::policy_hash_from_artifact_v1(
             &artifact.mpb_proof_bundle.bytecode,
             &artifact.policy_variables,
         )
         .0;
-        if policy_hash != request.policy_hash {
-            steps.push(VerificationStep {
-                name: "MPB binding".into(),
-                passed: false,
-                details: Some("policy_hash mismatch".into()),
-            });
-            return Err(ERR_MPB_BINDING_MISMATCH.into());
+        Self::ensure_mpb_binding(
+            log,
+            policy_hash == request.policy_hash,
+            "policy_hash mismatch",
+        )?;
+
+        let limits_hash = Self::verify_mpb_limits(artifact, meta.expected_fuel_limit, log)?;
+        let expected_context = Self::mpb_lite_context(request, &limits_hash);
+        Self::ensure_context_binding(artifact, &expected_context, log)?;
+
+        log.pass("MPB binding", Some("ok".into()));
+        Ok(())
+    }
+
+    fn verify_mpb_registers(
+        artifact: &crate::mpb_lite::MpbLiteArtifactV1,
+        log: &mut StepLogger<'_>,
+    ) -> Result<MpbBindings, String> {
+        let bindings: Vec<(&[u8], u8)> = artifact
+            .policy_variables
+            .iter()
+            .map(|b| (b.name.as_slice(), b.reg))
+            .collect();
+        let regs = mprd_mpb::registers_from_preimages_v1(
+            &artifact.state_preimage,
+            &artifact.chosen_action_preimage,
+            &bindings,
+        )
+        .map_err(|e| format!("register mapping failed: {e:?}"))?;
+        let expected_registers: Vec<i64> = regs.to_vec();
+        if artifact.mpb_proof_bundle.registers != expected_registers {
+            return log.fail_with(
+                "MPB registers",
+                Some("registers mismatch".into()),
+                ERR_MPB_PROOF_VERIFICATION_FAILED,
+            );
+        }
+        Ok(MpbBindings { expected_registers })
+    }
+
+    fn verify_mpb_proof_bundle(
+        artifact: &crate::mpb_lite::MpbLiteArtifactV1,
+        meta: &MpbLiteMeta,
+        bindings: &MpbBindings,
+        log: &mut StepLogger<'_>,
+    ) -> Result<(), String> {
+        let expected_bytecode_hash = mprd_proof::sha256(&artifact.mpb_proof_bundle.bytecode);
+        let expected_input_hash =
+            crate::mpb_lite::registers_input_hash(&bindings.expected_registers);
+        if let Err(e) = crate::mpb_lite::verify_mpb_proof_bundle_with_inputs(
+            &artifact.mpb_proof_bundle,
+            &expected_bytecode_hash,
+            &expected_input_hash,
+        ) {
+            return log.fail_with(
+                "MPB proof",
+                Some(e.to_string()),
+                ERR_MPB_PROOF_VERIFICATION_FAILED,
+            );
         }
 
-        // Verify committed limits bytes are well-formed and match metadata fuel_limit.
+        let max = artifact.mpb_proof_bundle.proof.num_steps.saturating_sub(2);
+        let expected_checks = meta.expected_spot_checks.min(max);
+        let spot_checks_ok = artifact.mpb_proof_bundle.proof.spot_checks.len() == expected_checks;
+        log.record(
+            "MPB proof",
+            spot_checks_ok,
+            Some(format!(
+                "spot_checks={} expected={expected_checks}",
+                artifact.mpb_proof_bundle.proof.spot_checks.len()
+            )),
+        );
+        if !spot_checks_ok {
+            return Err(ERR_MPB_PROOF_VERIFICATION_FAILED.into());
+        }
+        if artifact.mpb_proof_bundle.proof.output == 0 {
+            return Err(ERR_MPB_PROOF_VERIFICATION_FAILED.into());
+        }
+
+        log.pass("MPB proof verification", Some("verified".into()));
+        Ok(())
+    }
+
+    fn parse_meta_usize(
+        request: &VerificationRequest,
+        key: &str,
+    ) -> Result<usize, String> {
+        request
+            .metadata
+            .get(key)
+            .and_then(|s| s.parse::<usize>().ok())
+            .ok_or_else(|| ERR_MPB_METADATA_MISSING.to_string())
+    }
+
+    fn parse_meta_u32(request: &VerificationRequest, key: &str) -> Result<u32, String> {
+        request
+            .metadata
+            .get(key)
+            .and_then(|s| s.parse::<u32>().ok())
+            .ok_or_else(|| ERR_MPB_METADATA_MISSING.to_string())
+    }
+
+    fn candidate_set_hash(
+        artifact: &crate::mpb_lite::MpbLiteArtifactV1,
+    ) -> [u8; 32] {
+        let mut set_preimage = Vec::with_capacity(4 + artifact.candidate_hashes.len() * 32);
+        set_preimage.extend_from_slice(&(artifact.candidate_hashes.len() as u32).to_le_bytes());
+        for h in &artifact.candidate_hashes {
+            set_preimage.extend_from_slice(h);
+        }
+        mprd_core::hash::hash_candidate_set_preimage_v1(&set_preimage).0
+    }
+
+    fn verify_mpb_limits(
+        artifact: &crate::mpb_lite::MpbLiteArtifactV1,
+        expected_fuel_limit: u32,
+        log: &mut StepLogger<'_>,
+    ) -> Result<mprd_core::Hash32, String> {
         let limits = match mprd_core::limits::parse_limits_v1(&artifact.limits_bytes) {
             Ok(l) => l,
             Err(e) => {
-                steps.push(VerificationStep {
-                    name: "MPB limits".into(),
-                    passed: false,
-                    details: Some(e.to_string()),
-                });
-                return Err(ERR_MPB_BINDING_MISMATCH.into());
+                return log.fail_with(
+                    "MPB limits",
+                    Some(e.to_string()),
+                    ERR_MPB_BINDING_MISMATCH,
+                );
             }
         };
         if limits.mpb_fuel_limit != Some(expected_fuel_limit) {
-            steps.push(VerificationStep {
-                name: "MPB limits".into(),
-                passed: false,
-                details: Some("mpb_fuel_limit mismatch".into()),
-            });
-            return Err(ERR_MPB_BINDING_MISMATCH.into());
+            return log.fail_with(
+                "MPB limits",
+                Some("mpb_fuel_limit mismatch".into()),
+                ERR_MPB_BINDING_MISMATCH,
+            );
         }
-        let limits_hash = mprd_core::limits::limits_hash_v1(&artifact.limits_bytes);
+        Ok(mprd_core::limits::limits_hash_v1(&artifact.limits_bytes))
+    }
 
-        // Verify context binding (token fields + candidate_set_hash + limits_hash).
+    fn ensure_mpb_binding(
+        log: &mut StepLogger<'_>,
+        ok: bool,
+        details: &str,
+    ) -> Result<(), String> {
+        if ok {
+            Ok(())
+        } else {
+            log.fail("MPB binding", Some(details.into()));
+            Err(ERR_MPB_BINDING_MISMATCH.into())
+        }
+    }
+
+    fn ensure_chosen_index_binding(
+        request: &VerificationRequest,
+        artifact: &crate::mpb_lite::MpbLiteArtifactV1,
+        log: &mut StepLogger<'_>,
+    ) -> Result<(), String> {
+        let idx = artifact.chosen_index as usize;
+        let ok = idx < artifact.candidate_hashes.len()
+            && artifact.candidate_hashes[idx] == request.chosen_action_hash;
+        Self::ensure_mpb_binding(
+            log,
+            ok,
+            "chosen_index does not select chosen_action_hash",
+        )
+    }
+
+    fn mpb_lite_context(
+        request: &VerificationRequest,
+        limits_hash: &mprd_core::Hash32,
+    ) -> [u8; 32] {
         let token = mprd_core::DecisionToken {
             policy_hash: mprd_core::Hash32(request.policy_hash),
             policy_ref: PolicyRef {
@@ -515,85 +694,25 @@ impl ExternalVerifier {
             timestamp_ms: 0,
             signature: Vec::new(),
         };
-        let expected_context = crate::mpb_lite::mpb_lite_context_hash_parts_v1(
+        crate::mpb_lite::mpb_lite_context_hash_parts_v1(
             &token,
             &mprd_core::Hash32(request.candidate_set_hash),
-            &limits_hash,
-        );
-        if artifact.mpb_proof_bundle.proof.context_hash != expected_context {
-            steps.push(VerificationStep {
-                name: "MPB context".into(),
-                passed: false,
-                details: Some("context_hash mismatch".into()),
-            });
-            return Err(ERR_MPB_BINDING_MISMATCH.into());
-        }
-        steps.push(VerificationStep {
-            name: "MPB binding".into(),
-            passed: true,
-            details: Some("ok".into()),
-        });
-
-        // Verify registers binding and computational proof.
-        let bindings: Vec<(&[u8], u8)> = artifact
-            .policy_variables
-            .iter()
-            .map(|b| (b.name.as_slice(), b.reg))
-            .collect();
-        let regs = mprd_mpb::registers_from_preimages_v1(
-            &artifact.state_preimage,
-            &artifact.chosen_action_preimage,
-            &bindings,
+            limits_hash,
         )
-        .map_err(|e| format!("register mapping failed: {e:?}"))?;
-        let expected_registers: Vec<i64> = regs.to_vec();
-        if artifact.mpb_proof_bundle.registers != expected_registers {
-            steps.push(VerificationStep {
-                name: "MPB registers".into(),
-                passed: false,
-                details: Some("registers mismatch".into()),
-            });
-            return Err(ERR_MPB_PROOF_VERIFICATION_FAILED.into());
-        }
+    }
 
-        let expected_bytecode_hash = mprd_proof::sha256(&artifact.mpb_proof_bundle.bytecode);
-        let expected_input_hash = crate::mpb_lite::registers_input_hash(&expected_registers);
-        if let Err(e) = crate::mpb_lite::verify_mpb_proof_bundle_with_inputs(
-            &artifact.mpb_proof_bundle,
-            &expected_bytecode_hash,
-            &expected_input_hash,
-        ) {
-            steps.push(VerificationStep {
-                name: "MPB proof".into(),
-                passed: false,
-                details: Some(e.to_string()),
-            });
-            return Err(ERR_MPB_PROOF_VERIFICATION_FAILED.into());
+    fn ensure_context_binding(
+        artifact: &crate::mpb_lite::MpbLiteArtifactV1,
+        expected_context: &[u8; 32],
+        log: &mut StepLogger<'_>,
+    ) -> Result<(), String> {
+        if artifact.mpb_proof_bundle.proof.context_hash != *expected_context {
+            return log.fail_with(
+                "MPB context",
+                Some("context_hash mismatch".into()),
+                ERR_MPB_BINDING_MISMATCH,
+            );
         }
-
-        let max = artifact.mpb_proof_bundle.proof.num_steps.saturating_sub(2);
-        let expected_checks = expected_spot_checks.min(max);
-        let spot_checks_ok = artifact.mpb_proof_bundle.proof.spot_checks.len() == expected_checks;
-        steps.push(VerificationStep {
-            name: "MPB proof".into(),
-            passed: spot_checks_ok,
-            details: Some(format!(
-                "spot_checks={} expected={expected_checks}",
-                artifact.mpb_proof_bundle.proof.spot_checks.len()
-            )),
-        });
-        if !spot_checks_ok {
-            return Err(ERR_MPB_PROOF_VERIFICATION_FAILED.into());
-        }
-        if artifact.mpb_proof_bundle.proof.output == 0 {
-            return Err(ERR_MPB_PROOF_VERIFICATION_FAILED.into());
-        }
-
-        steps.push(VerificationStep {
-            name: "MPB proof verification".into(),
-            passed: true,
-            details: Some("verified".into()),
-        });
         Ok(())
     }
 
