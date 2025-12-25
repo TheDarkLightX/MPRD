@@ -22,6 +22,7 @@ pub mod selectors;
 pub mod state_provenance;
 pub mod tau;
 pub mod tau_net_output_attestation;
+pub mod tokenomics_v6;
 pub mod validation;
 pub mod wire;
 
@@ -29,7 +30,7 @@ pub use config::MprdConfig;
 pub use crypto::{TokenSigningKey, TokenVerifyingKey};
 
 /// 32-byte hash newtype used for commitments (policy, state, actions, etc.).
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct Hash32(pub [u8; 32]);
 
 pub type PolicyHash = Hash32;
