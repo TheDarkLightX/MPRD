@@ -1113,13 +1113,15 @@ fn tau_testnet_genesis_step0_outputs_are_deterministic() {
             continue;
         }
 
-        if !sent_i0_0 && trimmed == "i0[0] :=" {
-            write_line(&mut tau.stdin, "F.").expect("writing i0[0] input should succeed");
-            sent_i0_0 = true;
-            continue;
-        }
-
         if let Some((name, idx)) = parse_any_stream_prompt(&trimmed) {
+            // Tau prompt formatting has changed across versions (e.g. `i0[0] :=` vs `i0[0]:tau :=`).
+            // Parse the prompt structurally instead of matching on an exact string.
+            if !sent_i0_0 && name == "i0" && idx == 0 {
+                write_line(&mut tau.stdin, "F.").expect("writing i0[0] input should succeed");
+                sent_i0_0 = true;
+                continue;
+            }
+
             // We only care about output-bearing streams during step 0.
             if name == "o0" || name == "o999" || name == "u" {
                 expect_value_for = Some((name, idx));

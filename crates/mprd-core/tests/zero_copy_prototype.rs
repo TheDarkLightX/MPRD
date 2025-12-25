@@ -6,7 +6,6 @@
 // - Validation of untrusted data before access
 // - Faster ZK proof generation paths
 
-use rkyv::validation::validators::DefaultValidator;
 use rkyv::CheckBytes;
 use rkyv::{Archive, Deserialize, Serialize};
 

@@ -670,17 +670,6 @@ mod tests {
         }
     }
 
-    struct LoggedFailingRecorder {
-        log: CallLog,
-    }
-
-    impl DecisionRecorder for LoggedFailingRecorder {
-        fn record(&self, _token: &DecisionToken, _proof: &ProofBundle) -> Result<()> {
-            push_call(&self.log, "record");
-            Err(MprdError::ExecutionError("recorder failed".into()))
-        }
-    }
-
     struct LoggedExecutor {
         log: CallLog,
     }

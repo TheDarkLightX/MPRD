@@ -16,8 +16,8 @@
 
 use crate::hash::hash_candidate;
 use crate::{
-    CandidateAction, Decision, Hash32, MprdError, PolicyHash, Result, RuleVerdict, Score,
-    Selector, StateSnapshot,
+    CandidateAction, Decision, Hash32, MprdError, PolicyHash, Result, RuleVerdict, Selector,
+    StateSnapshot,
 };
 use std::collections::HashMap;
 
@@ -373,6 +373,7 @@ impl Selector for MinimaxRegretSelector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Score;
 
     fn dummy_hash(byte: u8) -> Hash32 {
         Hash32([byte; 32])
@@ -624,4 +625,3 @@ mod tests {
         assert!(decision.chosen_index < 2, "should pick one of the two identical candidates");
     }
 }
-
