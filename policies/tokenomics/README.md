@@ -29,23 +29,26 @@ The `inputs/` / `outputs/` directories are for local Tau runs and are gitignored
 
 ## Action kinds (v6)
 
-`mprd_tokenomics_v6_action_gate.tau` uses `i_action_kind : bv[8]`:
+Tau comparisons on `bv[N]` are formulas (not terms), so the canonical gate uses **one-hot sbf inputs**
+to avoid mixing bitvector comparisons into term-level logic.
 
-- `0x01` `ADMIT_OPERATOR`
-- `0x02` `CREDIT_AGRS`
-- `0x03` `SET_OPI`
-- `0x04` `SET_BOUNDS`
-- `0x10` `STAKE_START`
-- `0x11` `STAKE_END`
-- `0x12` `ACCRUE_BCR_DRIP`
-- `0x20` `APPLY_SERVICE_TX`
-- `0x30` `AUCTION_REVEAL`
-- `0x40` `FINALIZE_EPOCH`
-- `0x41` `SETTLE_OPS_PAYROLL`
-- `0x42` `SETTLE_AUCTION`
-- `0x43` `ADVANCE_EPOCH`
+The host decodes `ActionV6` into one-hot sbf flags:
 
-Unknown kinds must deny.
+- `i_is_admit_operator`
+- `i_is_credit_agrs`
+- `i_is_set_opi`
+- `i_is_set_bounds`
+- `i_is_stake_start`
+- `i_is_stake_end`
+- `i_is_accrue_bcr_drip`
+- `i_is_apply_service_tx`
+- `i_is_auction_reveal`
+- `i_is_finalize_epoch`
+- `i_is_settle_ops_payroll`
+- `i_is_settle_auction`
+- `i_is_advance_epoch`
+
+Unknown/unsupported actions must set all flags to `0` (fail-closed).
 
 ## Integration sketch
 
@@ -58,3 +61,10 @@ The intended wiring is:
 
 The gate is *the hook* that makes the MPRD pattern explicit for tokenomics.
 
+## PID update gate (v6)
+
+`mprd_tokenomics_v6_pid_update_gate.tau` is **sbf-only** by design:
+- the host computes the PID proposal and the numeric safety checks (bounds, step limits, split cap)
+- Tau enforces the *boolean structure* (`link_ok & auth_ok & all_checks_ok`)
+
+This keeps Tau execution bounded and avoids brittle bitvector arithmetic in the interpreter.
