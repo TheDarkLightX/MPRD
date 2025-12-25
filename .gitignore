@@ -30,3 +30,6 @@ policies/governance/archive/
 
 # Journal submissions (private until published)
 /submissions/
+
+# MCP servers (experimental tools)
+/tools/mcp-servers/
