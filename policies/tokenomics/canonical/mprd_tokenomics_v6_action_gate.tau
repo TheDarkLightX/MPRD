@@ -1,0 +1,78 @@
+# ============================================================================
+# CANONICAL: MPRD Tokenomics v6 Action Gate
+# ============================================================================
+# Fail-closed authorization gate for tokenomics v6 control-plane actions.
+#
+# Design:
+# - Host computes complex checks (signatures, receipts, membership) as sbf inputs.
+# - Tau validates bounded Boolean structure (and denies unknown action kinds).
+# ============================================================================
+
+# Inputs
+i_action_kind          : bv[8] = in file("inputs/action_kind.in").
+i_link_ok              : sbf   = in file("inputs/link_ok.in").
+i_actor_is_target_ok   : sbf   = in file("inputs/actor_is_target_ok.in").
+i_control_auth_ok      : sbf   = in file("inputs/control_auth_ok.in").
+i_epoch_phase_ok       : sbf   = in file("inputs/epoch_phase_ok.in").
+i_action_preconds_ok   : sbf   = in file("inputs/action_preconds_ok.in").
+
+# Output
+o_allow                : sbf   = out file("outputs/allow.out").
+
+defs
+r (
+    (o_allow[t] =
+        (
+            # LOW-IMPACT / SELF-AUTH actions (operator-scoped)
+            (
+                (
+                    (i_action_kind[t] = {#x10}:bv[8]) |   # STAKE_START
+                    (i_action_kind[t] = {#x11}:bv[8]) |   # STAKE_END
+                    (i_action_kind[t] = {#x30}:bv[8])     # AUCTION_REVEAL
+                )
+                &
+                i_actor_is_target_ok[t]
+            )
+            |
+            # SERVICE TX application: allow when host-side payment/verification checks pass.
+            (
+                (i_action_kind[t] = {#x20}:bv[8]) &
+                i_epoch_phase_ok[t]
+            )
+            |
+            # EPOCH TRANSITION actions: treated as high-impact (controller-only).
+            (
+                (
+                    (i_action_kind[t] = {#x12}:bv[8]) |   # ACCRUE_BCR_DRIP (epoch tick)
+                    (i_action_kind[t] = {#x40}:bv[8]) |   # FINALIZE_EPOCH
+                    (i_action_kind[t] = {#x41}:bv[8]) |   # SETTLE_OPS_PAYROLL
+                    (i_action_kind[t] = {#x42}:bv[8]) |   # SETTLE_AUCTION
+                    (i_action_kind[t] = {#x43}:bv[8])     # ADVANCE_EPOCH
+                )
+                &
+                i_control_auth_ok[t]
+                &
+                i_epoch_phase_ok[t]
+            )
+            |
+            # HIGH-IMPACT / ADMIN actions
+            (
+                (
+                    (i_action_kind[t] = {#x01}:bv[8]) |   # ADMIT_OPERATOR
+                    (i_action_kind[t] = {#x02}:bv[8]) |   # CREDIT_AGRS
+                    (i_action_kind[t] = {#x03}:bv[8]) |   # SET_OPI
+                    (i_action_kind[t] = {#x04}:bv[8])     # SET_BOUNDS
+                )
+                &
+                i_control_auth_ok[t]
+            )
+        )
+        &
+        i_link_ok[t]
+        &
+        i_action_preconds_ok[t]
+    )
+)
+n
+q
+

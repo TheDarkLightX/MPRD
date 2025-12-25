@@ -14,6 +14,7 @@ pub mod run;
 pub mod serve;
 pub mod staking;
 pub mod status;
+pub mod tokenomics;
 pub mod verify;
 
 use anyhow::Result;

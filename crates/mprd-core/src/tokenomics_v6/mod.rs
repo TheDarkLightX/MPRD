@@ -17,6 +17,7 @@ pub mod bounds;
 pub mod engine;
 pub mod gate;
 pub mod math;
+pub mod pid;
 pub mod types;
 
 pub use auction::{AuctionBid, AuctionClearing, AuctionOutcome};
@@ -24,6 +25,10 @@ pub use actions::{ActionOutcomeV6, ActionV6};
 pub use bounds::RuntimeBoundsV6;
 pub use engine::{EpochBudgetsV6, OpsPayrollOutcome, ServiceTx, TokenomicsV6};
 pub use gate::{AllowAllGateV6, DenyAllGateV6, PolicyGateV6};
+pub use pid::{
+    pid_step_bps, propose_v6, PidBpsConfig, PidBpsGains, PidBpsState, TokenomicsPidConfigV6,
+    TokenomicsPidProposalV6, TokenomicsPidStateV6,
+};
 pub use types::{
     Agrs, AgrsPerBcr, Bcr, Bps, EpochId, OperatorId, ParamsV6, Shares, StakeId, StakeStartOutcome,
     StakeStatus,

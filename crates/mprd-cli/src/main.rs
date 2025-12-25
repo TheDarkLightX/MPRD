@@ -278,6 +278,12 @@ enum Commands {
         #[command(subcommand)]
         action: AsdeCommands,
     },
+
+    /// Tokenomics utilities (v6)
+    Tokenomics {
+        #[command(subcommand)]
+        action: TokenomicsCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -557,6 +563,40 @@ enum PolicyCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum TokenomicsCommands {
+    /// Propose a v6 PID parameter update (bounded, deterministic).
+    ///
+    /// This is a local helper to compute a candidate update that should then be
+    /// verified by Tau (`mprd_tokenomics_v6_pid_update_gate.tau`) before being applied.
+    PidProposeV6 {
+        #[arg(long)]
+        cur_burn_surplus_bps: u16,
+        #[arg(long)]
+        cur_auction_surplus_bps: u16,
+        #[arg(long)]
+        cur_drip_rate_bps: u16,
+
+        #[arg(long)]
+        burn_setpoint_bps: u16,
+        #[arg(long)]
+        burn_measured_bps: u16,
+
+        #[arg(long)]
+        auction_setpoint_bps: u16,
+        #[arg(long)]
+        auction_measured_bps: u16,
+
+        #[arg(long)]
+        drip_setpoint_bps: u16,
+        #[arg(long)]
+        drip_measured_bps: u16,
+
+        #[arg(long, default_value = "human")]
+        format: String,
+    },
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -801,6 +841,31 @@ fn main() -> Result<()> {
                 voucher_spends,
                 user_pubkey_hex,
                 epoch_id,
+            ),
+        },
+        Commands::Tokenomics { action } => match action {
+            TokenomicsCommands::PidProposeV6 {
+                cur_burn_surplus_bps,
+                cur_auction_surplus_bps,
+                cur_drip_rate_bps,
+                burn_setpoint_bps,
+                burn_measured_bps,
+                auction_setpoint_bps,
+                auction_measured_bps,
+                drip_setpoint_bps,
+                drip_measured_bps,
+                format,
+            } => commands::tokenomics::pid_propose_v6(
+                cur_burn_surplus_bps,
+                cur_auction_surplus_bps,
+                cur_drip_rate_bps,
+                burn_setpoint_bps,
+                burn_measured_bps,
+                auction_setpoint_bps,
+                auction_measured_bps,
+                drip_setpoint_bps,
+                drip_measured_bps,
+                format,
             ),
         },
     }

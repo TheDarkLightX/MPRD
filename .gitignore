@@ -16,6 +16,11 @@ policies/governance/outputs/
 policies/governance/canonical/inputs/
 policies/governance/canonical/outputs/
 policies/governance/archive/
+policies/tokenomics/inputs/
+policies/tokenomics/outputs/
+policies/tokenomics/canonical/inputs/
+policies/tokenomics/canonical/outputs/
+policies/tokenomics/archive/
 
 # IDE and OS artifacts
 .vscode/
