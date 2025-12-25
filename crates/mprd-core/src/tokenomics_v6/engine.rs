@@ -2,10 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{Hash32, MprdError, Result};
 
+use super::actions::{ActionOutcomeV6, ActionV6};
 use super::auction::{
     apply_carry_cap, clear_prefix_budget, payout_for, AuctionBid, AuctionOutcome,
 };
 use super::bounds::RuntimeBoundsV6;
+use super::gate::PolicyGateV6;
 use super::math::{add_u64, floor_bps, rage_quit_penalty_linear, sub_u64};
 use super::types::{
     Agrs, AgrsPerBcr, Bcr, Bps, EpochId, OperatorId, ParamsV6, Shares, StakeId, StakeStartOutcome,
@@ -227,6 +229,75 @@ impl TokenomicsV6 {
         self.epoch
     }
 
+    /// Applies a tokenomics action through a policy gate (fail-closed).
+    ///
+    /// This makes the MPRD control-plane pattern explicit:
+    /// - `PolicyGateV6::check` corresponds to an `Allowed_op` authorization predicate
+    /// - only if it returns `Ok(())` does the engine mutate state
+    pub fn apply<G: PolicyGateV6>(&mut self, gate: &G, action: ActionV6) -> Result<ActionOutcomeV6> {
+        gate.check(self, &action)?;
+        self.apply_unchecked(action)
+    }
+
+    fn apply_unchecked(&mut self, action: ActionV6) -> Result<ActionOutcomeV6> {
+        match action {
+            ActionV6::AdmitOperator { operator } => {
+                self.admit_operator(operator)?;
+                Ok(ActionOutcomeV6::Unit)
+            }
+            ActionV6::CreditAgrs { operator, amt } => {
+                self.credit_agrs(operator, amt)?;
+                Ok(ActionOutcomeV6::Unit)
+            }
+            ActionV6::SetOpi { operator, opi_bps } => {
+                self.set_opi(operator, opi_bps)?;
+                Ok(ActionOutcomeV6::Unit)
+            }
+            ActionV6::SetBounds { bounds } => {
+                self.set_bounds(bounds)?;
+                Ok(ActionOutcomeV6::Unit)
+            }
+            ActionV6::StakeStart {
+                operator,
+                stake_amount,
+                lock_epochs,
+                nonce,
+            } => self
+                .stake_start(operator, stake_amount, lock_epochs, nonce)
+                .map(ActionOutcomeV6::StakeStart),
+            ActionV6::StakeEnd { operator, stake_id } => {
+                self.stake_end(operator, stake_id)?;
+                Ok(ActionOutcomeV6::Unit)
+            }
+            ActionV6::AccrueBcrDrip => {
+                self.accrue_bcr_drip()?;
+                Ok(ActionOutcomeV6::Unit)
+            }
+            ActionV6::ApplyServiceTx(tx) => {
+                self.apply_service_tx(tx)?;
+                Ok(ActionOutcomeV6::Unit)
+            }
+            ActionV6::AuctionReveal {
+                operator,
+                qty_bcr,
+                min_price,
+                nonce,
+            } => {
+                self.auction_reveal(operator, qty_bcr, min_price, nonce)?;
+                Ok(ActionOutcomeV6::Unit)
+            }
+            ActionV6::FinalizeEpoch => self.finalize_epoch().map(ActionOutcomeV6::FinalizeEpoch),
+            ActionV6::SettleOpsPayroll => self
+                .settle_ops_payroll()
+                .map(ActionOutcomeV6::SettleOpsPayroll),
+            ActionV6::SettleAuction => self.settle_auction().map(ActionOutcomeV6::SettleAuction),
+            ActionV6::AdvanceEpoch { next_epoch } => {
+                self.advance_epoch(next_epoch)?;
+                Ok(ActionOutcomeV6::Unit)
+            }
+        }
+    }
+
     pub fn params(&self) -> &ParamsV6 {
         &self.params
     }
@@ -238,7 +309,7 @@ impl TokenomicsV6 {
     /// Updates safety bounds for state size / runtime.
     ///
     /// Contract: bounds are validated before being installed (fail-closed).
-    pub fn set_bounds(&mut self, bounds: RuntimeBoundsV6) -> Result<()> {
+    fn set_bounds(&mut self, bounds: RuntimeBoundsV6) -> Result<()> {
         bounds.validate()?;
         self.bounds = bounds;
         Ok(())
@@ -247,7 +318,7 @@ impl TokenomicsV6 {
     /// Admits a new operator account.
     ///
     /// Safety bound: `bounds.max_operators` caps state growth and worst-case computation.
-    pub fn admit_operator(&mut self, operator: OperatorId) -> Result<()> {
+    fn admit_operator(&mut self, operator: OperatorId) -> Result<()> {
         if self.operators.contains_key(&operator) {
             return Err(MprdError::InvalidInput("operator already admitted".into()));
         }
@@ -264,7 +335,7 @@ impl TokenomicsV6 {
     ///
     /// Preconditions:
     /// - `operator` is admitted.
-    pub fn credit_agrs(&mut self, operator: OperatorId, amt: Agrs) -> Result<()> {
+    fn credit_agrs(&mut self, operator: OperatorId, amt: Agrs) -> Result<()> {
         let op = self
             .operators
             .get_mut(&operator)
@@ -277,7 +348,7 @@ impl TokenomicsV6 {
     ///
     /// OPI is POLICY-SET / policy-gated (e.g., derived from slashing/quality rules), not market.
     /// It affects payroll attribution but does not affect the tip lane.
-    pub fn set_opi(&mut self, operator: OperatorId, opi_bps: Bps) -> Result<()> {
+    fn set_opi(&mut self, operator: OperatorId, opi_bps: Bps) -> Result<()> {
         let op = self
             .operators
             .get_mut(&operator)
@@ -302,7 +373,7 @@ impl TokenomicsV6 {
         Ok(Agrs::new(op.agrs_balance))
     }
 
-    pub fn stake_start(
+    fn stake_start(
         &mut self,
         operator: OperatorId,
         stake_amount: Agrs,
@@ -370,7 +441,7 @@ impl TokenomicsV6 {
         })
     }
 
-    pub fn stake_end(&mut self, operator: OperatorId, stake_id: StakeId) -> Result<()> {
+    fn stake_end(&mut self, operator: OperatorId, stake_id: StakeId) -> Result<()> {
         // Postconditions (on success):
         // - stake shares are removed (supply decreases)
         // - a linear rage-quit penalty is routed into the auction carry (capped) with excess burned
@@ -413,7 +484,7 @@ impl TokenomicsV6 {
         Ok(())
     }
 
-    pub fn accrue_bcr_drip(&mut self) -> Result<()> {
+    fn accrue_bcr_drip(&mut self) -> Result<()> {
         // Contract: may be applied at most once per epoch (deterministic BCR supply schedule).
         //
         // Rationale: drip makes BCR accrual predictable and policy-shaped (`drip_rate_bps`),
@@ -456,7 +527,7 @@ impl TokenomicsV6 {
     /// Postconditions:
     /// - `base_fee_agrs` and offsets affect protocol budgets; `tip_agrs` is paid immediately
     /// - payer's BCR decreases by `offset_request_bcr` (BCR is burned on use)
-    pub fn apply_service_tx(&mut self, tx: ServiceTx) -> Result<()> {
+    fn apply_service_tx(&mut self, tx: ServiceTx) -> Result<()> {
         self.ensure_epoch_open()?;
         if !self.operators.contains_key(&tx.payer) {
             return Err(MprdError::InvalidInput("unknown payer".into()));
@@ -543,7 +614,7 @@ impl TokenomicsV6 {
     /// Market input: `min_price` is operator-set and feeds the clearing price via the auction.
     ///
     /// Safety bound: `bounds.max_bids_per_epoch` caps worst-case sorting/settlement costs.
-    pub fn auction_reveal(
+    fn auction_reveal(
         &mut self,
         operator: OperatorId,
         qty_bcr: Bcr,
@@ -575,7 +646,7 @@ impl TokenomicsV6 {
     /// Postconditions (on first call):
     /// - budgets are cached; `ensure_epoch_open()` will start rejecting new actions
     /// - `burned_total`, `reserve_balance`, and `unallocated_balance` advance deterministically
-    pub fn finalize_epoch(&mut self) -> Result<EpochBudgetsV6> {
+    fn finalize_epoch(&mut self) -> Result<EpochBudgetsV6> {
         if let Some(b) = self.budgets.clone() {
             return Ok(b);
         }
@@ -631,7 +702,7 @@ impl TokenomicsV6 {
     ///
     /// Rationale: payroll provides a policy-shaped operator cashflow rail (work metering × OPI),
     /// while tips remain purely market-determined per transaction.
-    pub fn settle_ops_payroll(&mut self) -> Result<OpsPayrollOutcome> {
+    fn settle_ops_payroll(&mut self) -> Result<OpsPayrollOutcome> {
         let budgets = self.finalize_epoch()?;
         if self.payroll_settled {
             return Err(MprdError::InvalidInput(
@@ -726,7 +797,7 @@ impl TokenomicsV6 {
     /// - winning BCR is burned; losing BCR is refunded from escrow
     /// - payouts are locked until `epoch + payout_lock_epochs`
     /// - leftover auction budget is carried forward (capped) with excess burned
-    pub fn settle_auction(&mut self) -> Result<AuctionOutcome> {
+    fn settle_auction(&mut self) -> Result<AuctionOutcome> {
         let budgets = self.finalize_epoch()?;
         if self.auction_settled {
             return Err(MprdError::InvalidInput("auction already settled".into()));
@@ -872,7 +943,7 @@ impl TokenomicsV6 {
     /// Postconditions:
     /// - unlocks any due auction payouts at or before `next_epoch`
     /// - resets epoch-scoped aggregates/bids and opens the new epoch
-    pub fn advance_epoch(&mut self, next_epoch: EpochId) -> Result<()> {
+    fn advance_epoch(&mut self, next_epoch: EpochId) -> Result<()> {
         if next_epoch.0 <= self.epoch.0 {
             return Err(MprdError::InvalidInput("epoch must be monotone".into()));
         }
@@ -948,6 +1019,7 @@ fn compute_new_carry_and_burn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tokenomics_v6::{ActionOutcomeV6, ActionV6, AllowAllGateV6, DenyAllGateV6};
     use crate::tokenomics_v6::types::Bps;
 
     fn params() -> ParamsV6 {
@@ -970,6 +1042,21 @@ mod tests {
 
     fn id(b: u8) -> OperatorId {
         OperatorId(Hash32([b; 32]))
+    }
+
+    #[test]
+    fn policy_gate_denies_without_state_mutation() {
+        let mut eng = TokenomicsV6::new(params());
+        assert!(eng.budgets.is_none());
+
+        let deny = DenyAllGateV6;
+        assert!(eng.apply(&deny, ActionV6::FinalizeEpoch).is_err());
+        assert!(eng.budgets.is_none());
+
+        let allow = AllowAllGateV6;
+        let out = eng.apply(&allow, ActionV6::FinalizeEpoch).unwrap();
+        assert!(matches!(out, ActionOutcomeV6::FinalizeEpoch(_)));
+        assert!(eng.budgets.is_some());
     }
 
     #[test]
