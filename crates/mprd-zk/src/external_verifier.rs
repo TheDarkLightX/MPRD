@@ -18,8 +18,8 @@
 //! ```
 
 use crate::manifest::GuestImageManifestV1;
-use crate::modes::{DeploymentMode, VerificationStep};
 use crate::privacy::EncryptedState;
+use crate::{DeploymentMode, VerificationStep};
 use mprd_core::{PolicyRef, StateRef, TokenVerifyingKey};
 use mprd_risc0_shared::{
     action_encoding_id_v1, compute_decision_commitment_v3, limits_hash, limits_hash_mpb_v1,

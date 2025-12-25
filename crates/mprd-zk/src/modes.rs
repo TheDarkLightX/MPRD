@@ -21,6 +21,7 @@
 #![allow(deprecated)]
 
 use crate::abi::GovernorJournal;
+pub use crate::verification::VerificationStep;
 use mprd_core::{
     CandidateAction, Decision, DecisionToken, Hash32, MprdError, ProofBundle, Result,
     StateSnapshot, VerificationStatus, ZkAttestor, ZkLocalVerifier,
@@ -187,14 +188,6 @@ pub struct ExtendedVerificationResult {
 
     /// Error message if verification failed.
     pub error: Option<String>,
-}
-
-/// A single verification step.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VerificationStep {
-    pub name: String,
-    pub passed: bool,
-    pub details: Option<String>,
 }
 
 impl ExtendedVerificationResult {

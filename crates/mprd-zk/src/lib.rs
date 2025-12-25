@@ -50,6 +50,7 @@ pub mod error;
 pub mod external_verifier;
 pub mod manifest;
 pub mod manifest_verifier;
+#[deprecated(note = "Legacy deployment modes; use mprd_zk::modes_v2 or top-level v2 exports.")]
 pub mod modes;
 pub mod modes_v2;
 pub mod mpb_lite;
@@ -60,22 +61,15 @@ pub mod registry_bound_attestor;
 pub mod registry_state;
 pub mod risc0_host;
 pub mod security;
+pub mod verification;
 
 use std::sync::Arc;
 
-// Re-export legacy modes for backwards compatibility
-#[allow(deprecated)]
-pub use modes::{
-    create_attestor, create_verifier, DeploymentMode, ExtendedProofBundle,
-    ExtendedVerificationResult, ModeConfig, MpbTrustlessAttestor, MpbTrustlessVerifier,
-    PrivateAttestor, PrivateVerifier, Risc0TrustlessAttestor, Risc0TrustlessVerifier,
-};
-
 // Re-export robust implementations (v2)
 pub use modes_v2::{
-    compute_candidate_set_hash, create_robust_attestor, create_robust_verifier, RobustMpbAttestor,
-    RobustMpbVerifier, RobustPrivateAttestor, RobustPrivateVerifier, RobustRisc0Attestor,
-    RobustRisc0Verifier,
+    compute_candidate_set_hash, create_robust_attestor, create_robust_private_attestor,
+    create_robust_verifier, DeploymentMode, ModeConfig, RobustMpbAttestor, RobustMpbVerifier,
+    RobustPrivateAttestor, RobustPrivateVerifier, RobustRisc0Attestor, RobustRisc0Verifier,
 };
 
 // Re-export error types
@@ -86,6 +80,9 @@ pub use security::{validate_decision_allowed, validate_timestamp, Invariant, Sec
 
 // Re-export external verifier
 pub use external_verifier::{ExternalVerifier, VerificationRequest, VerificationResponse};
+
+// Re-export verification step type
+pub use verification::VerificationStep;
 
 // Re-export MPB B-Lite proof artifact
 pub use mpb_lite::{MpbLiteArtifactV1, MPB_LITE_ARTIFACT_VERSION_V1};
@@ -324,6 +321,9 @@ pub struct ProductionConfig {
     /// Risc0 image ID for the mpb-v1 guest (required for Risc0 backend).
     pub risc0_image_id_mpb: Option<[u8; 32]>,
 
+    /// Risc0 image ID for the host-trusted guest (required for Mode C).
+    pub risc0_image_id_host_trusted: Option<[u8; 32]>,
+
     /// MPB policy bytecode (required for mpb-v1 guest attestation).
     pub mpb_policy_bytecode: Option<Vec<u8>>,
 
@@ -365,6 +365,7 @@ impl ProductionConfig {
         Self {
             backend: ProductionBackend::Risc0,
             risc0_image_id_mpb: Some(image_id),
+            risc0_image_id_host_trusted: None,
             mpb_policy_bytecode: Some(policy_bytecode),
             mpb_policy_variables: Some(policy_variables),
             mpb_spot_checks: 0,
@@ -379,6 +380,7 @@ impl ProductionConfig {
         Self {
             backend: ProductionBackend::Risc0,
             risc0_image_id_mpb: Some(image_id),
+            risc0_image_id_host_trusted: None,
             mpb_policy_bytecode: None,
             mpb_policy_variables: None,
             mpb_spot_checks: 0,
@@ -394,6 +396,7 @@ impl ProductionConfig {
         Self {
             backend: ProductionBackend::MpbExperimental,
             risc0_image_id_mpb: None,
+            risc0_image_id_host_trusted: None,
             mpb_policy_bytecode: None,
             mpb_policy_variables: None,
             mpb_spot_checks: 64,
@@ -409,6 +412,7 @@ impl ProductionConfig {
         Self {
             backend: ProductionBackend::LocalTesting,
             risc0_image_id_mpb: None,
+            risc0_image_id_host_trusted: None,
             mpb_policy_bytecode: None,
             mpb_policy_variables: None,
             mpb_spot_checks: 0,
@@ -431,6 +435,15 @@ impl ProductionConfig {
 
     /// Check if this is a production-ready config.
     pub fn is_production_ready(&self) -> bool {
+        if let Some(privacy) = &self.privacy {
+            return matches!(self.backend, ProductionBackend::Risc0)
+                && self
+                    .risc0_image_id_host_trusted
+                    .is_some_and(|id| id != [0u8; 32])
+                && privacy.encryption.master_key.is_some()
+                && !privacy.encryption.key_id.is_empty();
+        }
+
         matches!(self.backend, ProductionBackend::Risc0)
             && self.risc0_image_id_mpb.is_some()
             && self
@@ -443,6 +456,28 @@ impl ProductionConfig {
     /// Get warnings for non-production configs.
     pub fn get_warnings(&self) -> Vec<&'static str> {
         let mut warnings = Vec::new();
+
+        if let Some(privacy) = &self.privacy {
+            if !matches!(self.backend, ProductionBackend::Risc0) {
+                warnings.push("Mode C requires Risc0 backend");
+            }
+            if self.risc0_image_id_host_trusted.is_none() {
+                warnings.push("Mode C host-trusted image_id not set - attestation will fail");
+            }
+            if self
+                .risc0_image_id_host_trusted
+                .is_some_and(|id| id == [0u8; 32])
+            {
+                warnings.push("Mode C host-trusted image_id is all-zero - attestation will fail");
+            }
+            if privacy.encryption.master_key.is_none() {
+                warnings.push("Mode C master_key not set - attestation will fail");
+            }
+            if privacy.encryption.key_id.is_empty() {
+                warnings.push("Mode C key_id not set - attestation will fail");
+            }
+            return warnings;
+        }
 
         #[allow(deprecated)]
         match self.backend {
@@ -488,6 +523,59 @@ pub fn create_production_attestor(
         tracing::warn!("{}", warning);
     }
 
+    if let Some(privacy) = &config.privacy {
+        if !matches!(config.backend, ProductionBackend::Risc0) {
+            return Err(mprd_core::MprdError::ZkError(
+                "Mode C requires the Risc0 backend".into(),
+            ));
+        }
+
+        let Some(image_id) = config.risc0_image_id_host_trusted else {
+            return Err(mprd_core::MprdError::ZkError(
+                "Mode C requires risc0_image_id_host_trusted; refusing to default to an unspecified guest".into(),
+            ));
+        };
+
+        if image_id == [0u8; 32] {
+            return Err(mprd_core::MprdError::ZkError(
+                "Mode C configured with all-zero risc0_image_id_host_trusted; refusing to run with an unspecified guest".into(),
+            ));
+        }
+
+        if privacy.encryption.key_id.is_empty() {
+            return Err(mprd_core::MprdError::ZkError(
+                "Mode C requires a non-empty encryption key_id".into(),
+            ));
+        }
+
+        let master_key = privacy.encryption.master_key.ok_or_else(|| {
+            mprd_core::MprdError::ZkError(
+                "Mode C requires encryption master_key; refusing to run without key material"
+                    .into(),
+            )
+        })?;
+
+        let revealed_fields = if !privacy.encryption.revealed_fields.is_empty() {
+            privacy.encryption.revealed_fields.clone()
+        } else {
+            privacy.disclosed_fields.clone()
+        };
+
+        let mode_config =
+            modes_v2::ModeConfig::mode_c(image_id, privacy.encryption.key_id.clone());
+        let encryption_config = modes_v2::EncryptionConfig {
+            key_id: privacy.encryption.key_id.clone(),
+            algorithm: "AES-256-GCM".into(),
+            master_key: Some(master_key),
+            commitment_scheme: privacy.commitment_scheme,
+            committed_fields: privacy.encryption.committed_fields.clone(),
+            encrypted_fields: privacy.encryption.encrypted_fields.clone(),
+            revealed_fields,
+        };
+
+        return modes_v2::create_robust_private_attestor(&mode_config, encryption_config);
+    }
+
     #[allow(deprecated)]
     match config.backend {
         ProductionBackend::Risc0 => {
@@ -531,6 +619,36 @@ pub fn create_production_verifier(
 ) -> mprd_core::Result<Box<dyn mprd_core::ZkLocalVerifier>> {
     for warning in config.get_warnings() {
         tracing::warn!("{}", warning);
+    }
+
+    if let Some(privacy) = &config.privacy {
+        if !matches!(config.backend, ProductionBackend::Risc0) {
+            return Err(mprd_core::MprdError::ZkError(
+                "Mode C requires the Risc0 backend".into(),
+            ));
+        }
+
+        let Some(image_id) = config.risc0_image_id_host_trusted else {
+            return Err(mprd_core::MprdError::ZkError(
+                "Mode C requires risc0_image_id_host_trusted; refusing to default to an unspecified guest".into(),
+            ));
+        };
+
+        if image_id == [0u8; 32] {
+            return Err(mprd_core::MprdError::ZkError(
+                "Mode C configured with all-zero risc0_image_id_host_trusted; refusing to run with an unspecified guest".into(),
+            ));
+        }
+
+        if privacy.encryption.key_id.is_empty() {
+            return Err(mprd_core::MprdError::ZkError(
+                "Mode C requires a non-empty encryption key_id".into(),
+            ));
+        }
+
+        let mode_config =
+            modes_v2::ModeConfig::mode_c(image_id, privacy.encryption.key_id.clone());
+        return modes_v2::create_robust_verifier(&mode_config);
     }
 
     #[allow(deprecated)]

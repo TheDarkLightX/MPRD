@@ -21,7 +21,7 @@
 
 use crate::error::{ModeError, ModeResult};
 use crate::privacy::{
-    EncryptedState, EncryptionConfig as ModeCEncryptionConfig,
+    CommitmentScheme, EncryptedState, EncryptionConfig as ModeCEncryptionConfig,
     StateEncryptor as ModeCStateEncryptor,
 };
 use crate::risc0_host::{
@@ -1204,6 +1204,18 @@ pub struct EncryptionConfig {
     /// This is NOT serialized to avoid accidental exposure.
     #[serde(skip)]
     pub master_key: Option<[u8; 32]>,
+
+    /// Commitment scheme for state/field commitments.
+    pub commitment_scheme: CommitmentScheme,
+
+    /// Fields to commit individually (for selective disclosure).
+    pub committed_fields: Vec<String>,
+
+    /// Fields to encrypt (hidden entirely).
+    pub encrypted_fields: Vec<String>,
+
+    /// Fields to reveal in plaintext.
+    pub revealed_fields: Vec<String>,
 }
 
 impl std::fmt::Debug for EncryptionConfig {
@@ -1212,6 +1224,10 @@ impl std::fmt::Debug for EncryptionConfig {
             .field("key_id", &self.key_id)
             .field("algorithm", &self.algorithm)
             .field("master_key", &"[REDACTED]")
+            .field("commitment_scheme", &self.commitment_scheme)
+            .field("committed_fields", &self.committed_fields)
+            .field("encrypted_fields", &self.encrypted_fields)
+            .field("revealed_fields", &self.revealed_fields)
             .finish()
     }
 }
@@ -1222,6 +1238,10 @@ impl Default for EncryptionConfig {
             key_id: "default".into(),
             algorithm: "AES-256-GCM".into(),
             master_key: None,
+            commitment_scheme: CommitmentScheme::Sha256,
+            committed_fields: vec![],
+            encrypted_fields: vec![],
+            revealed_fields: vec![],
         }
     }
 }
@@ -1233,6 +1253,10 @@ impl EncryptionConfig {
             key_id: key_id.into(),
             algorithm: "AES-256-GCM".into(),
             master_key: Some(master_key),
+            commitment_scheme: CommitmentScheme::Sha256,
+            committed_fields: vec![],
+            encrypted_fields: vec![],
+            revealed_fields: vec![],
         }
     }
 }
@@ -1253,6 +1277,12 @@ impl RobustPrivateAttestor {
                 "RobustPrivateAttestor requires Private mode, got {:?}",
                 config.mode
             )));
+        }
+        if encryption_config.master_key.is_none() {
+            return Err(ModeError::MissingConfig {
+                mode: "C".into(),
+                field: "master_key".into(),
+            });
         }
 
         Ok(Self {
@@ -1289,17 +1319,22 @@ impl ZkAttestor for RobustPrivateAttestor {
             ));
         }
 
-        let committed_fields: Vec<String> = state.fields.keys().cloned().collect();
+        let committed_fields = if self.encryption_config.committed_fields.is_empty() {
+            state.fields.keys().cloned().collect()
+        } else {
+            self.encryption_config.committed_fields.clone()
+        };
 
         let enc_config = ModeCEncryptionConfig {
             key_id: key_id.clone(),
             master_key: self.encryption_config.master_key,
             committed_fields,
-            encrypted_fields: Vec::new(),
-            revealed_fields: Vec::new(),
+            encrypted_fields: self.encryption_config.encrypted_fields.clone(),
+            revealed_fields: self.encryption_config.revealed_fields.clone(),
         };
 
-        let encryptor = ModeCStateEncryptor::new(enc_config);
+        let encryptor =
+            ModeCStateEncryptor::new(enc_config, self.encryption_config.commitment_scheme);
 
         let (encrypted_state, _witness) = encryptor
             .encrypt(state)
@@ -1563,6 +1598,26 @@ impl ZkLocalVerifier for RobustPrivateVerifier {
 // =============================================================================
 
 /// Create an attestor for the specified mode.
+pub fn create_robust_private_attestor(
+    config: &ModeConfig,
+    encryption_config: EncryptionConfig,
+) -> Result<Box<dyn ZkAttestor>> {
+    config
+        .validate()
+        .map_err(|e| MprdError::ZkError(e.to_string()))?;
+
+    if encryption_config.master_key.is_none() {
+        return Err(MprdError::ZkError(
+            "Mode C requires encryption master_key; refusing to run without key material".into(),
+        ));
+    }
+
+    let attestor = RobustPrivateAttestor::new(config.clone(), encryption_config)
+        .map_err(|e| MprdError::ZkError(e.to_string()))?;
+    Ok(Box::new(attestor))
+}
+
+/// Create an attestor for the specified mode.
 pub fn create_robust_attestor(config: &ModeConfig) -> Result<Box<dyn ZkAttestor>> {
     config
         .validate()
@@ -1620,9 +1675,9 @@ pub fn create_robust_attestor(config: &ModeConfig) -> Result<Box<dyn ZkAttestor>
             Ok(Box::new(attestor))
         }
         DeploymentMode::Private => {
-            let attestor = RobustPrivateAttestor::new(config.clone(), EncryptionConfig::default())
-                .map_err(|e| MprdError::ZkError(e.to_string()))?;
-            Ok(Box::new(attestor))
+            Err(MprdError::ZkError(
+                "Mode C requires encryption config with master_key; use create_robust_private_attestor".into(),
+            ))
         }
     }
 }

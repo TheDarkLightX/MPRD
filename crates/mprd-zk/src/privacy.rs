@@ -52,7 +52,7 @@ use mprd_core::{StateSnapshot, Value};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use tracing::{debug, info};
 use zeroize::Zeroize;
@@ -230,6 +230,10 @@ pub struct EncryptedState {
     /// Individual field commitments (for selective disclosure).
     pub field_commitments: HashMap<String, Commitment>,
 
+    /// Revealed fields in plaintext.
+    #[serde(default)]
+    pub revealed_fields: HashMap<String, Value>,
+
     /// Encrypted state blob (AES-256-GCM).
     pub ciphertext: Vec<u8>,
 
@@ -331,10 +335,10 @@ pub struct StateEncryptor {
 
 impl StateEncryptor {
     /// Create a new encryptor with config.
-    pub fn new(config: EncryptionConfig) -> Self {
+    pub fn new(config: EncryptionConfig, scheme: CommitmentScheme) -> Self {
         Self {
             config,
-            commitment_gen: CommitmentGenerator::sha256(),
+            commitment_gen: CommitmentGenerator::new(scheme),
             nonce_source: Arc::new(|| {
                 let mut nonce = [0u8; 12];
                 OsRng.fill_bytes(&mut nonce);
@@ -346,11 +350,12 @@ impl StateEncryptor {
     #[cfg(any(test, feature = "test-utils"))]
     fn new_with_nonce_source(
         config: EncryptionConfig,
+        scheme: CommitmentScheme,
         nonce_source: Arc<dyn Fn() -> [u8; 12] + Send + Sync>,
     ) -> Self {
         Self {
             config,
-            commitment_gen: CommitmentGenerator::sha256(),
+            commitment_gen: CommitmentGenerator::new(scheme),
             nonce_source,
         }
     }
@@ -368,25 +373,42 @@ impl StateEncryptor {
         // Generate state commitment
         let (state_commitment, state_opening) = self.commitment_gen.commit(&state_bytes);
 
-        // Generate field commitments
+        let (encrypted_fields, revealed_fields) = self.classify_fields(state)?;
+        let committed_fields: BTreeSet<String> = if self.config.committed_fields.is_empty() {
+            let mut committed = BTreeSet::new();
+            if self.config.encrypted_fields.is_empty() && self.config.revealed_fields.is_empty() {
+                committed.extend(state.fields.keys().cloned());
+            } else {
+                committed.extend(encrypted_fields.keys().cloned());
+                committed.extend(revealed_fields.keys().cloned());
+            }
+            committed
+        } else {
+            self.config.committed_fields.iter().cloned().collect()
+        };
+
         let mut field_commitments = HashMap::new();
         let mut field_openings = HashMap::new();
 
-        for field_name in &self.config.committed_fields {
-            if let Some(value) = state.fields.get(field_name) {
-                let value_bytes = self.serialize_value(value)?;
-                let (commitment, opening) = self.commitment_gen.commit(&value_bytes);
-                field_commitments.insert(field_name.clone(), commitment);
-                field_openings.insert(field_name.clone(), opening);
-            }
+        for field_name in committed_fields {
+            let value = state.fields.get(&field_name).ok_or_else(|| {
+                ModeError::EncryptionError(format!(
+                    "Committed field '{field_name}' not present in state"
+                ))
+            })?;
+            let value_bytes = self.serialize_value(value)?;
+            let (commitment, opening) = self.commitment_gen.commit(&value_bytes);
+            field_commitments.insert(field_name.clone(), commitment);
+            field_openings.insert(field_name, opening);
         }
 
-        // Encrypt state (placeholder - would use actual AES-GCM)
-        let (ciphertext, nonce) = self.encrypt_bytes(&state_bytes)?;
+        let encrypted_bytes = self.serialize_encrypted_payload(state, &encrypted_fields)?;
+        let (ciphertext, nonce) = self.encrypt_bytes(&encrypted_bytes)?;
 
         let encrypted = EncryptedState {
             state_commitment,
             field_commitments,
+            revealed_fields,
             ciphertext,
             nonce,
             key_id: self.config.key_id.clone(),
@@ -414,6 +436,111 @@ impl StateEncryptor {
     ) -> bool {
         self.commitment_gen
             .verify(&encrypted.state_commitment, opening)
+    }
+
+    fn classify_fields(
+        &self,
+        state: &StateSnapshot,
+    ) -> ModeResult<(BTreeMap<String, Value>, HashMap<String, Value>)> {
+        let mut revealed = BTreeSet::new();
+        for field_name in &self.config.revealed_fields {
+            if !revealed.insert(field_name.clone()) {
+                return Err(ModeError::EncryptionError(format!(
+                    "Duplicate revealed field: {field_name}"
+                )));
+            }
+            if !state.fields.contains_key(field_name) {
+                return Err(ModeError::EncryptionError(format!(
+                    "Revealed field '{field_name}' not present in state"
+                )));
+            }
+        }
+
+        let mut encrypted = BTreeSet::new();
+        if self.config.encrypted_fields.is_empty() {
+            for field_name in state.fields.keys() {
+                if !revealed.contains(field_name) {
+                    encrypted.insert(field_name.clone());
+                }
+            }
+        } else {
+            for field_name in &self.config.encrypted_fields {
+                if revealed.contains(field_name) {
+                    return Err(ModeError::EncryptionError(format!(
+                        "Field '{field_name}' configured as both encrypted and revealed"
+                    )));
+                }
+                if !encrypted.insert(field_name.clone()) {
+                    return Err(ModeError::EncryptionError(format!(
+                        "Duplicate encrypted field: {field_name}"
+                    )));
+                }
+                if !state.fields.contains_key(field_name) {
+                    return Err(ModeError::EncryptionError(format!(
+                        "Encrypted field '{field_name}' not present in state"
+                    )));
+                }
+            }
+
+            for field_name in state.fields.keys() {
+                if !encrypted.contains(field_name) && !revealed.contains(field_name) {
+                    return Err(ModeError::EncryptionError(format!(
+                        "Field '{field_name}' must be classified as encrypted or revealed"
+                    )));
+                }
+            }
+        }
+
+        let mut encrypted_fields = BTreeMap::new();
+        for field_name in encrypted {
+            let value = state.fields.get(&field_name).ok_or_else(|| {
+                ModeError::EncryptionError(format!(
+                    "Encrypted field '{field_name}' not present in state"
+                ))
+            })?;
+            encrypted_fields.insert(field_name, value.clone());
+        }
+
+        let mut revealed_fields = HashMap::new();
+        for field_name in &self.config.revealed_fields {
+            let value = state.fields.get(field_name).ok_or_else(|| {
+                ModeError::EncryptionError(format!(
+                    "Revealed field '{field_name}' not present in state"
+                ))
+            })?;
+            revealed_fields.insert(field_name.clone(), value.clone());
+        }
+
+        Ok((encrypted_fields, revealed_fields))
+    }
+
+    fn serialize_encrypted_payload(
+        &self,
+        state: &StateSnapshot,
+        encrypted_fields: &BTreeMap<String, Value>,
+    ) -> ModeResult<Vec<u8>> {
+        #[derive(Serialize)]
+        struct EncryptedPayload<'a> {
+            fields: &'a BTreeMap<String, Value>,
+            policy_inputs: BTreeMap<&'a str, &'a Vec<u8>>,
+            state_hash: &'a mprd_core::StateHash,
+            state_ref: &'a mprd_core::StateRef,
+        }
+
+        let policy_inputs = state
+            .policy_inputs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v))
+            .collect::<BTreeMap<_, _>>();
+
+        let payload = EncryptedPayload {
+            fields: encrypted_fields,
+            policy_inputs,
+            state_hash: &state.state_hash,
+            state_ref: &state.state_ref,
+        };
+
+        serde_json::to_vec(&payload).map_err(|e| ModeError::SerializationError(e.to_string()))
     }
 
     fn serialize_state(&self, state: &StateSnapshot) -> ModeResult<Vec<u8>> {
@@ -455,7 +582,33 @@ impl StateEncryptor {
     /// This is primarily intended for local debugging and verification workflows.
     pub fn decrypt(&self, encrypted: &EncryptedState) -> ModeResult<StateSnapshot> {
         let plaintext = self.decrypt_bytes(&encrypted.ciphertext, &encrypted.nonce)?;
-        serde_json::from_slice(&plaintext).map_err(|e| ModeError::SerializationError(e.to_string()))
+        #[derive(Deserialize)]
+        struct EncryptedPayload {
+            fields: BTreeMap<String, Value>,
+            policy_inputs: BTreeMap<String, Vec<u8>>,
+            state_hash: mprd_core::StateHash,
+            state_ref: mprd_core::StateRef,
+        }
+
+        let payload: EncryptedPayload =
+            serde_json::from_slice(&plaintext).map_err(|e| ModeError::SerializationError(e.to_string()))?;
+
+        let mut fields: HashMap<String, Value> = payload.fields.into_iter().collect();
+        for (name, value) in &encrypted.revealed_fields {
+            if fields.contains_key(name) {
+                return Err(ModeError::EncryptionError(format!(
+                    "Revealed field '{name}' overlaps encrypted fields"
+                )));
+            }
+            fields.insert(name.clone(), value.clone());
+        }
+
+        Ok(StateSnapshot {
+            fields,
+            policy_inputs: payload.policy_inputs.into_iter().collect(),
+            state_hash: payload.state_hash,
+            state_ref: payload.state_ref,
+        })
     }
 
     /// Derive encryption key using HKDF from master key.
@@ -799,8 +952,11 @@ mod tests {
             revealed_fields: vec![],
         };
 
-        let encryptor =
-            StateEncryptor::new_with_nonce_source(config.clone(), counter_nonce_source());
+        let encryptor = StateEncryptor::new_with_nonce_source(
+            config.clone(),
+            CommitmentScheme::Sha256,
+            counter_nonce_source(),
+        );
 
         let state = state_with(
             HashMap::from([
@@ -824,7 +980,7 @@ mod tests {
     #[test]
     fn encryption_fails_without_master_key() {
         let config = EncryptionConfig::default(); // No master key
-        let encryptor = StateEncryptor::new(config);
+        let encryptor = StateEncryptor::new(config, CommitmentScheme::Sha256);
 
         let state = state_with(HashMap::new(), HashMap::new());
 
@@ -837,7 +993,11 @@ mod tests {
         let master_key = [9u8; 32];
 
         let config = EncryptionConfig::with_master_key("test", master_key);
-        let encryptor = StateEncryptor::new_with_nonce_source(config, counter_nonce_source());
+        let encryptor = StateEncryptor::new_with_nonce_source(
+            config,
+            CommitmentScheme::Sha256,
+            counter_nonce_source(),
+        );
 
         let state = state_with(HashMap::from([("x".into(), Value::Int(1))]), HashMap::new());
 
@@ -850,7 +1010,7 @@ mod tests {
 
     #[test]
     fn canonical_state_serialization_ignores_map_insertion_order() {
-        let encryptor = StateEncryptor::new(EncryptionConfig::default());
+        let encryptor = StateEncryptor::new(EncryptionConfig::default(), CommitmentScheme::Sha256);
 
         let mut fields_a = HashMap::new();
         fields_a.insert("b".into(), Value::Int(2));
@@ -884,7 +1044,8 @@ mod tests {
             fields in proptest::collection::btree_map("[-_a-zA-Z0-9]{1,16}", value_strategy(), 0..16),
             policy_inputs in proptest::collection::btree_map("[-_a-zA-Z0-9]{1,16}", proptest::collection::vec(any::<u8>(), 0..64), 0..16),
         ) {
-            let encryptor = StateEncryptor::new(EncryptionConfig::default());
+            let encryptor =
+                StateEncryptor::new(EncryptionConfig::default(), CommitmentScheme::Sha256);
 
             let mut a_fields = HashMap::new();
             for (k, v) in fields.iter() {

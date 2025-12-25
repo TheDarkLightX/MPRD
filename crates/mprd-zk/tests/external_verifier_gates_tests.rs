@@ -1,7 +1,8 @@
 use mprd_core::TokenSigningKey;
 use mprd_zk::external_verifier::{ExternalVerifier, VerificationRequest};
 use mprd_zk::manifest::{GuestImageEntryV1, GuestImageManifestV1};
-use mprd_zk::modes::DeploymentMode;
+use mprd_zk::modes_v2::DeploymentMode;
+use mprd_zk::VerificationStep;
 use proptest::prelude::*;
 
 fn req(mode: DeploymentMode) -> VerificationRequest {
@@ -25,7 +26,7 @@ fn req(mode: DeploymentMode) -> VerificationRequest {
 fn find_step<'a>(
     response: &'a mprd_zk::external_verifier::VerificationResponse,
     name: &str,
-) -> Option<&'a mprd_zk::modes::VerificationStep> {
+) -> Option<&'a VerificationStep> {
     response.steps.iter().find(|s| s.name == name)
 }
 

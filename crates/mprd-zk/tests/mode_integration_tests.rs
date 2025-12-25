@@ -6,17 +6,16 @@
 //! - Mode B-Full: Cryptographic ZK (Risc0) - infrastructure only
 //! - Mode C: Private (encryption + ZK) - infrastructure only
 
-#![allow(deprecated)]
-
 use mprd_core::{
     components::{SimpleProposer, SimpleStateProvider},
     orchestrator::{run_once, RunOnceInputs},
     CandidateAction, DefaultSelector, Hash32, PolicyEngine, PolicyHash, PolicyRef, Result,
     RuleVerdict, StateSnapshot, Value,
 };
+use mprd_zk::modes_v2::{DeploymentMode, EncryptionConfig, ModeConfig};
 use mprd_zk::{
-    create_attestor, create_verifier, DeploymentMode, ExternalVerifier, ModeConfig,
-    MpbTrustlessAttestor, MpbTrustlessVerifier, VerificationRequest,
+    create_robust_attestor, create_robust_private_attestor, create_robust_verifier,
+    ExternalVerifier, RobustMpbAttestor, RobustMpbVerifier, VerificationRequest,
 };
 use std::collections::HashMap;
 
@@ -128,12 +127,29 @@ fn mode_a_local_trusted_flow() {
 
 #[test]
 fn mode_b_lite_attestation_flow() {
-    let (state_provider, proposer, policy_engine, selector, policy_hash) = setup_components();
+    let state_provider =
+        SimpleStateProvider::new(HashMap::from([("balance".into(), Value::UInt(10000))]));
+    let proposer = SimpleProposer::single(
+        "ACTION",
+        HashMap::from([("param".into(), Value::Int(42))]),
+        100,
+    );
+    let policy_engine = AllowAllPolicyEngine;
+    let selector = DefaultSelector;
+
+    let policy_bytecode = mprd_core::mpb::BytecodeBuilder::new()
+        .push_i64(1)
+        .halt()
+        .build();
+    let policy_hash = Hash32(mprd_mpb::policy_hash_v1(&policy_bytecode, &[]));
 
     // Mode B-Lite uses MPB attestor/verifier
     let token_factory = mprd_core::components::SignedDecisionTokenFactory::default_for_testing();
-    let attestor = MpbTrustlessAttestor::default_config();
-    let verifier = MpbTrustlessVerifier::default_config();
+    let mut attestor_cfg = ModeConfig::mode_b_lite();
+    attestor_cfg.mpb_policy_bytecode = Some(policy_bytecode);
+    attestor_cfg.mpb_policy_variables = Some(vec![]);
+    let attestor = RobustMpbAttestor::new(attestor_cfg).expect("attestor");
+    let verifier = RobustMpbVerifier::default_config().expect("verifier");
     let executor = mprd_core::components::LoggingExecutorAdapter::new();
 
     let result = run_once(RunOnceInputs {
@@ -193,41 +209,17 @@ fn mode_b_lite_external_verification() {
 
 #[test]
 fn mode_b_full_requires_risc0() {
-    let config = ModeConfig::mode_b_full([0u8; 32]);
-    let attestor = create_attestor(&config);
+    let mut config = ModeConfig::mode_b_full([0u8; 32]);
+    config.mpb_policy_bytecode = Some(
+        mprd_core::mpb::BytecodeBuilder::new()
+            .push_i64(1)
+            .halt()
+            .build(),
+    );
+    config.mpb_policy_variables = Some(vec![]);
 
-    let state = StateSnapshot {
-        fields: HashMap::new(),
-        policy_inputs: HashMap::new(),
-        state_hash: dummy_hash(1),
-        state_ref: mprd_core::StateRef::unknown(),
-    };
-
-    let decision = mprd_core::Decision {
-        chosen_index: 0,
-        chosen_action: CandidateAction {
-            action_type: "TEST".into(),
-            params: HashMap::new(),
-            score: mprd_core::Score(10),
-            candidate_hash: dummy_hash(2),
-        },
-        policy_hash: dummy_hash(3),
-        decision_commitment: dummy_hash(4),
-    };
-
-    // Mode B-Full should fail until Risc0 is wired
-    let token = mprd_core::DecisionToken {
-        policy_hash: decision.policy_hash.clone(),
-        policy_ref: dummy_policy_ref(),
-        state_hash: state.state_hash.clone(),
-        state_ref: mprd_core::StateRef::unknown(),
-        chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
-        nonce_or_tx_hash: dummy_hash(9),
-        timestamp_ms: 0,
-        signature: vec![],
-    };
-    let result = attestor.attest(&token, &decision, &state, &[]);
-    assert!(result.is_err(), "B-Full should fail without Risc0");
+    let result = create_robust_attestor(&config);
+    assert!(result.is_err(), "B-Full should reject all-zero image_id");
 }
 
 #[test]
@@ -259,42 +251,21 @@ fn mode_b_full_external_verifier_requires_image_id() {
 // =============================================================================
 
 #[test]
-fn mode_c_not_yet_implemented() {
-    let config = ModeConfig::mode_c([0u8; 32], "test-key");
-    let attestor = create_attestor(&config);
+fn mode_c_private_attestor_requires_master_key() {
+    let config = ModeConfig::mode_c([1u8; 32], "test-key");
+    let encryption_config = EncryptionConfig::default();
 
-    let state = StateSnapshot {
-        fields: HashMap::new(),
-        policy_inputs: HashMap::new(),
-        state_hash: dummy_hash(1),
-        state_ref: mprd_core::StateRef::unknown(),
-    };
+    let result = create_robust_private_attestor(&config, encryption_config);
+    assert!(result.is_err(), "Mode C should require a master_key");
+}
 
-    let decision = mprd_core::Decision {
-        chosen_index: 0,
-        chosen_action: CandidateAction {
-            action_type: "TEST".into(),
-            params: HashMap::new(),
-            score: mprd_core::Score(10),
-            candidate_hash: dummy_hash(2),
-        },
-        policy_hash: dummy_hash(3),
-        decision_commitment: dummy_hash(4),
-    };
+#[test]
+fn mode_c_private_attestor_builds_with_master_key() {
+    let config = ModeConfig::mode_c([1u8; 32], "test-key");
+    let encryption_config = EncryptionConfig::with_master_key("test-key", [9u8; 32]);
 
-    // Mode C should fail until implemented
-    let token = mprd_core::DecisionToken {
-        policy_hash: decision.policy_hash.clone(),
-        policy_ref: dummy_policy_ref(),
-        state_hash: state.state_hash.clone(),
-        state_ref: mprd_core::StateRef::unknown(),
-        chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
-        nonce_or_tx_hash: dummy_hash(9),
-        timestamp_ms: 0,
-        signature: vec![],
-    };
-    let result = attestor.attest(&token, &decision, &state, &[]);
-    assert!(result.is_err(), "Mode C should fail until implemented");
+    let result = create_robust_private_attestor(&config, encryption_config);
+    assert!(result.is_ok(), "Mode C should accept a master_key");
 }
 
 // =============================================================================
@@ -304,39 +275,50 @@ fn mode_c_not_yet_implemented() {
 #[test]
 fn factory_creates_correct_attestors() {
     // Mode A
-    let config_a = ModeConfig::mode_a();
-    let _attestor_a = create_attestor(&config_a);
+    let mut config_a = ModeConfig::mode_a();
+    config_a.strict_security = false;
+    assert!(create_robust_attestor(&config_a).is_ok());
 
     // Mode B-Lite
-    let config_b_lite = ModeConfig::mode_b_lite();
-    let _attestor_b_lite = create_attestor(&config_b_lite);
+    let policy_bytecode = mprd_core::mpb::BytecodeBuilder::new()
+        .push_i64(1)
+        .halt()
+        .build();
+    let mut config_b_lite = ModeConfig::mode_b_lite();
+    config_b_lite.mpb_policy_bytecode = Some(policy_bytecode.clone());
+    config_b_lite.mpb_policy_variables = Some(vec![]);
+    assert!(create_robust_attestor(&config_b_lite).is_ok());
 
     // Mode B-Full
-    let config_b_full = ModeConfig::mode_b_full([0u8; 32]);
-    let _attestor_b_full = create_attestor(&config_b_full);
+    let mut config_b_full = ModeConfig::mode_b_full([1u8; 32]);
+    config_b_full.mpb_policy_bytecode = Some(policy_bytecode);
+    config_b_full.mpb_policy_variables = Some(vec![]);
+    assert!(create_robust_attestor(&config_b_full).is_ok());
 
     // Mode C
-    let config_c = ModeConfig::mode_c([0u8; 32], "key");
-    let _attestor_c = create_attestor(&config_c);
+    let config_c = ModeConfig::mode_c([1u8; 32], "key");
+    let encryption_config = EncryptionConfig::with_master_key("key", [5u8; 32]);
+    assert!(create_robust_private_attestor(&config_c, encryption_config).is_ok());
 }
 
 #[test]
 fn factory_creates_correct_verifiers() {
     // Mode A
-    let config_a = ModeConfig::mode_a();
-    let _verifier_a = create_verifier(&config_a);
+    let mut config_a = ModeConfig::mode_a();
+    config_a.strict_security = false;
+    assert!(create_robust_verifier(&config_a).is_ok());
 
     // Mode B-Lite
     let config_b_lite = ModeConfig::mode_b_lite();
-    let _verifier_b_lite = create_verifier(&config_b_lite);
+    assert!(create_robust_verifier(&config_b_lite).is_ok());
 
     // Mode B-Full
-    let config_b_full = ModeConfig::mode_b_full([0u8; 32]);
-    let _verifier_b_full = create_verifier(&config_b_full);
+    let config_b_full = ModeConfig::mode_b_full([1u8; 32]);
+    assert!(create_robust_verifier(&config_b_full).is_ok());
 
     // Mode C
-    let config_c = ModeConfig::mode_c([0u8; 32], "key");
-    let _verifier_c = create_verifier(&config_c);
+    let config_c = ModeConfig::mode_c([1u8; 32], "key");
+    assert!(create_robust_verifier(&config_c).is_ok());
 }
 
 // =============================================================================
