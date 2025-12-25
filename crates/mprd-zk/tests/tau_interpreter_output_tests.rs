@@ -899,6 +899,42 @@ fn run_tau_file_io_once(tau_bin: &Path, program: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+fn run_tau_file_io_once_in_dir(tau_bin: &Path, dir: &Path, program: &str) -> std::io::Result<()> {
+    let mut child = Command::new(tau_bin)
+        .current_dir(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| std::io::Error::other("tau stdin unavailable"))?;
+        stdin.write_all(program.as_bytes())?;
+        stdin.flush()?;
+    }
+
+    let output = child.wait_with_output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    if !output.status.success() {
+        return Err(std::io::Error::other(format!(
+            "tau file-io run failed. stderr: {stderr}"
+        )));
+    }
+
+    if stdout.contains("(Error)") || stderr.contains("(Error)") {
+        return Err(std::io::Error::other(format!(
+            "tau file-io reported error. stdout: {stdout} stderr: {stderr}"
+        )));
+    }
+
+    Ok(())
+}
+
 fn unique_tau_work_dir(label: &str) -> PathBuf {
     static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
@@ -1148,6 +1184,175 @@ fn tau_testnet_genesis_step0_outputs_are_deterministic() {
     assert_eq!(outputs_step0.get("o0[0]").map(|s| s.as_str()), Some("T"));
     assert_eq!(outputs_step0.get("o999[0]").map(|s| s.as_str()), Some("F"));
     assert_eq!(outputs_step0.get("u[0]").map(|s| s.as_str()), Some("F"));
+}
+
+fn tokenomics_v6_action_gate_repl_path() -> Option<PathBuf> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.to_path_buf())?;
+
+    let path = workspace_root.join("policies/tokenomics/canonical/mprd_tokenomics_v6_action_gate.tau");
+    if path.is_file() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+#[test]
+fn tokenomics_v6_action_gate_examples_match_expected() {
+    let Some(tau_bin) = tau_binary_path() else {
+        eprintln!("Skipping: TAU_BIN not set and external/tau-lang/build-Release/tau not found",);
+        return;
+    };
+    let Some(spec_path) = tokenomics_v6_action_gate_repl_path() else {
+        eprintln!("Skipping: policies/tokenomics/canonical/mprd_tokenomics_v6_action_gate.tau not found");
+        return;
+    };
+
+    let program =
+        std::fs::read_to_string(&spec_path).expect("reading tokenomics v6 action gate should work");
+
+    #[derive(Clone, Debug)]
+    struct Case {
+        label: &'static str,
+        expected_allow: bool,
+        values: BTreeMap<&'static str, bool>,
+    }
+
+    // Inputs required by the gate (file stems, without ".in").
+    let input_names: [&'static str; 21] = [
+        // global rails
+        "link_ok",
+        "actor_is_target_ok",
+        "control_auth_ok",
+        "epoch_phase_ok",
+        "action_preconds_ok",
+        // CBC rail + action-specific auth
+        "action_one_hot_ok",
+        "service_tx_auth_ok",
+        "credit_agrs_replay_ok",
+        // one-hot action flags
+        "is_admit_operator",
+        "is_credit_agrs",
+        "is_set_opi",
+        "is_set_bounds",
+        "is_stake_start",
+        "is_stake_end",
+        "is_accrue_bcr_drip",
+        "is_apply_service_tx",
+        "is_auction_reveal",
+        "is_finalize_epoch",
+        "is_settle_ops_payroll",
+        "is_settle_auction",
+        "is_advance_epoch",
+    ];
+
+    let mut base = BTreeMap::<&'static str, bool>::new();
+    for name in input_names {
+        base.insert(name, false);
+    }
+    // Common rails: all true unless overridden.
+    for name in [
+        "link_ok",
+        "epoch_phase_ok",
+        "action_preconds_ok",
+        "service_tx_auth_ok",
+        "credit_agrs_replay_ok",
+    ] {
+        base.insert(name, true);
+    }
+
+    let mut stake_start = base.clone();
+    stake_start.insert("action_one_hot_ok", true);
+    stake_start.insert("actor_is_target_ok", true);
+    stake_start.insert("is_stake_start", true);
+
+    let mut unknown_action = base.clone();
+    unknown_action.insert("action_one_hot_ok", false); // unknown => deny
+
+    let mut service_missing_auth = base.clone();
+    service_missing_auth.insert("action_one_hot_ok", true);
+    service_missing_auth.insert("is_apply_service_tx", true);
+    service_missing_auth.insert("service_tx_auth_ok", false);
+
+    let mut credit_missing_replay = base.clone();
+    credit_missing_replay.insert("action_one_hot_ok", true);
+    credit_missing_replay.insert("is_credit_agrs", true);
+    credit_missing_replay.insert("control_auth_ok", true);
+    credit_missing_replay.insert("credit_agrs_replay_ok", false);
+
+    let cases: Vec<Case> = vec![
+        Case {
+            label: "stake_start_allowed",
+            expected_allow: true,
+            values: stake_start,
+        },
+        Case {
+            label: "unknown_action_denied",
+            expected_allow: false,
+            values: unknown_action,
+        },
+        Case {
+            label: "service_tx_missing_auth_denied",
+            expected_allow: false,
+            values: service_missing_auth,
+        },
+        Case {
+            label: "credit_missing_replay_denied",
+            expected_allow: false,
+            values: credit_missing_replay,
+        },
+    ];
+
+    let work_dir = unique_tau_work_dir("tokenomics_v6_action_gate_examples");
+    let _ = std::fs::create_dir_all(&work_dir);
+    let inputs_dir = work_dir.join("inputs");
+    let outputs_dir = work_dir.join("outputs");
+    let _ = std::fs::create_dir_all(&inputs_dir);
+    let _ = std::fs::create_dir_all(&outputs_dir);
+    let _ = std::fs::remove_file(outputs_dir.join("allow.out"));
+
+    for name in input_names {
+        let mut contents = String::from("0\n");
+        for case in &cases {
+            let b = case.values.get(name).copied().unwrap_or(false);
+            contents.push_str(sbf_to_file_literal(b));
+            contents.push('\n');
+        }
+        std::fs::write(inputs_dir.join(format!("{name}.in")), contents)
+            .expect("writing tokenomics gate input file should work");
+    }
+
+    run_tau_file_io_once_in_dir(&tau_bin, &work_dir, &program).unwrap_or_else(|e| {
+        panic!("tau run failed for tokenomics v6 action gate: {e}");
+    });
+
+    let out_path = outputs_dir.join("allow.out");
+    let out_contents = std::fs::read_to_string(&out_path)
+        .unwrap_or_else(|e| panic!("failed reading tokenomics gate output: {e}"));
+    let out_lines: Vec<String> = out_contents.lines().map(|l| l.trim().to_string()).collect();
+
+    let expected_len = 1usize + cases.len();
+    assert_eq!(
+        out_lines.len(),
+        expected_len,
+        "unexpected output line count for allow.out"
+    );
+
+    for (idx, case) in cases.iter().enumerate() {
+        let raw = &out_lines[idx + 1];
+        let Some(actual) = parse_sbf_value_to_bool(raw) else {
+            panic!("case {}: unexpected sbf output '{raw}'", case.label);
+        };
+        assert_eq!(
+            actual, case.expected_allow,
+            "case {}: expected allow={}, got allow={}",
+            case.label, case.expected_allow, actual
+        );
+    }
 }
 
 #[test]

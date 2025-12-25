@@ -1,0 +1,94 @@
+# ============================================================================
+# AUDIT: MPRD Tokenomics v6 Action Gate (Debug Signals)
+# ============================================================================
+# Same decision as `mprd_tokenomics_v6_action_gate.tau`, but emits intermediate
+# outputs for auditing and test vectors.
+#
+# Warning: More outputs => slower Tau runs. Use only for debugging/audits.
+# ============================================================================
+
+# Inputs (global rails)
+i_link_ok              : sbf   = in file("inputs/link_ok.in").
+i_actor_is_target_ok   : sbf   = in file("inputs/actor_is_target_ok.in").
+i_control_auth_ok      : sbf   = in file("inputs/control_auth_ok.in").
+i_epoch_phase_ok       : sbf   = in file("inputs/epoch_phase_ok.in").
+i_action_preconds_ok   : sbf   = in file("inputs/action_preconds_ok.in").
+
+# Host-computed action-kind invariant (CBC rail)
+i_action_one_hot_ok    : sbf   = in file("inputs/action_one_hot_ok.in").
+
+# Action-specific authorization inputs
+i_service_tx_auth_ok   : sbf   = in file("inputs/service_tx_auth_ok.in").
+i_credit_agrs_replay_ok: sbf   = in file("inputs/credit_agrs_replay_ok.in").
+
+# One-hot action flags (decoded by host from ActionV6)
+i_is_admit_operator      : sbf = in file("inputs/is_admit_operator.in").
+i_is_credit_agrs         : sbf = in file("inputs/is_credit_agrs.in").
+i_is_set_opi             : sbf = in file("inputs/is_set_opi.in").
+i_is_set_bounds          : sbf = in file("inputs/is_set_bounds.in").
+i_is_stake_start         : sbf = in file("inputs/is_stake_start.in").
+i_is_stake_end           : sbf = in file("inputs/is_stake_end.in").
+i_is_accrue_bcr_drip     : sbf = in file("inputs/is_accrue_bcr_drip.in").
+i_is_apply_service_tx    : sbf = in file("inputs/is_apply_service_tx.in").
+i_is_auction_reveal      : sbf = in file("inputs/is_auction_reveal.in").
+i_is_finalize_epoch      : sbf = in file("inputs/is_finalize_epoch.in").
+i_is_settle_ops_payroll  : sbf = in file("inputs/is_settle_ops_payroll.in").
+i_is_settle_auction      : sbf = in file("inputs/is_settle_auction.in").
+i_is_advance_epoch       : sbf = in file("inputs/is_advance_epoch.in").
+
+# Outputs (audit signals)
+o_action_any             : sbf = out file("outputs/action_any.out").
+o_low_impact_ok          : sbf = out file("outputs/low_impact_ok.out").
+o_service_ok             : sbf = out file("outputs/service_ok.out").
+o_epoch_transition_ok    : sbf = out file("outputs/epoch_transition_ok.out").
+o_admin_ok               : sbf = out file("outputs/admin_ok.out").
+o_allow                  : sbf = out file("outputs/allow.out").
+
+defs
+r (
+    (o_action_any[t] =
+        i_is_admit_operator[t] |
+        i_is_credit_agrs[t] |
+        i_is_set_opi[t] |
+        i_is_set_bounds[t] |
+        i_is_stake_start[t] |
+        i_is_stake_end[t] |
+        i_is_accrue_bcr_drip[t] |
+        i_is_apply_service_tx[t] |
+        i_is_auction_reveal[t] |
+        i_is_finalize_epoch[t] |
+        i_is_settle_ops_payroll[t] |
+        i_is_settle_auction[t] |
+        i_is_advance_epoch[t]
+    ) &&
+
+    (o_low_impact_ok[t] =
+        (i_is_stake_start[t] | i_is_stake_end[t] | i_is_auction_reveal[t])
+        & i_actor_is_target_ok[t]
+    ) &&
+
+    (o_service_ok[t] = i_is_apply_service_tx[t] & i_service_tx_auth_ok[t]) &&
+
+    (o_epoch_transition_ok[t] =
+        (i_is_accrue_bcr_drip[t] | i_is_finalize_epoch[t] | i_is_settle_ops_payroll[t] | i_is_settle_auction[t] | i_is_advance_epoch[t])
+        & i_control_auth_ok[t]
+    ) &&
+
+    (o_admin_ok[t] =
+        ((i_is_admit_operator[t] | i_is_set_opi[t] | i_is_set_bounds[t]) & i_control_auth_ok[t])
+        |
+        (i_is_credit_agrs[t] & i_control_auth_ok[t] & i_credit_agrs_replay_ok[t])
+    ) &&
+
+    (o_allow[t] =
+        i_link_ok[t]
+        & i_action_preconds_ok[t]
+        & i_epoch_phase_ok[t]
+        & i_action_one_hot_ok[t]
+        & o_action_any[t]
+        & (o_low_impact_ok[t] | o_service_ok[t] | o_epoch_transition_ok[t] | o_admin_ok[t])
+    )
+)
+n
+q
+

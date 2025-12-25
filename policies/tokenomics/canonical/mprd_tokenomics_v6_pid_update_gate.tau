@@ -14,6 +14,10 @@
 i_link_ok                 : sbf    = in file("inputs/link_ok.in").
 i_control_auth_ok         : sbf    = in file("inputs/control_auth_ok.in").
 
+# Versioning and timing inputs (prevent replay of old proposals)
+i_params_version_ok       : sbf    = in file("inputs/params_version_ok.in").   # proposed_version > current (monotone)
+i_update_window_ok        : sbf    = in file("inputs/update_window_ok.in").    # current phase allows updates
+
 # Host-computed checks (sbf-only):
 # - In-range for each new value
 # - Per-step limit for each value
@@ -34,6 +38,11 @@ o_burn_step_ok             : sbf    = out file("outputs/burn_step_ok.out").
 o_auction_step_ok          : sbf    = out file("outputs/auction_step_ok.out").
 o_drip_step_ok             : sbf    = out file("outputs/drip_step_ok.out").
 o_split_ok                 : sbf    = out file("outputs/split_ok.out").
+o_params_version_ok        : sbf    = out file("outputs/params_version_ok.out").
+o_update_window_ok         : sbf    = out file("outputs/update_window_ok.out").
+
+# All host-computed checks combined.
+o_all_checks_ok            : sbf    = out file("outputs/all_checks_ok.out").
 
 # Result
 o_accept                  : sbf    = out file("outputs/accept.out").
@@ -48,19 +57,26 @@ r (
     (o_auction_step_ok[t]     = i_auction_step_ok[t]) &&
     (o_drip_step_ok[t]        = i_drip_step_ok[t]) &&
     (o_split_ok[t]            = i_split_ok[t]) &&
+    (o_params_version_ok[t]   = i_params_version_ok[t]) &&
+    (o_update_window_ok[t]    = i_update_window_ok[t]) &&
 
-    # Final acceptance
-    (o_accept[t] =
-        i_link_ok[t]
-        &
-        i_control_auth_ok[t]
-        & i_burn_in_range_ok[t]
+    (o_all_checks_ok[t] =
+        i_burn_in_range_ok[t]
         & i_auction_in_range_ok[t]
         & i_drip_in_range_ok[t]
         & i_burn_step_ok[t]
         & i_auction_step_ok[t]
         & i_drip_step_ok[t]
         & i_split_ok[t]
+    ) &&
+
+    # Final acceptance: link + auth + versioning + update window + all parameter checks
+    (o_accept[t] =
+        i_link_ok[t]
+        & i_control_auth_ok[t]
+        & i_params_version_ok[t]
+        & i_update_window_ok[t]
+        & o_all_checks_ok[t]
     )
 )
 n

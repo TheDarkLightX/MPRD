@@ -22,7 +22,8 @@ The `canonical/` folder contains the intended production Tau specs:
 
 | Spec | Purpose |
 |------|---------|
-| `mprd_tokenomics_v6_action_gate.tau` | Main gate for v6 action execution (`ActionV6`) |
+| `mprd_tokenomics_v6_action_gate.tau` | Main gate for v6 action execution (`ActionV6`) (fast, minimal outputs) |
+| `mprd_tokenomics_v6_action_gate_audit.tau` | Same decision as action gate, but with debug/audit outputs (slower) |
 | `mprd_tokenomics_v6_pid_update_gate.tau` | Gate for PID-proposed parameter updates (bounds + step limits) |
 
 The `inputs/` / `outputs/` directories are for local Tau runs and are gitignored.
@@ -50,6 +51,10 @@ The host decodes `ActionV6` into one-hot sbf flags:
 
 Unknown/unsupported actions must set all flags to `0` (fail-closed).
 
+The canonical action gate relies on an explicit host/CBC rail:
+- `i_action_one_hot_ok` is **computed by the host** and must be `1` exactly when the action flags are one-hot.
+- Tau additionally checks `o_action_any` (OR of all action flags) to fail-close “all zero” cases even if the host mis-sets `i_action_one_hot_ok`.
+
 ## Integration sketch
 
 The intended wiring is:
@@ -60,6 +65,8 @@ The intended wiring is:
 4. If allowed, the host calls `TokenomicsV6::apply(gate, action)`.
 
 The gate is *the hook* that makes the MPRD pattern explicit for tokenomics.
+
+For the trust-boundary contract of `i_link_ok`, see `canonical/link_ok_contract.md`.
 
 ## PID update gate (v6)
 
