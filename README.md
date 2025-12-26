@@ -128,6 +128,18 @@ cargo test
 cargo build --release
 ```
 
+## Documentation
+
+| Topic | Description |
+|-------|-------------|
+| [**SDK Quickstart**](docs/SDK_QUICKSTART.md) | Get started in 5 minutes |
+| [**Policy Algebra**](docs/POLICY_ALGEBRA.md) | How to write Tau governance specs |
+| [**Production Readiness**](docs/PRODUCTION_READINESS.md) | Pre-deployment checklist |
+| [**Security Hardening**](docs/SECURITY_HARDENING_CHECKLIST.md) | Security best practices |
+| [**Testing Guide**](docs/TESTING.md) | Testing strategies and commands |
+| [**CEO Menu Modes**](docs/CEO_MENU_MODES.md) | Algorithmic tokenomics controller |
+| [**ZK Production**](docs/PRODUCTION_ZK.md) | ZK proof deployment guide |
+
 ## Testing
 
 ```bash
