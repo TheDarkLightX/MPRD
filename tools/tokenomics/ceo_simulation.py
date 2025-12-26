@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import math
 import random
 import statistics
@@ -533,6 +534,7 @@ class EpochRecord:
     bcr_minted: int
 
     opi_end: int
+    bcr_supply_end: int
     bcr_price_ema_end_bps: int
 
     nw_total: int
@@ -1044,6 +1046,7 @@ def run_simulation(*, seed: int, epochs: int, controller: Controller, state: Sim
                 bcr_burned_auction=bcr_burned_auction,
                 bcr_minted=bcr_minted,
                 opi_end=state.opi_bps,
+                bcr_supply_end=state.bcr_supply,
                 bcr_price_ema_end_bps=state.bcr_price_ema_bps,
                 nw_total=nw_total,
                 nw_protocol_agrs=nw_protocol,
@@ -1103,9 +1106,29 @@ def main() -> None:
     ap.add_argument("--initial-opi-bps", type=int, default=8_000, help="initial OPI in bps (0..10_000)")
     ap.add_argument("--initial-bcr-price-bps", type=int, default=9_000, help="initial BCR mtm price EMA (0..10_000)")
 
+    ap.add_argument(
+        "--bcr-price-ema-alpha-bps",
+        type=int,
+        default=2_000,
+        help="BCR price EMA alpha in bps (0..10_000); higher = faster but noisier",
+    )
+    ap.add_argument(
+        "--opi-adjust-bps",
+        type=int,
+        default=2_000,
+        help="OPI adjustment alpha in bps (0..10_000); higher = faster but noisier",
+    )
+    ap.add_argument(
+        "--opi-shock-sigma-bps",
+        type=int,
+        default=150,
+        help="OPI exogenous shock sigma (bps, >= 0); 0 disables shocks",
+    )
+
     ap.add_argument("--churn-penalty-agrs", type=int, default=50, help="profit_utility: penalty per L1 unit moved")
     ap.add_argument("--reserve-floor-agrs", type=int, default=0, help="profit_utility: reject moves that end < floor")
     ap.add_argument("--revenue-floor-agrs", type=int, default=60_000, help="opi_first: required expected next-epoch net fees")
+    ap.add_argument("--json", action="store_true", help="emit a machine-readable JSON summary only")
     args = ap.parse_args()
 
     if args.epochs <= 0:
@@ -1122,6 +1145,12 @@ def main() -> None:
         raise SystemExit("--initial-opi-bps must be in [0,10_000]")
     if not (0 <= args.initial_bcr_price_bps <= BPS):
         raise SystemExit("--initial-bcr-price-bps must be in [0,10_000]")
+    if not (0 <= args.bcr_price_ema_alpha_bps <= BPS):
+        raise SystemExit("--bcr-price-ema-alpha-bps must be in [0,10_000]")
+    if not (0 <= args.opi_adjust_bps <= BPS):
+        raise SystemExit("--opi-adjust-bps must be in [0,10_000]")
+    if args.opi_shock_sigma_bps < 0:
+        raise SystemExit("--opi-shock-sigma-bps must be >= 0")
 
     knobs0 = Knobs(burn_units=args.burn_units, auction_units=args.auction_units, drip_units=args.drip_units)
 
@@ -1156,13 +1185,13 @@ def main() -> None:
             payout_lock_epochs=14,
         ),
         valuation=ValuationModel(
-            ema_alpha_bps=2_000,
+            ema_alpha_bps=args.bcr_price_ema_alpha_bps,
             price_min_bps=2_000,
             price_max_bps=10_000,
             discount_bps_per_epoch=9_950,
         ),
         opi=OpiModel(
-            opi_adjust_bps=2_000,
+            opi_adjust_bps=args.opi_adjust_bps,
             base_opi_bps=6_500,
             cashflow_scale_agrs=20_000,
             cashflow_weight_bps=2_000,
@@ -1170,7 +1199,7 @@ def main() -> None:
             liquidity_weight_bps=1_500,
             reserve_weight_bps=1_000,
             reserve_target_agrs=fixed.reserve_target_agrs,
-            shock_sigma_bps=150,
+            shock_sigma_bps=args.opi_shock_sigma_bps,
         ),
     )
 
@@ -1220,27 +1249,93 @@ def main() -> None:
     churn_events = sum(1 for c in churn if c != 0)
 
     last = records[-1]
+    summary = {
+        "epochs": args.epochs,
+        "seed": args.seed,
+        "strategy": args.strategy,
+        "params": {
+            "bcr_price_ema_alpha_bps": args.bcr_price_ema_alpha_bps,
+            "opi_adjust_bps": args.opi_adjust_bps,
+            "opi_shock_sigma_bps": args.opi_shock_sigma_bps,
+        },
+        "initial": {
+            "burn_bps": knobs0.burn_bps(),
+            "auction_bps": knobs0.auction_bps(),
+            "drip_bps": knobs0.drip_bps(),
+            "opi_bps": args.initial_opi_bps,
+            "bcr_supply": args.initial_bcr,
+            "bcr_price_ema_bps": args.initial_bcr_price_bps,
+        },
+        "final": {
+            "burn_bps": last.knobs.burn_bps(),
+            "auction_bps": last.knobs.auction_bps(),
+            "drip_bps": last.knobs.drip_bps(),
+            "opi_bps": last.opi_end,
+            "bcr_supply": last.bcr_supply_end,
+            "bcr_price_ema_bps": last.bcr_price_ema_end_bps,
+            "nw_total": last.nw_total,
+            "nw_protocol": last.nw_protocol_agrs,
+            "nw_operator_liquid": last.nw_operator_liquid_agrs,
+            "nw_operator_locked_pv": last.nw_operator_locked_pv_agrs,
+            "nw_bcr_mtm": last.nw_bcr_mtm_agrs,
+            "reserve_end": last.reserve_end_agrs,
+        },
+        "metrics": {
+            "max_drawdown": dd,
+            "volatility": vol,
+            "opi_mean": statistics.mean(opi),
+            "opi_p05": quantile(opi_sorted, 0.05),
+            "opi_p50": quantile(opi_sorted, 0.5),
+            "opi_p95": quantile(opi_sorted, 0.95),
+            "reserve_min": min(reserve),
+            "reserve_p05": int(round(quantile(reserve_sorted, 0.05))),
+            "churn_events": churn_events,
+            "churn_l1_total": sum(churn),
+            "churn_l1_avg": statistics.mean(churn),
+        },
+    }
+
+    if args.json:
+        print(json.dumps(summary, sort_keys=True))
+        return
+
     print("# Algorithmic CEO — Economic Simulation (deterministic)\n")
-    print(f"epochs={args.epochs} seed={args.seed} strategy={args.strategy}")
-    print(f"initial_knobs: burn={knobs0.burn_bps()} auction={knobs0.auction_bps()} drip={knobs0.drip_bps()} (bps)")
-    print(f"final_knobs:   burn={last.knobs.burn_bps()} auction={last.knobs.auction_bps()} drip={last.knobs.drip_bps()} (bps)")
+    print(f"epochs={summary['epochs']} seed={summary['seed']} strategy={summary['strategy']}")
+    print(
+        "initial_knobs: "
+        f"burn={summary['initial']['burn_bps']} auction={summary['initial']['auction_bps']} drip={summary['initial']['drip_bps']} (bps)"
+    )
+    print(
+        "final_knobs:   "
+        f"burn={summary['final']['burn_bps']} auction={summary['final']['auction_bps']} drip={summary['final']['drip_bps']} (bps)"
+    )
 
     print("\n## Final balances (AGRS)\n")
-    print(f"NW_total:              {fmt_int(last.nw_total)}")
-    print(f"  protocol (reserve+unalloc+carry): {fmt_int(last.nw_protocol_agrs)}")
-    print(f"  operators liquid:               {fmt_int(last.nw_operator_liquid_agrs)}")
-    print(f"  operators locked PV:            {fmt_int(last.nw_operator_locked_pv_agrs)}")
-    print(f"  BCR mtm (EMA):                  {fmt_int(last.nw_bcr_mtm_agrs)} @ {last.bcr_price_ema_end_bps} bps")
+    print(f"NW_total:              {fmt_int(summary['final']['nw_total'])}")
+    print(f"  protocol (reserve+unalloc+carry): {fmt_int(summary['final']['nw_protocol'])}")
+    print(f"  operators liquid:               {fmt_int(summary['final']['nw_operator_liquid'])}")
+    print(f"  operators locked PV:            {fmt_int(summary['final']['nw_operator_locked_pv'])}")
+    print(
+        f"  BCR mtm (EMA):                  {fmt_int(summary['final']['nw_bcr_mtm'])} @ {summary['final']['bcr_price_ema_bps']} bps"
+    )
 
     print("\n## Risk + behavior\n")
-    print(f"max drawdown (NW):     {pct(dd)}")
-    print(f"volatility (NW):       {pct(vol)}")
-    print(f"OPI mean/median/p5/p95: {statistics.mean(opi):.1f} / {quantile(opi_sorted,0.5):.1f} / {quantile(opi_sorted,0.05):.1f} / {quantile(opi_sorted,0.95):.1f}")
+    print(f"max drawdown (NW):     {pct(summary['metrics']['max_drawdown'])}")
+    print(f"volatility (NW):       {pct(summary['metrics']['volatility'])}")
+    print(
+        "OPI mean/median/p5/p95: "
+        f"{summary['metrics']['opi_mean']:.1f} / {summary['metrics']['opi_p50']:.1f} / "
+        f"{summary['metrics']['opi_p05']:.1f} / {summary['metrics']['opi_p95']:.1f}"
+    )
     print(
         "reserve end/min/p5:    "
-        f"{fmt_int(last.reserve_end_agrs)} / {fmt_int(min(reserve))} / {fmt_int(int(round(quantile(reserve_sorted, 0.05))))}"
+        f"{fmt_int(summary['final']['reserve_end'])} / {fmt_int(summary['metrics']['reserve_min'])} / {fmt_int(summary['metrics']['reserve_p05'])}"
     )
-    print(f"parameter churn:       events={churn_events}/{args.epochs} total_L1={sum(churn)} avg_L1={statistics.mean(churn):.2f}")
+    print(
+        "parameter churn:       "
+        f"events={summary['metrics']['churn_events']}/{summary['epochs']} "
+        f"total_L1={summary['metrics']['churn_l1_total']} avg_L1={summary['metrics']['churn_l1_avg']:.2f}"
+    )
 
 
 if __name__ == "__main__":
