@@ -47,3 +47,6 @@ AGENTS.md
 # Python virtual environments
 venv/
 .venv/
+
+# Codex skills (internal)
+tools/codex-skills/
