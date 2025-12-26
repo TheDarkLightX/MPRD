@@ -29,6 +29,10 @@ policies/tokenomics/archive/
 *.swo
 .DS_Store
 
+# Python artifacts
+__pycache__/
+*.py[cod]
+
 # Test artifacts
 *.log
 /tmp/

@@ -17,6 +17,7 @@ pub mod mpb;
 pub mod nonce;
 pub mod observability;
 pub mod orchestrator;
+pub mod policy_algebra;
 pub mod registry;
 pub mod selectors;
 pub mod state_provenance;
