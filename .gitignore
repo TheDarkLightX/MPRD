@@ -42,3 +42,8 @@ __pycache__/
 
 # MCP servers (experimental tools)
 /tools/mcp-servers/
+AGENTS.md
+
+# Python virtual environments
+venv/
+.venv/
