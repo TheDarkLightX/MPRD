@@ -100,8 +100,10 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
 
             // Remove identity elements.
             flat.retain(|c| !matches!(c, PolicyExpr::True));
-            // Constant short-circuit (safe): False in All denies always.
-            if flat.iter().any(|c| matches!(c, PolicyExpr::False)) {
+            // Constant short-circuit is only safe when there is no veto (`DenyIf`) anywhere
+            // in the subtree. Otherwise we would erase veto guards, changing DenyVeto vs DenySoft.
+            let has_deny_if = flat.iter().any(|c| c.contains_deny_if());
+            if !has_deny_if && flat.iter().any(|c| matches!(c, PolicyExpr::False)) {
                 return Ok(PolicyExpr::False);
             }
 
@@ -134,7 +136,13 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
             }
 
             if keyed.len() == 1 {
-                return Ok(keyed.pop().unwrap().expr);
+                let only = keyed.pop().unwrap().expr;
+                // `DenyIf` is neutral in the main formula, so `All([DenyIf(x)])` allows
+                // (when veto guards are not triggered). Collapsing would change semantics.
+                if matches!(only, PolicyExpr::DenyIf(_)) {
+                    return Ok(PolicyExpr::All(vec![only]));
+                }
+                return Ok(only);
             }
 
             Ok(PolicyExpr::All(keyed.into_iter().map(|k| k.expr).collect()))

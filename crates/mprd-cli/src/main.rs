@@ -581,6 +581,24 @@ enum PolicyCommands {
         out: Option<PathBuf>,
     },
 
+    /// Certify a Tau gate against a Policy Algebra v1 binary (ROBDD-based).
+    ///
+    /// This parses the sbf-only allow predicate from the Tau gate and proves semantic
+    /// equivalence against the policy algebra input by ROBDD comparison (with counterexample).
+    AlgebraCertifyTau {
+        /// Policy Algebra v1 bytes (binary file).
+        #[arg(long)]
+        policy: PathBuf,
+
+        /// Tau gate file emitted by `mprd policy algebra-emit-tau` (or equivalent).
+        #[arg(long)]
+        tau: PathBuf,
+
+        /// Output name (controls `o_<name>[t] = ...` line to extract).
+        #[arg(long, default_value = "allow")]
+        output_name: String,
+    },
+
     /// Compute a semantic ROBDD hash for a Policy Algebra v1 binary.
     ///
     /// This hash commits to the *boolean function* (given canonical atom order) and is stable
@@ -666,6 +684,11 @@ fn main() -> Result<()> {
                 output_name,
                 out,
             } => commands::policy_algebra::emit_tau(policy, output_name, out),
+            PolicyCommands::AlgebraCertifyTau {
+                policy,
+                tau,
+                output_name,
+            } => commands::policy_algebra::certify_tau(policy, tau, output_name),
             PolicyCommands::AlgebraBddHash { policy } => commands::policy_algebra::bdd_hash(policy),
             PolicyCommands::AlgebraDiff { a, b } => commands::policy_algebra::diff(a, b),
         },
