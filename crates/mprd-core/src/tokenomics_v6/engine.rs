@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{Hash32, MprdError, Result};
+use sha2::{Digest, Sha256};
 
 use super::actions::{ActionOutcomeV6, ActionV6};
 use super::auction::{
@@ -13,6 +14,7 @@ use super::types::{
     Agrs, AgrsPerBcr, Bcr, Bps, EpochId, OperatorId, ParamsV6, Shares, StakeId, StakeStartOutcome,
     StakeStatus,
 };
+use super::{InvariantIdV6, InvariantViolationV6};
 
 /// Per-transaction service payment input.
 ///
@@ -227,6 +229,276 @@ impl TokenomicsV6 {
 
     pub fn epoch(&self) -> EpochId {
         self.epoch
+    }
+
+    /// Deterministic hash of the full v6 engine state (debug/audit rail).
+    ///
+    /// This is intended for invariant checking and regression debugging (e.g., "no mutation on error").
+    ///
+    /// It is **not** a wire format commitment and must not be used as a public protocol hash without
+    /// a versioned spec.
+    pub fn state_hash_v1(&self) -> Hash32 {
+        const DOMAIN: &[u8] = b"MPRD_TOKENOMICS_V6_STATE_HASH_V1";
+        let mut h = Sha256::new();
+        h.update(DOMAIN);
+
+        // Params (CBC-validated at construction).
+        h.update(&self.params.burn_surplus_bps().get().to_le_bytes());
+        h.update(&self.params.auction_surplus_bps().get().to_le_bytes());
+        h.update(&self.params.ops_pay_bps().get().to_le_bytes());
+        h.update(&self.params.overhead_bps().get().to_le_bytes());
+        h.update(&self.params.drip_rate_bps().get().to_le_bytes());
+        h.update(&self.params.max_offset_per_tx_bps().get().to_le_bytes());
+        h.update(&self.params.max_offset_per_epoch_bps().get().to_le_bytes());
+        h.update(&self.params.ops_floor_fixed_agrs().get().to_le_bytes());
+        h.update(&self.params.reserve_target_agrs().get().to_le_bytes());
+        h.update(&self.params.carry_cap_agrs().get().to_le_bytes());
+        h.update(&self.params.share_rate_k().to_le_bytes());
+        h.update(&self.params.payout_lock_epochs().to_le_bytes());
+
+        // Safety bounds (DoS rails).
+        h.update(&(self.bounds.max_operators as u64).to_le_bytes());
+        h.update(&(self.bounds.max_stakes_per_operator as u64).to_le_bytes());
+        h.update(&(self.bounds.max_bids_per_epoch as u64).to_le_bytes());
+        h.update(&(self.bounds.max_locked_entries_per_operator as u64).to_le_bytes());
+
+        // Epoch state.
+        h.update(&self.epoch.0.to_le_bytes());
+        h.update(&self.total_shares_issued.to_le_bytes());
+        h.update(&self.auction_carry.to_le_bytes());
+
+        // Epoch aggregates.
+        h.update(&self.epoch_agg.base_fees_gross.to_le_bytes());
+        h.update(&self.epoch_agg.tips_gross.to_le_bytes());
+        h.update(&self.epoch_agg.offset_total.to_le_bytes());
+        h.update(&[u8::from(self.epoch_agg.drip_applied)]);
+        h.update(&(self.epoch_agg.work_units_by_operator.len() as u64).to_le_bytes());
+        for (oid, wu) in &self.epoch_agg.work_units_by_operator {
+            h.update(&oid.0 .0);
+            h.update(&wu.to_le_bytes());
+        }
+
+        // Cached budgets.
+        match &self.budgets {
+            None => h.update(&[0u8]),
+            Some(b) => {
+                h.update(&[1u8]);
+                h.update(&b.f_base_gross.get().to_le_bytes());
+                h.update(&b.f_tip.get().to_le_bytes());
+                h.update(&b.offset_total.get().to_le_bytes());
+                h.update(&b.f_net.get().to_le_bytes());
+                h.update(&b.ops_budget.get().to_le_bytes());
+                h.update(&b.ops_overhead.get().to_le_bytes());
+                h.update(&b.ops_payroll.get().to_le_bytes());
+                h.update(&b.reserve_budget.get().to_le_bytes());
+                h.update(&b.burn_surplus.get().to_le_bytes());
+                h.update(&b.auction_new.get().to_le_bytes());
+                h.update(&b.unallocated.get().to_le_bytes());
+            }
+        }
+        h.update(&[u8::from(self.payroll_settled)]);
+        h.update(&[u8::from(self.auction_settled)]);
+
+        // Bids (epoch-scoped).
+        h.update(&(self.bids.len() as u64).to_le_bytes());
+        for bid in &self.bids {
+            h.update(&bid.bid_hash.0);
+            h.update(&bid.operator.0 .0);
+            h.update(&bid.qty_bcr.get().to_le_bytes());
+            h.update(&bid.min_price.get().to_le_bytes());
+        }
+
+        // Totals.
+        h.update(&self.burned_total.to_le_bytes());
+        h.update(&self.reserve_balance.to_le_bytes());
+        h.update(&self.unallocated_balance.to_le_bytes());
+
+        // Operator accounts.
+        h.update(&(self.operators.len() as u64).to_le_bytes());
+        for (oid, op) in &self.operators {
+            h.update(&oid.0 .0);
+            h.update(&op.agrs_balance.to_le_bytes());
+            h.update(&op.shares_active.to_le_bytes());
+            h.update(&op.bcr_balance.to_le_bytes());
+            h.update(&op.bcr_escrow.to_le_bytes());
+            h.update(&op.opi_bps.get().to_le_bytes());
+
+            h.update(&(op.stakes.len() as u64).to_le_bytes());
+            for (sid, st) in &op.stakes {
+                h.update(&sid.0 .0);
+                h.update(&st.amount_agrs.to_le_bytes());
+                h.update(&st.lock_epochs.to_le_bytes());
+                h.update(&st.start_epoch.to_le_bytes());
+                h.update(&st.shares.to_le_bytes());
+                h.update(&[match st.status {
+                    StakeStatus::Active => 1,
+                    StakeStatus::Ended => 2,
+                }]);
+            }
+
+            h.update(&(op.locked_agrs.len() as u64).to_le_bytes());
+            for (k, v) in &op.locked_agrs {
+                h.update(&k.0.to_le_bytes());
+                h.update(&v.to_le_bytes());
+            }
+        }
+
+        let out = h.finalize();
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&out);
+        Hash32(bytes)
+    }
+
+    /// Check internal invariants for v6 (debug/audit rail).
+    pub fn check_invariants_v1(&self) -> std::result::Result<(), InvariantViolationV6> {
+        // Safety bounds should never be exceeded by reachable states.
+        if self.operators.len() > self.bounds.max_operators {
+            return Err(InvariantViolationV6::new(
+                InvariantIdV6::BoundsRespected,
+                "operator count exceeds safety bound (unreachable state)",
+            ));
+        }
+        if self.bids.len() > self.bounds.max_bids_per_epoch {
+            return Err(InvariantViolationV6::new(
+                InvariantIdV6::BoundsRespected,
+                "bids len exceeds safety bound (unreachable state)",
+            ));
+        }
+
+        // Auction carry is always capped.
+        let carry_cap = self.params.carry_cap_agrs().get();
+        if self.auction_carry > carry_cap {
+            return Err(InvariantViolationV6::new(
+                InvariantIdV6::AuctionCarryCapped,
+                format!(
+                    "auction_carry={} exceeds carry_cap_agrs={}",
+                    self.auction_carry, carry_cap
+                ),
+            ));
+        }
+
+        // Escrow must match revealed bids exactly (per operator).
+        let mut expected_escrow: BTreeMap<OperatorId, u64> = BTreeMap::new();
+        for bid in &self.bids {
+            let prev = expected_escrow.get(&bid.operator).copied().unwrap_or(0);
+            expected_escrow.insert(
+                bid.operator,
+                add_u64(prev, bid.qty_bcr.get()).map_err(|e| {
+                    InvariantViolationV6::new(
+                        InvariantIdV6::EscrowMatchesBids,
+                        format!("escrow sum overflow: {e}"),
+                    )
+                })?,
+            );
+        }
+        for (oid, op) in &self.operators {
+            let expected = expected_escrow.get(oid).copied().unwrap_or(0);
+            if op.bcr_escrow != expected {
+                return Err(InvariantViolationV6::new(
+                    InvariantIdV6::EscrowMatchesBids,
+                    format!(
+                        "bcr_escrow mismatch for operator {}: have={} expected={}",
+                        hex::encode(oid.0 .0),
+                        op.bcr_escrow,
+                        expected
+                    ),
+                ));
+            }
+        }
+
+        // Budget cache invariants (only when finalized).
+        if let Some(b) = &self.budgets {
+            if b.offset_total.get() > b.f_base_gross.get() {
+                return Err(InvariantViolationV6::new(
+                    InvariantIdV6::BudgetsConserve,
+                    "offset_total exceeds f_base_gross",
+                ));
+            }
+            if b.f_net.get() != (b.f_base_gross.get() - b.offset_total.get()) {
+                return Err(InvariantViolationV6::new(
+                    InvariantIdV6::BudgetsConserve,
+                    "f_net != f_base_gross - offset_total",
+                ));
+            }
+            let ops_sum =
+                (b.ops_overhead.get() as u128).saturating_add(b.ops_payroll.get() as u128);
+            if (b.ops_budget.get() as u128) != ops_sum {
+                return Err(InvariantViolationV6::new(
+                    InvariantIdV6::BudgetsConserve,
+                    "ops_budget != ops_overhead + ops_payroll",
+                ));
+            }
+            let sum = (b.ops_budget.get() as u128)
+                .saturating_add(b.reserve_budget.get() as u128)
+                .saturating_add(b.burn_surplus.get() as u128)
+                .saturating_add(b.auction_new.get() as u128)
+                .saturating_add(b.unallocated.get() as u128);
+            if sum != (b.f_net.get() as u128) {
+                return Err(InvariantViolationV6::new(
+                    InvariantIdV6::BudgetsConserve,
+                    format!("budget sum {sum} != f_net {}", b.f_net.get()),
+                ));
+            }
+        } else if self.payroll_settled || self.auction_settled {
+            return Err(InvariantViolationV6::new(
+                InvariantIdV6::BudgetsConserve,
+                "settlement flags set while budgets is None",
+            ));
+        }
+
+        // Shares accounting: per-operator shares_active matches sum of active stakes.
+        let mut total_active_shares: u64 = 0;
+        for (_oid, op) in &self.operators {
+            if op.stakes.len() > self.bounds.max_stakes_per_operator {
+                return Err(InvariantViolationV6::new(
+                    InvariantIdV6::BoundsRespected,
+                    "stakes len exceeds safety bound (unreachable state)",
+                ));
+            }
+            if op.locked_agrs.len() > self.bounds.max_locked_entries_per_operator {
+                return Err(InvariantViolationV6::new(
+                    InvariantIdV6::BoundsRespected,
+                    "locked entries exceed safety bound (unreachable state)",
+                ));
+            }
+            let mut sum: u64 = 0;
+            for st in op.stakes.values() {
+                if st.status == StakeStatus::Active {
+                    sum = add_u64(sum, st.shares).map_err(|e| {
+                        InvariantViolationV6::new(
+                            InvariantIdV6::SharesActiveMatchesStakes,
+                            format!("shares sum overflow: {e}"),
+                        )
+                    })?;
+                }
+            }
+            if sum != op.shares_active {
+                return Err(InvariantViolationV6::new(
+                    InvariantIdV6::SharesActiveMatchesStakes,
+                    format!(
+                        "shares_active mismatch: have={} expected={}",
+                        op.shares_active, sum
+                    ),
+                ));
+            }
+            total_active_shares = add_u64(total_active_shares, sum).map_err(|e| {
+                InvariantViolationV6::new(
+                    InvariantIdV6::SharesActiveMatchesStakes,
+                    format!("total shares overflow: {e}"),
+                )
+            })?;
+        }
+        if total_active_shares > self.total_shares_issued {
+            return Err(InvariantViolationV6::new(
+                InvariantIdV6::SharesActiveLeIssuedTotal,
+                format!(
+                    "total_active_shares={} exceeds total_shares_issued={}",
+                    total_active_shares, self.total_shares_issued
+                ),
+            ));
+        }
+
+        Ok(())
     }
 
     /// Applies a tokenomics action through a policy gate (fail-closed).

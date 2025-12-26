@@ -92,3 +92,13 @@ Sanitizers (nightly):
 
 - Fast local loop: `tools/test.sh fast`
 - Deeper exploration: `PROPTEST_CASES=512 tools/test.sh pbt-core`
+
+## Invariant rail (Tokenomics v6)
+
+Tokenomics v6 includes an **invariant checking rail** intended to catch “should be impossible” states and
+produce **minimal counterexample traces**.
+
+- CLI fuzzer: `mprd tokenomics fuzz-invariants-v6 --seed 1 --steps 300 --iters 50 --operators 4`
+- Core API:
+  - `tokenomics_v6::first_invariant_counterexample_v1(...)`
+  - `tokenomics_v6::minimize_counterexample_v1(...)`

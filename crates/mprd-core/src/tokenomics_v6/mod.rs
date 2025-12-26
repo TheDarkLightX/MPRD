@@ -17,6 +17,8 @@ pub mod bounds;
 pub mod ceo;
 pub mod engine;
 pub mod gate;
+pub mod invariant_rail;
+pub mod invariants;
 #[cfg(kani)]
 mod kani_proofs;
 pub mod math;
@@ -32,6 +34,8 @@ pub use bounds::RuntimeBoundsV6;
 pub use ceo::{CeoDecision, CeoObjective, GreedyCeo};
 pub use engine::{EpochBudgetsV6, OpsPayrollOutcome, ServiceTx, TokenomicsV6};
 pub use gate::{AllowAllGateV6, DenyAllGateV6, PolicyGateV6};
+pub use invariant_rail::{first_invariant_counterexample_v1, minimize_counterexample_v1};
+pub use invariants::{InvariantCounterexampleV6, InvariantIdV6, InvariantViolationV6};
 pub use objective::{
     evaluate_hybrid, evaluate_opi_first, evaluate_profit_utility, ObjectiveConfig,
     ObjectiveConfigState, ObjectiveEvaluator, ObjectiveId, ObjectiveState,
