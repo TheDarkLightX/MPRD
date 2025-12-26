@@ -11,6 +11,7 @@
 //! - **Bounded** arity and trace sizes.
 
 mod ast;
+mod bdd;
 mod canon;
 mod eval;
 mod hash;
@@ -18,6 +19,9 @@ mod tau_emit;
 mod trace;
 
 pub use ast::{PolicyAtom, PolicyExpr, PolicyKind, PolicyLimits, PolicyOutcome, PolicyOutcomeKind};
+pub use bdd::{
+    compile_allow_robdd, policy_equiv_robdd, BddEquivResult, Robdd, POLICY_ROBDD_HASH_DOMAIN_V1,
+};
 pub use canon::CanonicalPolicy;
 pub use eval::{evaluate, EvalContext, PolicyEvalResult};
 pub use hash::{decode_policy_v1, policy_hash_v1, POLICY_ALGEBRA_HASH_DOMAIN_V1};

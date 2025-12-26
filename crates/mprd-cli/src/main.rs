@@ -580,6 +580,29 @@ enum PolicyCommands {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+
+    /// Compute a semantic ROBDD hash for a Policy Algebra v1 binary.
+    ///
+    /// This hash commits to the *boolean function* (given canonical atom order) and is stable
+    /// across benign refactors that preserve semantics.
+    AlgebraBddHash {
+        /// Policy Algebra v1 bytes (binary file).
+        #[arg(long)]
+        policy: PathBuf,
+    },
+
+    /// Compare two Policy Algebra v1 binaries for semantic equivalence (ROBDD-based).
+    ///
+    /// If not equivalent, prints a concrete counterexample assignment.
+    AlgebraDiff {
+        /// Policy Algebra v1 bytes (binary file).
+        #[arg(long)]
+        a: PathBuf,
+
+        /// Policy Algebra v1 bytes (binary file).
+        #[arg(long)]
+        b: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -643,6 +666,8 @@ fn main() -> Result<()> {
                 output_name,
                 out,
             } => commands::policy_algebra::emit_tau(policy, output_name, out),
+            PolicyCommands::AlgebraBddHash { policy } => commands::policy_algebra::bdd_hash(policy),
+            PolicyCommands::AlgebraDiff { a, b } => commands::policy_algebra::diff(a, b),
         },
         Commands::Run {
             policy,
