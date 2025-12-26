@@ -566,7 +566,7 @@ enum PolicyCommands {
     ///
     /// This is primarily an audit / interoperability utility: it lets you author a boolean
     /// gate as a Policy Algebra AST, then emit an sbf-only Tau spec that enforces the same
-    /// allow/deny predicate.
+    /// allow/deny predicate (including fail-closed missing-signal behavior via presence bits).
     AlgebraEmitTau {
         /// Policy Algebra v1 bytes (binary file).
         #[arg(long)]
@@ -585,6 +585,8 @@ enum PolicyCommands {
     ///
     /// This parses the sbf-only allow predicate from the Tau gate and proves semantic
     /// equivalence against the policy algebra input by ROBDD comparison (with counterexample).
+    ///
+    /// Counterexamples are printed over signals as `missing|true|false`.
     AlgebraCertifyTau {
         /// Policy Algebra v1 bytes (binary file).
         #[arg(long)]
@@ -611,7 +613,8 @@ enum PolicyCommands {
 
     /// Compare two Policy Algebra v1 binaries for semantic equivalence (ROBDD-based).
     ///
-    /// If not equivalent, prints a concrete counterexample assignment.
+    /// If not equivalent, prints a concrete counterexample assignment (signals shown as
+    /// `missing|true|false`).
     AlgebraDiff {
         /// Policy Algebra v1 bytes (binary file).
         #[arg(long)]

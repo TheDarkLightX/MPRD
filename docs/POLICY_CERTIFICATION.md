@@ -22,8 +22,13 @@ This rail is intentionally scoped to the **booleanizable subset** of Policy Alge
 - `DenyIf(atom)` supported **only** as a *global veto* (must not appear under `Not`)
 - `Threshold(k, children)` supported only for `k==0` or `k==n` (otherwise rejected)
 
-It does **not** attempt to model “missing signals” (fail‑closed behavior) as a third truth value; equivalence is checked over
-total boolean assignments.
+It **does** model “missing signals” (fail‑closed behavior) by lowering each signal `a` into two boolean bits:
+- `p_a`: presence bit (1 if present)
+- `v_a`: value bit (1 if true; required to be 0 when missing)
+
+Under this lowering:
+- `Atom(a)` becomes `p_a ∧ v_a` (missing denies)
+- each `DenyIf(a)` adds a veto constraint `p_a ∧ ¬v_a` (missing vetoes)
 
 ## CLI usage
 
@@ -47,6 +52,7 @@ mprd policy algebra-diff --a old.pal --b new.pal
 ```
 
 If not equivalent, it prints a concrete assignment (a counterexample) showing how they differ.
+Counterexamples are shown over **signals** as `missing|true|false`.
 
 ### Certify an emitted Tau gate
 
@@ -57,7 +63,11 @@ you can certify equivalence via ROBDD:
 mprd policy algebra-certify-tau --policy path/to/policy.pal --tau path/to/gate.tau --output-name allow
 ```
 
-If not equivalent, it prints a concrete counterexample assignment over the policy’s boolean signals.
+The emitted v2 gate uses presence bits, so it expects inputs:
+- `inputs/p_<signal>.in` (presence)
+- `inputs/v_<signal>.in` (value)
+
+If not equivalent, it prints a concrete counterexample assignment over the policy’s signals.
 
 ## API usage (Rust)
 
@@ -65,6 +75,7 @@ If not equivalent, it prints a concrete counterexample assignment over the polic
 - `compile_allow_robdd(expr, limits) -> Robdd`
 - `policy_equiv_robdd(a, b, limits) -> BddEquivResult`
  - `parse_emitted_tau_gate_allow_expr_v1(tau_source, output_name, limits) -> PolicyExpr`
+ - `policy_equiv_robdd_policy_vs_tau_bits(policy, tau_bits, limits) -> BddEquivResult`
 
 ## Next steps (if we want stronger certification)
 

@@ -15,19 +15,21 @@ mod bdd;
 mod canon;
 mod eval;
 mod hash;
-mod tau_sbf_parse;
 mod tau_emit;
+mod tau_sbf_parse;
 mod trace;
 
 pub use ast::{PolicyAtom, PolicyExpr, PolicyKind, PolicyLimits, PolicyOutcome, PolicyOutcomeKind};
 pub use bdd::{
-    compile_allow_robdd, policy_equiv_robdd, BddEquivResult, Robdd, POLICY_ROBDD_HASH_DOMAIN_V1,
+    compile_allow_robdd, policy_equiv_robdd, policy_equiv_robdd_policy_vs_tau_bits, BddEquivResult,
+    Robdd, POLICY_ROBDD_HASH_DOMAIN_V1,
 };
 pub use canon::CanonicalPolicy;
 pub use eval::{evaluate, EvalContext, PolicyEvalResult};
 pub use hash::{decode_policy_v1, policy_hash_v1, POLICY_ALGEBRA_HASH_DOMAIN_V1};
-pub use tau_sbf_parse::{parse_emitted_tau_gate_allow_expr_v1, parse_tau_sbf_expr_v1};
 pub use tau_emit::emit_tau_gate_v1;
+pub use tau_emit::emit_tau_gate_v2;
+pub use tau_sbf_parse::{parse_emitted_tau_gate_allow_expr_v1, parse_tau_sbf_expr_v1};
 pub use trace::{PolicyTrace, TraceEntry, TraceReasonCode};
 
 impl EvalContext for std::collections::BTreeMap<String, bool> {
@@ -143,10 +145,12 @@ mod tests {
             limits,
         )
         .unwrap();
-        let tau = emit_tau_gate_v1(&expr, "allow", limits).unwrap();
+        let tau = emit_tau_gate_v2(&expr, "allow", limits).unwrap();
 
-        assert!(tau.contains("i_a[t]"));
-        assert!(tau.contains("(i_b[t] | i_c[t])"));
+        // Atom(a) lowers to (p_a & v_a)
+        assert!(tau.contains("i_p_a[t]"));
+        assert!(tau.contains("i_v_a[t]"));
+        assert!(tau.contains("(i_p_b[t] & i_v_b[t]) | (i_p_c[t] & i_v_c[t])"));
     }
 
     #[test]
@@ -156,10 +160,11 @@ mod tests {
         let ban = PolicyExpr::deny_if("ban", limits).unwrap();
         let expr = PolicyExpr::any(vec![ok, ban], limits).unwrap();
 
-        let tau = emit_tau_gate_v1(&expr, "allow", limits).unwrap();
+        let tau = emit_tau_gate_v2(&expr, "allow", limits).unwrap();
 
-        // Veto-first semantics should enforce `!ban` as a top-level conjunction.
-        assert!(tau.contains("i_ban[t]'"));
+        // Veto-first + fail-closed: requires (p_ban & !v_ban) as a top-level conjunction.
+        assert!(tau.contains("i_p_ban[t]"));
+        assert!(tau.contains("i_v_ban[t]'"));
     }
 
     #[test]
