@@ -1,6 +1,7 @@
 use super::{build_incidents, normalize_incident_message, AppState};
 use crate::operator::api as op_api;
 use crate::operator::store::OperatorStore;
+use std::sync::{Arc, RwLock};
 
 fn test_state(tmp: &tempfile::TempDir) -> AppState {
     let policy_dir = tmp.path().join("policies");
@@ -18,6 +19,7 @@ fn test_state(tmp: &tempfile::TempDir) -> AppState {
         insecure_demo: false,
         live_tx,
         config: super::super::MprdConfigFile::default(),
+        cegis_metrics: Arc::new(RwLock::new(mprd_core::cegis::ProposerMetrics::default())),
     }
 }
 

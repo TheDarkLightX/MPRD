@@ -11,6 +11,7 @@ use mprd_core::{
 use serde::de::DeserializeOwned;
 use std::convert::Infallible;
 use std::pin::Pin;
+use std::sync::{Arc, RwLock};
 use std::task::{Context, Poll};
 use tower::ServiceExt;
 
@@ -30,6 +31,7 @@ fn test_state(tmp: &tempfile::TempDir) -> AppState {
         insecure_demo: false,
         live_tx,
         config: super::super::MprdConfigFile::default(),
+        cegis_metrics: Arc::new(RwLock::new(mprd_core::cegis::ProposerMetrics::default())),
     }
 }
 
@@ -423,6 +425,31 @@ async fn metrics_reflect_recent_decisions_and_success_rate() {
     assert_eq!(out.decisions.allowed, 1);
     assert_eq!(out.decisions.denied, 1);
     assert_eq!(out.success_rate.value, 50.0);
+}
+
+#[tokio::test]
+async fn cegis_metrics_endpoint_returns_defaults() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state = test_state(&tmp);
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/cegis/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let out: op_api::CegisMetricsSummary = read_json(res).await;
+    assert_eq!(out.proposals_total, 0);
+    assert_eq!(out.proposals_valid, 0);
+    assert_eq!(out.proposals_invalid, 0);
+    assert_eq!(out.counterexamples_captured, 0);
+    assert_eq!(out.time_to_first_valid_ms, None);
 }
 
 #[tokio::test]

@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc bec385c7adf1d88d0e97528ab05a974911b8fb65a91a10b9a5913f9450fb4437 # shrinks to max_staleness_ms = 10000
+cc 00380ebb5b646d884ad82d858f26b91fd4a24105e9991dbe8918940d0df3b743 # shrinks to max_staleness_ms = 10761

@@ -6,11 +6,11 @@ import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
     LayoutDashboard,
     FileCheck,
-    FileCode,
     Bell,
     Settings,
     Activity,
-    Shield
+    Shield,
+    Bot,
 } from 'lucide-react';
 import { ModeBanner } from './ModeBanner';
 import { useOperatorAlerts } from '../../hooks';
@@ -24,7 +24,7 @@ import { ThemeToggle } from '../ui';
 const navItems = [
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
     { path: '/decisions', icon: FileCheck, label: 'Decisions' },
-    { path: '/policies', icon: FileCode, label: 'Policies' },
+    { path: '/automation', icon: Bot, label: 'Automation' },
     { path: '/security', icon: Shield, label: 'Security' },
     { path: '/settings', icon: Settings, label: 'Settings' },
 ];

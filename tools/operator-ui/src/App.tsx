@@ -24,6 +24,9 @@ const DecisionsPage = lazy(() => import('./pages/Decisions').then(m => ({ defaul
 const PoliciesPage = lazy(() => import('./pages/Policies').then(m => ({ default: m.PoliciesPage })));
 const SecurityPage = lazy(() => import('./pages/Security').then(m => ({ default: m.SecurityPage })));
 const SettingsPage = lazy(() => import('./pages/Settings').then(m => ({ default: m.SettingsPage })));
+const CeoPage = lazy(() => import('./pages/Ceo').then(m => ({ default: m.CeoPage })));
+const CegisPage = lazy(() => import('./pages/Cegis').then(m => ({ default: m.CegisPage })));
+const AutomationPage = lazy(() => import('./pages/Automation').then(m => ({ default: m.AutomationPage })));
 
 // Loading fallback for lazy-loaded pages
 function PageSkeleton() {
@@ -72,6 +75,11 @@ function App() {
                           <PoliciesPage />
                         </Suspense>
                       } />
+                      <Route path="/automation" element={
+                        <Suspense fallback={<PageSkeleton />}>
+                          <AutomationPage />
+                        </Suspense>
+                      } />
                       <Route path="/security" element={
                         <Suspense fallback={<PageSkeleton />}>
                           <SecurityPage />
@@ -80,6 +88,16 @@ function App() {
                       <Route path="/settings" element={
                         <Suspense fallback={<PageSkeleton />}>
                           <SettingsPage />
+                        </Suspense>
+                      } />
+                      <Route path="/ceo" element={
+                        <Suspense fallback={<PageSkeleton />}>
+                          <CeoPage />
+                        </Suspense>
+                      } />
+                      <Route path="/cegis" element={
+                        <Suspense fallback={<PageSkeleton />}>
+                          <CegisPage />
                         </Suspense>
                       } />
                     </Route>

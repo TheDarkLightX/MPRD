@@ -272,6 +272,17 @@ pub struct MetricsSummary {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CegisMetricsSummary {
+    pub proposals_total: u64,
+    pub proposals_valid: u64,
+    pub proposals_invalid: u64,
+    pub counterexamples_captured: u64,
+    #[serde(default)]
+    pub time_to_first_valid_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MetricsPeriod {
     pub start: i64,
     pub end: i64,

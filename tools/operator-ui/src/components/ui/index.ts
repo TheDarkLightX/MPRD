@@ -11,6 +11,9 @@ export type { MetricCardProps } from './MetricCard';
 // New components
 export { ErrorBoundary, ErrorFallbackCompact, CardSkeleton } from './ErrorBoundary';
 export { Tooltip, TruncatedText, HoverCard, Shimmer } from './Tooltip';
+export { Glossary } from './Glossary';
+export type { GlossaryTerm } from './Glossary';
 export { ThemeToggle, ThemeSwitch } from './ThemeToggle';
 export { VirtualizedTable } from './VirtualizedTable';
 export type { Column } from './VirtualizedTable';
+

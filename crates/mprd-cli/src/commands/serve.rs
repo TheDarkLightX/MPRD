@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
@@ -80,6 +81,7 @@ struct AppState {
     insecure_demo: bool,
     live_tx: tokio::sync::broadcast::Sender<String>,
     config: super::MprdConfigFile,
+    cegis_metrics: Arc<RwLock<mprd_core::cegis::ProposerMetrics>>,
 }
 
 #[derive(Deserialize)]
@@ -1868,6 +1870,22 @@ async fn api_metrics(
     }))
 }
 
+async fn api_cegis_metrics(
+    State(state): State<AppState>,
+) -> Result<Json<op_api::CegisMetricsSummary>, StatusCode> {
+    let metrics = state
+        .cegis_metrics
+        .read()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(op_api::CegisMetricsSummary {
+        proposals_total: metrics.proposals_total,
+        proposals_valid: metrics.proposals_valid,
+        proposals_invalid: metrics.proposals_invalid,
+        counterexamples_captured: metrics.counterexamples_captured,
+        time_to_first_valid_ms: metrics.time_to_first_valid_ms,
+    }))
+}
+
 fn verifier_from_env() -> Result<Box<dyn mprd_core::ZkLocalVerifier>, String> {
     let path = std::env::var("MPRD_OPERATOR_REGISTRY_STATE_PATH").map_err(|_| {
         "registry_state unavailable: set MPRD_OPERATOR_REGISTRY_STATE_PATH".to_string()
@@ -2018,6 +2036,7 @@ fn build_app(state: AppState, api_key: operator::auth::ApiKeyConfig) -> Router {
         )
         .route("/status", get(api_status))
         .route("/metrics", get(api_metrics))
+        .route("/cegis/metrics", get(api_cegis_metrics))
         .route("/alerts", get(api_alerts))
         .route("/alerts/:id/acknowledge", post(api_alert_ack))
         .route("/incidents", get(api_incidents))
@@ -2087,6 +2106,7 @@ pub fn run(
         insecure_demo,
         live_tx,
         config,
+        cegis_metrics: Arc::new(RwLock::new(mprd_core::cegis::ProposerMetrics::default())),
     };
 
     let addr: SocketAddr = bind.parse()?;

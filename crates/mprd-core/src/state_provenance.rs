@@ -331,14 +331,7 @@ impl QuorumSignedSnapshotStateProvider {
         }
     }
 
-    fn check_freshness(&self) -> Result<()> {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| MprdError::ExecutionError("system clock error".into()))?
-            .as_millis() as i64;
-
+    fn check_freshness_at(&self, now_ms: i64) -> Result<()> {
         let staleness = now_ms - self.signed.created_at_ms;
         if staleness > self.max_staleness_ms {
             return Err(MprdError::ExecutionError(format!(
@@ -354,6 +347,17 @@ impl QuorumSignedSnapshotStateProvider {
             )));
         }
         Ok(())
+    }
+
+    fn check_freshness(&self) -> Result<()> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| MprdError::ExecutionError("system clock error".into()))?
+            .as_millis() as i64;
+
+        self.check_freshness_at(now_ms)
     }
 }
 
@@ -738,7 +742,10 @@ mod tests {
             let provider_safe = QuorumSignedSnapshotStateProvider::new(
                 snap_safe, trusted.clone(), max_staleness_ms
             );
-            prop_assert!(provider_safe.snapshot().is_ok(), "within max_staleness should pass");
+            prop_assert!(
+                provider_safe.check_freshness_at(now_ms).is_ok(),
+                "within max_staleness should pass"
+            );
 
             // Test 2: Clearly over max staleness should FAIL
             let stale_created = now_ms - max_staleness_ms - test_buffer_ms;
@@ -751,7 +758,10 @@ mod tests {
             let provider_stale = QuorumSignedSnapshotStateProvider::new(
                 snap_stale, trusted.clone(), max_staleness_ms
             );
-            prop_assert!(provider_stale.snapshot().is_err(), "over max_staleness should fail");
+            prop_assert!(
+                provider_stale.check_freshness_at(now_ms).is_err(),
+                "over max_staleness should fail"
+            );
 
             // Test 3: Within 5s future skew should PASS
             let safe_future_created = now_ms + 4900;  // 4.9s in future
@@ -764,7 +774,10 @@ mod tests {
             let provider_safe_future = QuorumSignedSnapshotStateProvider::new(
                 snap_safe_future, trusted.clone(), max_staleness_ms
             );
-            prop_assert!(provider_safe_future.snapshot().is_ok(), "within 5s future should pass");
+            prop_assert!(
+                provider_safe_future.check_freshness_at(now_ms).is_ok(),
+                "within 5s future should pass"
+            );
 
             // Test 4: Clearly past 5s future skew should FAIL
             let far_future_created = now_ms + 5100;  // 5.1s in future
@@ -777,7 +790,10 @@ mod tests {
             let provider_far_future = QuorumSignedSnapshotStateProvider::new(
                 snap_far_future, trusted, max_staleness_ms
             );
-            prop_assert!(provider_far_future.snapshot().is_err(), "over 5s future should fail");
+            prop_assert!(
+                provider_far_future.check_freshness_at(now_ms).is_err(),
+                "over 5s future should fail"
+            );
         }
 
         /// Stateful test: QuorumSignedStateSnapshotV1 attestor accumulation matches a reference model.

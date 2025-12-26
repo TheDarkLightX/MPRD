@@ -31,6 +31,7 @@ import { useLiveEvents } from '../context/LiveEventsContext';
 import { useAutopilot } from '../context/AutopilotContext';
 import { AutopilotActivitySidebar } from '../components/autopilot';
 import { SecurityPosturePanel } from '../components/security';
+import { CeoStatusCard } from '../components/ceo';
 import { renderGlanceable, createLoadingGlanceableView } from '../algorithms/glanceableRenderer';
 import { computeSecurityPosture } from '../algorithms/securityPosture';
 import { apiClient } from '../api/client';
@@ -346,6 +347,11 @@ export function DashboardPage() {
                             posture={posture}
                             onConfigureTrust={() => navigate('/settings')}
                         />
+                    </div>
+
+                    {/* Controller (CEO) Status */}
+                    <div className="animate-in slide-in-right delay-150">
+                        <CeoStatusCard />
                     </div>
 
                     {/* Alert Feed */}

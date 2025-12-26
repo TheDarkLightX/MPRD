@@ -4,6 +4,7 @@ use thiserror::Error;
 
 pub mod anti_replay;
 pub mod artifact_repo;
+pub mod cegis;
 pub mod components;
 pub mod config;
 pub mod crypto;

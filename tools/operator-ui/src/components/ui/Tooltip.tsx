@@ -1,7 +1,13 @@
 /**
- * Tooltip - Enhanced hover tooltips with smooth animations
+ * Tooltip - Premium hover tooltips with modern styling
  * 
- * Provides rich hover states for interactive elements.
+ * Design based on Apple/Figma/Linear systems:
+ * - Font: Inter or system fonts, 13px
+ * - Background: #2D2D2D (not pure black for OLED depth)
+ * - Text: #EDEDED (off-white for high contrast)
+ * - Border-radius: 6px
+ * - Shadow: Multi-layer for depth
+ * - Animation: 150ms fade + slight slide
  */
 
 import { useState, useRef, useEffect, type ReactNode } from 'react';
@@ -48,10 +54,10 @@ export function Tooltip({
     };
 
     const arrowClasses = {
-        top: 'top-full left-1/2 -translate-x-1/2 border-t-neutral-700 border-x-transparent border-b-transparent',
-        bottom: 'bottom-full left-1/2 -translate-x-1/2 border-b-neutral-700 border-x-transparent border-t-transparent',
-        left: 'left-full top-1/2 -translate-y-1/2 border-l-neutral-700 border-y-transparent border-r-transparent',
-        right: 'right-full top-1/2 -translate-y-1/2 border-r-neutral-700 border-y-transparent border-l-transparent',
+        top: 'top-full left-1/2 -translate-x-1/2 border-t-[#2D2D2D] border-x-transparent border-b-transparent',
+        bottom: 'bottom-full left-1/2 -translate-x-1/2 border-b-[#2D2D2D] border-x-transparent border-t-transparent',
+        left: 'left-full top-1/2 -translate-y-1/2 border-l-[#2D2D2D] border-y-transparent border-r-transparent',
+        right: 'right-full top-1/2 -translate-y-1/2 border-r-[#2D2D2D] border-y-transparent border-l-transparent',
     };
 
     return (
@@ -68,17 +74,27 @@ export function Tooltip({
             {isVisible && content && (
                 <div
                     className={`
-            absolute z-50 ${positionClasses[position]}
-            px-2.5 py-1.5 text-xs font-medium text-neutral-200
-            bg-neutral-800 border border-neutral-700 rounded-md shadow-lg
-            opacity-0 animate-tooltip-fade-in
-            whitespace-nowrap pointer-events-none
-            ${className}
-          `}
+                        absolute z-50 ${positionClasses[position]}
+                        px-3 py-2
+                        text-[13px] font-medium leading-relaxed tracking-tight
+                        text-[#EDEDED]
+                        bg-[#2D2D2D] 
+                        border border-[#404040]/50
+                        rounded-md
+                        shadow-[0_4px_12px_rgba(0,0,0,0.4),0_2px_4px_rgba(0,0,0,0.3)]
+                        backdrop-blur-sm
+                        animate-tooltip-fade-in
+                        whitespace-nowrap pointer-events-none
+                        max-w-[250px]
+                        ${className}
+                    `}
+                    style={{
+                        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+                    }}
                     role="tooltip"
                 >
                     {content}
-                    <div className={`absolute w-0 h-0 border-4 ${arrowClasses[position]}`} />
+                    <div className={`absolute w-0 h-0 border-[5px] ${arrowClasses[position]}`} />
                 </div>
             )}
         </div>
