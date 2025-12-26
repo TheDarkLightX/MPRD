@@ -33,7 +33,9 @@ pub struct PolicyTrace {
 
 impl PolicyTrace {
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     pub fn entries(&self) -> &[TraceEntry] {
@@ -50,4 +52,3 @@ impl PolicyTrace {
         Ok(())
     }
 }
-

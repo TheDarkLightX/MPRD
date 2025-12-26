@@ -32,13 +32,14 @@ pub use bounds::RuntimeBoundsV6;
 pub use ceo::{CeoDecision, CeoObjective, GreedyCeo};
 pub use engine::{EpochBudgetsV6, OpsPayrollOutcome, ServiceTx, TokenomicsV6};
 pub use gate::{AllowAllGateV6, DenyAllGateV6, PolicyGateV6};
+pub use objective::{
+    evaluate_hybrid, evaluate_opi_first, evaluate_profit_utility, ObjectiveConfig,
+    ObjectiveConfigState, ObjectiveEvaluator, ObjectiveId, ObjectiveState,
+    ValidatedObjectiveConfig,
+};
 pub use pid::{
     pid_step_bps, propose_v6, PidBpsConfig, PidBpsGains, PidBpsState, TokenomicsPidConfigV6,
     TokenomicsPidProposalV6, TokenomicsPidStateV6,
-};
-pub use objective::{
-    evaluate_hybrid, evaluate_opi_first, evaluate_profit_utility, ObjectiveConfig,
-    ObjectiveConfigState, ObjectiveEvaluator, ObjectiveId, ObjectiveState, ValidatedObjectiveConfig,
 };
 pub use types::{
     Agrs, AgrsPerBcr, Bcr, Bps, EpochId, OperatorId, ParamsV6, Shares, StakeId, StakeStartOutcome,

@@ -255,4 +255,3 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
         }
     }
 }
-

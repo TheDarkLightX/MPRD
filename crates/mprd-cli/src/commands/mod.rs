@@ -7,6 +7,7 @@ pub mod init;
 pub mod markets;
 pub mod panel;
 pub mod policy;
+pub mod policy_algebra;
 pub mod policy_test;
 pub mod policy_verify;
 pub mod prove;

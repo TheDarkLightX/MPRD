@@ -561,6 +561,25 @@ enum PolicyCommands {
         #[arg(long)]
         tests: PathBuf,
     },
+
+    /// Emit a canonical Tau gate from a Policy Algebra v1 binary.
+    ///
+    /// This is primarily an audit / interoperability utility: it lets you author a boolean
+    /// gate as a Policy Algebra AST, then emit an sbf-only Tau spec that enforces the same
+    /// allow/deny predicate.
+    AlgebraEmitTau {
+        /// Policy Algebra v1 bytes (binary file).
+        #[arg(long)]
+        policy: PathBuf,
+
+        /// Output name (controls `o_<name>` and `outputs/<name>.out`).
+        #[arg(long, default_value = "allow")]
+        output_name: String,
+
+        /// Write to a file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -619,6 +638,11 @@ fn main() -> Result<()> {
                 commands::policy_verify::run(file, cases, cli.config)
             }
             PolicyCommands::Test { policy, tests } => commands::policy_test::run(policy, tests),
+            PolicyCommands::AlgebraEmitTau {
+                policy,
+                output_name,
+                out,
+            } => commands::policy_algebra::emit_tau(policy, output_name, out),
         },
         Commands::Run {
             policy,

@@ -10,9 +10,7 @@ use std::collections::BTreeMap;
 
 use crate::{hash, Hash32, MprdError, Result};
 
-use super::types::{
-    ActionId, AuctionPct, BurnPct, DomainError, DripStep, MenuNode, ValidSplit,
-};
+use super::types::{ActionId, AuctionPct, BurnPct, DomainError, DripStep, MenuNode, ValidSplit};
 
 /// Menu graph version (increment on any structural change)
 pub const MENU_GRAPH_VERSION: u32 = 1;

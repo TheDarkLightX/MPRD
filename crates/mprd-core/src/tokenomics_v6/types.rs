@@ -638,23 +638,23 @@ impl MenuNode {
 
     /// Apply a delta (3D step), returning `Err(_)` if any step fails or split cap is violated.
     pub fn apply_delta(&self, delta: &Delta) -> std::result::Result<MenuNode, DomainError> {
-        let burn = self
-            .split
-            .burn
-            .apply_step(delta.db)
-            .ok_or(DomainError::BurnStepOutOfBounds {
-                from_units: self.split.burn.units(),
-                delta: delta.db,
-            })?;
+        let burn =
+            self.split
+                .burn
+                .apply_step(delta.db)
+                .ok_or(DomainError::BurnStepOutOfBounds {
+                    from_units: self.split.burn.units(),
+                    delta: delta.db,
+                })?;
 
-        let auction = self
-            .split
-            .auction
-            .apply_step(delta.da)
-            .ok_or(DomainError::AuctionStepOutOfBounds {
-                from_units: self.split.auction.units(),
-                delta: delta.da,
-            })?;
+        let auction =
+            self.split
+                .auction
+                .apply_step(delta.da)
+                .ok_or(DomainError::AuctionStepOutOfBounds {
+                    from_units: self.split.auction.units(),
+                    delta: delta.da,
+                })?;
 
         let drip = self
             .drip

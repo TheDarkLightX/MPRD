@@ -12,7 +12,9 @@
 use crate::{MprdError, Result};
 
 use super::menu_graph::MenuGraph;
-use super::objective::{ObjectiveConfig, ObjectiveEvaluator, ObjectiveState, ValidatedObjectiveConfig};
+use super::objective::{
+    ObjectiveConfig, ObjectiveEvaluator, ObjectiveState, ValidatedObjectiveConfig,
+};
 use super::types::{ActionId, MenuNode};
 
 /// Upper bound on greedy lookahead (keeps the candidate set bounded).

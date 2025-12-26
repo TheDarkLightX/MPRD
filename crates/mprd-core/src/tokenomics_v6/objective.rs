@@ -15,7 +15,10 @@ use super::types::{EpochId, MenuNode, BPS_U16};
 pub enum ObjectiveId {
     ProfitUtility,
     OpiFirst,
-    Hybrid { profit_weight_bps: u16, opi_weight_bps: u16 },
+    Hybrid {
+        profit_weight_bps: u16,
+        opi_weight_bps: u16,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,9 +76,9 @@ impl Default for ObjectiveConfig {
     fn default() -> Self {
         Self {
             id: ObjectiveId::ProfitUtility,
-            risk_tolerance_bps: 5_000,   // 50% risk tolerance
-            churn_penalty_bps: 1_000,    // 10% churn penalty
-            reserve_floor_epochs: 3,      // 3 epoch reserve minimum
+            risk_tolerance_bps: 5_000, // 50% risk tolerance
+            churn_penalty_bps: 1_000,  // 10% churn penalty
+            reserve_floor_epochs: 3,   // 3 epoch reserve minimum
         }
     }
 }
@@ -236,7 +239,10 @@ pub struct ObjectiveEvaluator<F> {
 
 impl<F> ObjectiveEvaluator<F> {
     pub fn new(cfg: ValidatedObjectiveConfig, state_for_node: F) -> Self {
-        Self { cfg, state_for_node }
+        Self {
+            cfg,
+            state_for_node,
+        }
     }
 }
 
@@ -364,7 +370,10 @@ mod tests {
             revenue_floor: 0,
             reserve_cover_epochs: 1,
         };
-        assert_eq!(evaluate_profit_utility(st, &cfg), CONSTRAINT_VIOLATION_SCORE);
+        assert_eq!(
+            evaluate_profit_utility(st, &cfg),
+            CONSTRAINT_VIOLATION_SCORE
+        );
     }
 
     #[test]

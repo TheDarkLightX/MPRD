@@ -171,10 +171,9 @@ impl<'a> SafetyController<'a> {
                 state.current_node_key, state.graph_version, state.graph_hash
             ))
         })?;
-        let current_node = self
-            .graph
-            .node(current_idx)
-            .ok_or_else(|| MprdError::InvalidInput("menu graph missing node for resolved index".into()))?;
+        let current_node = self.graph.node(current_idx).ok_or_else(|| {
+            MprdError::InvalidInput("menu graph missing node for resolved index".into())
+        })?;
 
         // Get current values from the node
         let cur_burn = current_node.burn_bps();
@@ -333,7 +332,10 @@ impl<'a> SafetyController<'a> {
     ///
     /// If `state` is invalid/corrupted (graph mismatch, missing node key), this repairs the state by
     /// resetting to the first node in the canonical graph ordering.
-    pub fn fallback_to(&self, state: &SafetyControllerState) -> Result<(SafetyProposal, SafetyControllerState)> {
+    pub fn fallback_to(
+        &self,
+        state: &SafetyControllerState,
+    ) -> Result<(SafetyProposal, SafetyControllerState)> {
         let first_node = self.graph.node(0).ok_or_else(|| {
             MprdError::ExecutionError(
                 "SafetyController::fallback_to: menu graph has zero nodes (unexpected)".into(),
@@ -380,7 +382,10 @@ impl<'a> SafetyController<'a> {
     }
 
     /// Alias for `fallback_to`.
-    pub fn fallback(&self, state: &SafetyControllerState) -> Result<(SafetyProposal, SafetyControllerState)> {
+    pub fn fallback(
+        &self,
+        state: &SafetyControllerState,
+    ) -> Result<(SafetyProposal, SafetyControllerState)> {
         self.fallback_to(state)
     }
 }

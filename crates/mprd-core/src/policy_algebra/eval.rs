@@ -70,7 +70,11 @@ fn push_trace(
 ///   They are evaluated first (in deterministic order) and if any is true/missing → DenyVeto.
 /// - The remaining policy is evaluated with `DenyIf(_)` treated as `Neutral`.
 /// - Missing signals deny (fail-closed).
-pub fn evaluate(expr: &PolicyExpr, ctx: &impl EvalContext, limits: PolicyLimits) -> Result<PolicyEvalResult> {
+pub fn evaluate(
+    expr: &PolicyExpr,
+    ctx: &impl EvalContext,
+    limits: PolicyLimits,
+) -> Result<PolicyEvalResult> {
     limits.validate()?;
     if expr.node_count() > limits.max_nodes {
         return Err(MprdError::InvalidInput(format!(

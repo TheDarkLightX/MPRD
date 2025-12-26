@@ -14,15 +14,27 @@ mod ast;
 mod canon;
 mod eval;
 mod hash;
+mod tau_emit;
 mod trace;
 
-pub use ast::{
-    PolicyAtom, PolicyExpr, PolicyKind, PolicyLimits, PolicyOutcome, PolicyOutcomeKind,
-};
+pub use ast::{PolicyAtom, PolicyExpr, PolicyKind, PolicyLimits, PolicyOutcome, PolicyOutcomeKind};
 pub use canon::CanonicalPolicy;
 pub use eval::{evaluate, EvalContext, PolicyEvalResult};
-pub use hash::{policy_hash_v1, POLICY_ALGEBRA_HASH_DOMAIN_V1};
+pub use hash::{decode_policy_v1, policy_hash_v1, POLICY_ALGEBRA_HASH_DOMAIN_V1};
+pub use tau_emit::emit_tau_gate_v1;
 pub use trace::{PolicyTrace, TraceEntry, TraceReasonCode};
+
+impl EvalContext for std::collections::BTreeMap<String, bool> {
+    fn signal(&self, atom: &PolicyAtom) -> Option<bool> {
+        self.get(atom.as_str()).copied()
+    }
+}
+
+impl EvalContext for std::collections::HashMap<String, bool> {
+    fn signal(&self, atom: &PolicyAtom) -> Option<bool> {
+        self.get(atom.as_str()).copied()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -59,7 +71,8 @@ mod tests {
         let a = PolicyExpr::atom("a", limits).unwrap();
         let b = PolicyExpr::atom("b", limits).unwrap();
         let deny = PolicyExpr::deny_if("ban", limits).unwrap();
-        let inner = PolicyExpr::all(vec![PolicyExpr::True, b.clone(), PolicyExpr::True], limits).unwrap();
+        let inner =
+            PolicyExpr::all(vec![PolicyExpr::True, b.clone(), PolicyExpr::True], limits).unwrap();
         let expr = PolicyExpr::all(
             vec![
                 PolicyExpr::True,
@@ -81,15 +94,82 @@ mod tests {
     }
 
     #[test]
+    fn encode_decode_roundtrip_preserves_canonical_expr() {
+        let limits = lim();
+        let a = PolicyExpr::atom("a", limits).unwrap();
+        let b = PolicyExpr::atom("b", limits).unwrap();
+        let ban = PolicyExpr::deny_if("ban", limits).unwrap();
+        let expr = PolicyExpr::all(
+            vec![a, PolicyExpr::any(vec![b, ban], limits).unwrap()],
+            limits,
+        )
+        .unwrap();
+
+        let canon = CanonicalPolicy::new(expr, limits).unwrap();
+        let decoded = decode_policy_v1(canon.bytes_v1(), limits).unwrap();
+
+        assert_eq!(canon.expr(), &decoded);
+        assert_eq!(canon.hash_v1(), policy_hash_v1(&decoded));
+    }
+
+    #[test]
+    fn decode_rejects_trailing_bytes() {
+        let limits = lim();
+        let expr = PolicyExpr::atom("a", limits).unwrap();
+        let canon = CanonicalPolicy::new(expr, limits).unwrap();
+
+        let mut bytes = canon.bytes_v1().to_vec();
+        bytes.push(0xFF);
+
+        let err = decode_policy_v1(&bytes, limits).unwrap_err();
+        assert!(err.to_string().contains("trailing bytes"));
+    }
+
+    #[test]
+    fn tau_emitter_parenthesizes_nested_or_under_and() {
+        let limits = lim();
+        let a = PolicyExpr::atom("a", limits).unwrap();
+        let b = PolicyExpr::atom("b", limits).unwrap();
+        let c = PolicyExpr::atom("c", limits).unwrap();
+
+        let expr = PolicyExpr::all(
+            vec![a, PolicyExpr::any(vec![b, c], limits).unwrap()],
+            limits,
+        )
+        .unwrap();
+        let tau = emit_tau_gate_v1(&expr, "allow", limits).unwrap();
+
+        assert!(tau.contains("i_a[t]"));
+        assert!(tau.contains("(i_b[t] | i_c[t])"));
+    }
+
+    #[test]
+    fn tau_emitter_lifts_deny_if_into_veto_conj() {
+        let limits = lim();
+        let ok = PolicyExpr::atom("ok", limits).unwrap();
+        let ban = PolicyExpr::deny_if("ban", limits).unwrap();
+        let expr = PolicyExpr::any(vec![ok, ban], limits).unwrap();
+
+        let tau = emit_tau_gate_v1(&expr, "allow", limits).unwrap();
+
+        // Veto-first semantics should enforce `!ban` as a top-level conjunction.
+        assert!(tau.contains("i_ban[t]'"));
+    }
+
+    #[test]
     fn commutative_children_order_does_not_change_hash() {
         let limits = lim();
         let a = PolicyExpr::atom("a", limits).unwrap();
         let b = PolicyExpr::atom("b", limits).unwrap();
         let c = PolicyExpr::atom("c", limits).unwrap();
 
-        let p1 = CanonicalPolicy::new(PolicyExpr::any(vec![a.clone(), b.clone(), c.clone()], limits).unwrap(), limits)
-            .unwrap();
-        let p2 = CanonicalPolicy::new(PolicyExpr::any(vec![c, a, b], limits).unwrap(), limits).unwrap();
+        let p1 = CanonicalPolicy::new(
+            PolicyExpr::any(vec![a.clone(), b.clone(), c.clone()], limits).unwrap(),
+            limits,
+        )
+        .unwrap();
+        let p2 =
+            CanonicalPolicy::new(PolicyExpr::any(vec![c, a, b], limits).unwrap(), limits).unwrap();
 
         assert_eq!(p1.hash_v1(), p2.hash_v1());
         assert_eq!(p1.bytes_v1(), p2.bytes_v1());
@@ -138,7 +218,10 @@ mod tests {
         let canon = CanonicalPolicy::new(expr, limits).unwrap();
 
         // a,b,c plus the root All node will exceed max_trace_nodes=3.
-        let ctx = MapCtx::default().with("a", true).with("b", true).with("c", true);
+        let ctx = MapCtx::default()
+            .with("a", true)
+            .with("b", true)
+            .with("c", true);
         let err = evaluate(canon.expr(), &ctx, limits).unwrap_err();
         assert!(matches!(err, crate::MprdError::BoundedValueExceeded(_)));
     }

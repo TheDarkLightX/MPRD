@@ -1,4 +1,5 @@
 use crate::{MprdError, Result};
+use std::collections::BTreeSet;
 
 /// Bounds for policy algebra objects.
 ///
@@ -39,6 +40,13 @@ impl PolicyLimits {
             return Err(MprdError::InvalidInput(
                 "PolicyLimits.max_atom_len must be > 0".into(),
             ));
+        }
+        if self.max_atom_len > u8::MAX as usize {
+            return Err(MprdError::InvalidInput(format!(
+                "PolicyLimits.max_atom_len must be <= {} (got {})",
+                u8::MAX,
+                self.max_atom_len
+            )));
         }
         Ok(())
     }
@@ -151,7 +159,10 @@ pub enum PolicyExpr {
     Not(Box<PolicyExpr>),
     All(Vec<PolicyExpr>),
     Any(Vec<PolicyExpr>),
-    Threshold { k: u16, children: Vec<PolicyExpr> },
+    Threshold {
+        k: u16,
+        children: Vec<PolicyExpr>,
+    },
     /// Absorbing deny that does not contribute to allow count in `Any` / `Threshold`.
     DenyIf(PolicyAtom),
 }
@@ -245,5 +256,58 @@ impl PolicyExpr {
             PolicyExpr::True | PolicyExpr::False | PolicyExpr::Atom(_) => false,
         }
     }
-}
 
+    /// Collect all atoms referenced by this policy (including `DenyIf` atoms).
+    pub fn atoms(&self) -> BTreeSet<PolicyAtom> {
+        let mut out = BTreeSet::new();
+        self.atoms_into(&mut out);
+        out
+    }
+
+    /// Collect atoms referenced by `DenyIf` nodes only.
+    pub fn deny_if_atoms(&self) -> BTreeSet<PolicyAtom> {
+        let mut out = BTreeSet::new();
+        self.deny_if_atoms_into(&mut out);
+        out
+    }
+
+    fn atoms_into(&self, out: &mut BTreeSet<PolicyAtom>) {
+        match self {
+            PolicyExpr::Atom(a) | PolicyExpr::DenyIf(a) => {
+                out.insert(a.clone());
+            }
+            PolicyExpr::Not(p) => p.atoms_into(out),
+            PolicyExpr::All(children) | PolicyExpr::Any(children) => {
+                for ch in children {
+                    ch.atoms_into(out);
+                }
+            }
+            PolicyExpr::Threshold { children, .. } => {
+                for ch in children {
+                    ch.atoms_into(out);
+                }
+            }
+            PolicyExpr::True | PolicyExpr::False => {}
+        }
+    }
+
+    fn deny_if_atoms_into(&self, out: &mut BTreeSet<PolicyAtom>) {
+        match self {
+            PolicyExpr::DenyIf(a) => {
+                out.insert(a.clone());
+            }
+            PolicyExpr::Not(p) => p.deny_if_atoms_into(out),
+            PolicyExpr::All(children) | PolicyExpr::Any(children) => {
+                for ch in children {
+                    ch.deny_if_atoms_into(out);
+                }
+            }
+            PolicyExpr::Threshold { children, .. } => {
+                for ch in children {
+                    ch.deny_if_atoms_into(out);
+                }
+            }
+            PolicyExpr::True | PolicyExpr::False | PolicyExpr::Atom(_) => {}
+        }
+    }
+}
