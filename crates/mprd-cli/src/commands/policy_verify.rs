@@ -16,7 +16,11 @@ const TAU_MAX_OUTPUT_BYTES: usize = 64 * 1024;
 const TAU_TIMEOUT_MS: u64 = 500;
 const TAU_POLL_INTERVAL_MS: u64 = 10;
 
-pub fn run(policy_path: PathBuf, cases_path: Option<PathBuf>, config_path: Option<PathBuf>) -> Result<()> {
+pub fn run(
+    policy_path: PathBuf,
+    cases_path: Option<PathBuf>,
+    config_path: Option<PathBuf>,
+) -> Result<()> {
     let config = load_config(config_path)?;
     let tau_binary = config.tau_binary.as_deref().unwrap_or("tau");
 
@@ -34,10 +38,7 @@ pub fn run(policy_path: PathBuf, cases_path: Option<PathBuf>, config_path: Optio
     println!();
     println!("  Policy: {}", policy_path.display());
     println!("  WFF length: {} bytes", policy_wff.len());
-    println!(
-        "  Tau parse: {}",
-        if policy_sat { "SAT" } else { "UNSAT" }
-    );
+    println!("  Tau parse: {}", if policy_sat { "SAT" } else { "UNSAT" });
     println!();
 
     let Some(cases_path) = cases_path else {
@@ -107,10 +108,22 @@ impl TauWff {
         }
 
         if trimmed.len() > MAX_WFF_LENGTH {
-            anyhow::bail!(
-                "WFF exceeds maximum length of {} bytes",
-                MAX_WFF_LENGTH
-            );
+            anyhow::bail!("WFF exceeds maximum length of {} bytes", MAX_WFF_LENGTH);
+        }
+
+        // Reject potentially dangerous tokens/patterns *before* character-class validation so
+        // test failures are categorized as "dangerous" rather than merely "disallowed".
+        let dangerous_patterns = [
+            "\n", "\r", ";", "quit", "exit", "load", "save", "exec", "system", "`", "$(", "\\",
+        ];
+        let wff_lower = trimmed.to_lowercase();
+        for pattern in dangerous_patterns {
+            if wff_lower.contains(pattern) {
+                anyhow::bail!(
+                    "WFF contains potentially dangerous pattern: '{}'",
+                    pattern.escape_default()
+                );
+            }
         }
 
         for (i, c) in trimmed.chars().enumerate() {
@@ -140,19 +153,6 @@ impl TauWff {
                     "WFF contains disallowed character '{}' at position {}",
                     c.escape_default(),
                     i
-                );
-            }
-        }
-
-        let dangerous_patterns = [
-            "\n", "\r", ";", "quit", "exit", "load", "save", "exec", "system", "`", "$(", "\\",
-        ];
-        let wff_lower = trimmed.to_lowercase();
-        for pattern in dangerous_patterns {
-            if wff_lower.contains(pattern) {
-                anyhow::bail!(
-                    "WFF contains potentially dangerous pattern: '{}'",
-                    pattern.escape_default()
                 );
             }
         }
@@ -356,9 +356,7 @@ fn wait_for_exit(
     let start = Instant::now();
 
     loop {
-        let status = child
-            .try_wait()
-            .context("Failed to poll tau status")?;
+        let status = child.try_wait().context("Failed to poll tau status")?;
         if let Some(status) = status {
             return Ok(status);
         }

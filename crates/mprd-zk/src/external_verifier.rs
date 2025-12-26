@@ -136,7 +136,12 @@ impl<'a> StepLogger<'a> {
         self.record(name, false, details);
     }
 
-    fn fail_with<T>(&mut self, name: &str, details: Option<String>, err: &str) -> Result<T, String> {
+    fn fail_with<T>(
+        &mut self,
+        name: &str,
+        details: Option<String>,
+        err: &str,
+    ) -> Result<T, String> {
         self.fail(name, details);
         Err(err.into())
     }
@@ -590,10 +595,7 @@ impl ExternalVerifier {
         Ok(())
     }
 
-    fn parse_meta_usize(
-        request: &VerificationRequest,
-        key: &str,
-    ) -> Result<usize, String> {
+    fn parse_meta_usize(request: &VerificationRequest, key: &str) -> Result<usize, String> {
         request
             .metadata
             .get(key)
@@ -609,9 +611,7 @@ impl ExternalVerifier {
             .ok_or_else(|| ERR_MPB_METADATA_MISSING.to_string())
     }
 
-    fn candidate_set_hash(
-        artifact: &crate::mpb_lite::MpbLiteArtifactV1,
-    ) -> [u8; 32] {
+    fn candidate_set_hash(artifact: &crate::mpb_lite::MpbLiteArtifactV1) -> [u8; 32] {
         let mut set_preimage = Vec::with_capacity(4 + artifact.candidate_hashes.len() * 32);
         set_preimage.extend_from_slice(&(artifact.candidate_hashes.len() as u32).to_le_bytes());
         for h in &artifact.candidate_hashes {
@@ -628,11 +628,7 @@ impl ExternalVerifier {
         let limits = match mprd_core::limits::parse_limits_v1(&artifact.limits_bytes) {
             Ok(l) => l,
             Err(e) => {
-                return log.fail_with(
-                    "MPB limits",
-                    Some(e.to_string()),
-                    ERR_MPB_BINDING_MISMATCH,
-                );
+                return log.fail_with("MPB limits", Some(e.to_string()), ERR_MPB_BINDING_MISMATCH);
             }
         };
         if limits.mpb_fuel_limit != Some(expected_fuel_limit) {
@@ -645,11 +641,7 @@ impl ExternalVerifier {
         Ok(mprd_core::limits::limits_hash_v1(&artifact.limits_bytes))
     }
 
-    fn ensure_mpb_binding(
-        log: &mut StepLogger<'_>,
-        ok: bool,
-        details: &str,
-    ) -> Result<(), String> {
+    fn ensure_mpb_binding(log: &mut StepLogger<'_>, ok: bool, details: &str) -> Result<(), String> {
         if ok {
             Ok(())
         } else {
@@ -666,11 +658,7 @@ impl ExternalVerifier {
         let idx = artifact.chosen_index as usize;
         let ok = idx < artifact.candidate_hashes.len()
             && artifact.candidate_hashes[idx] == request.chosen_action_hash;
-        Self::ensure_mpb_binding(
-            log,
-            ok,
-            "chosen_index does not select chosen_action_hash",
-        )
+        Self::ensure_mpb_binding(log, ok, "chosen_index does not select chosen_action_hash")
     }
 
     fn mpb_lite_context(

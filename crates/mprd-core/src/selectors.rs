@@ -30,10 +30,7 @@ fn extract_numeric(limits: &HashMap<String, crate::Value>, key: &str) -> Result<
     match limits.get(key) {
         Some(crate::Value::Int(v)) => Ok(*v),
         Some(crate::Value::UInt(v)) => i64::try_from(*v).map_err(|_| {
-            MprdError::InvalidInput(format!(
-                "limit '{}' value {} overflows i64",
-                key, v
-            ))
+            MprdError::InvalidInput(format!("limit '{}' value {} overflows i64", key, v))
         }),
         Some(other) => Err(MprdError::InvalidInput(format!(
             "limit '{}' has non-numeric type: {:?}",
@@ -307,7 +304,8 @@ impl Selector for MinimaxRegretSelector {
         // Fail-closed: require scenario data
         if all_scenarios.is_empty() {
             return Err(MprdError::InvalidInput(
-                "no scenario data found; MinimaxRegretSelector requires scenario_ prefixed limits".into(),
+                "no scenario data found; MinimaxRegretSelector requires scenario_ prefixed limits"
+                    .into(),
             ));
         }
 
@@ -418,7 +416,9 @@ mod tests {
         ];
 
         let selector = ParetoSelector::new("risk");
-        let decision = selector.select(&policy_hash, &state, &candidates, &verdicts).unwrap();
+        let decision = selector
+            .select(&policy_hash, &state, &candidates, &verdicts)
+            .unwrap();
 
         assert_eq!(decision.chosen_index, 1);
         assert_eq!(decision.chosen_action.action_type, "B");
@@ -452,17 +452,16 @@ mod tests {
             state_ref: crate::StateRef::unknown(),
         };
 
-        let candidates = vec![
-            make_candidate("A", 100, 3),
-            make_candidate("B", 80, 4),
-        ];
+        let candidates = vec![make_candidate("A", 100, 3), make_candidate("B", 80, 4)];
         let verdicts = vec![
             make_verdict(true, [("cost".into(), crate::Value::Int(200))].into()),
             make_verdict(true, [("cost".into(), crate::Value::Int(80))].into()),
         ];
 
         let selector = EpsilonConstraintSelector::new([("cost".into(), 100)].into());
-        let decision = selector.select(&policy_hash, &state, &candidates, &verdicts).unwrap();
+        let decision = selector
+            .select(&policy_hash, &state, &candidates, &verdicts)
+            .unwrap();
 
         assert_eq!(decision.chosen_index, 1);
         assert_eq!(decision.chosen_action.action_type, "B");
@@ -502,22 +501,36 @@ mod tests {
             make_candidate("C", 0, 5),
         ];
         let verdicts = vec![
-            make_verdict(true, [
-                ("scenario_bull".into(), crate::Value::Int(100)),
-                ("scenario_bear".into(), crate::Value::Int(-50)),
-            ].into()),
-            make_verdict(true, [
-                ("scenario_bull".into(), crate::Value::Int(60)),
-                ("scenario_bear".into(), crate::Value::Int(-10)),
-            ].into()),
-            make_verdict(true, [
-                ("scenario_bull".into(), crate::Value::Int(40)),
-                ("scenario_bear".into(), crate::Value::Int(30)),
-            ].into()),
+            make_verdict(
+                true,
+                [
+                    ("scenario_bull".into(), crate::Value::Int(100)),
+                    ("scenario_bear".into(), crate::Value::Int(-50)),
+                ]
+                .into(),
+            ),
+            make_verdict(
+                true,
+                [
+                    ("scenario_bull".into(), crate::Value::Int(60)),
+                    ("scenario_bear".into(), crate::Value::Int(-10)),
+                ]
+                .into(),
+            ),
+            make_verdict(
+                true,
+                [
+                    ("scenario_bull".into(), crate::Value::Int(40)),
+                    ("scenario_bear".into(), crate::Value::Int(30)),
+                ]
+                .into(),
+            ),
         ];
 
         let selector = MinimaxRegretSelector::new("scenario_");
-        let decision = selector.select(&policy_hash, &state, &candidates, &verdicts).unwrap();
+        let decision = selector
+            .select(&policy_hash, &state, &candidates, &verdicts)
+            .unwrap();
 
         assert_eq!(decision.chosen_index, 1);
         assert_eq!(decision.chosen_action.action_type, "B");
@@ -533,19 +546,24 @@ mod tests {
             state_ref: crate::StateRef::unknown(),
         };
 
-        let candidates = vec![
-            make_candidate("A", 0, 3),
-            make_candidate("B", 0, 4),
-        ];
+        let candidates = vec![make_candidate("A", 0, 3), make_candidate("B", 0, 4)];
         let verdicts = vec![
-            make_verdict(true, [
-                ("scenario_bull".into(), crate::Value::Int(100)),
-                ("scenario_bear".into(), crate::Value::Int(-50)),
-            ].into()),
-            make_verdict(true, [
-                ("scenario_bull".into(), crate::Value::Int(60)),
-                // Missing scenario_bear!
-            ].into()),
+            make_verdict(
+                true,
+                [
+                    ("scenario_bull".into(), crate::Value::Int(100)),
+                    ("scenario_bear".into(), crate::Value::Int(-50)),
+                ]
+                .into(),
+            ),
+            make_verdict(
+                true,
+                [
+                    ("scenario_bull".into(), crate::Value::Int(60)),
+                    // Missing scenario_bear!
+                ]
+                .into(),
+            ),
         ];
 
         let selector = MinimaxRegretSelector::new("scenario_");
@@ -602,7 +620,10 @@ mod tests {
         // Both have same content -> same canonical hash
         let canonical_1 = canonical_hash(&c1);
         let canonical_2 = canonical_hash(&c2);
-        assert_eq!(canonical_1, canonical_2, "identical content should have same canonical hash");
+        assert_eq!(
+            canonical_1, canonical_2,
+            "identical content should have same canonical hash"
+        );
 
         // Now give them different input hashes to try to influence ordering
         c1.candidate_hash = dummy_hash(0xFF);
@@ -615,13 +636,18 @@ mod tests {
         ];
 
         let selector = ParetoSelector::new("risk");
-        let decision = selector.select(&policy_hash, &state, &candidates, &verdicts).unwrap();
+        let decision = selector
+            .select(&policy_hash, &state, &candidates, &verdicts)
+            .unwrap();
 
         // Result should be stable regardless of input hash manipulation.
         // Since both have identical content and same score/risk, tie-break uses canonical hash.
         // The chosen one is deterministic based on content hash, not input field.
         // (We just verify it picks one consistently - the specific index doesn't matter as long
         // as it's based on content, not the manipulated field.)
-        assert!(decision.chosen_index < 2, "should pick one of the two identical candidates");
+        assert!(
+            decision.chosen_index < 2,
+            "should pick one of the two identical candidates"
+        );
     }
 }

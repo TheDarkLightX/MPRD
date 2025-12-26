@@ -30,7 +30,8 @@ pub struct DenyAllGateV6;
 
 impl PolicyGateV6 for DenyAllGateV6 {
     fn check(&self, _eng: &TokenomicsV6, _action: &ActionV6) -> Result<()> {
-        Err(MprdError::InvalidInput("policy denied tokenomics action".into()))
+        Err(MprdError::InvalidInput(
+            "policy denied tokenomics action".into(),
+        ))
     }
 }
-

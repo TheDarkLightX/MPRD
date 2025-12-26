@@ -1193,7 +1193,8 @@ fn tokenomics_v6_action_gate_repl_path() -> Option<PathBuf> {
         .and_then(|p| p.parent())
         .map(|p| p.to_path_buf())?;
 
-    let path = workspace_root.join("policies/tokenomics/canonical/mprd_tokenomics_v6_action_gate.tau");
+    let path =
+        workspace_root.join("policies/tokenomics/canonical/mprd_tokenomics_v6_action_gate.tau");
     if path.is_file() {
         Some(path)
     } else {
@@ -1208,7 +1209,9 @@ fn tokenomics_v6_action_gate_examples_match_expected() {
         return;
     };
     let Some(spec_path) = tokenomics_v6_action_gate_repl_path() else {
-        eprintln!("Skipping: policies/tokenomics/canonical/mprd_tokenomics_v6_action_gate.tau not found");
+        eprintln!(
+            "Skipping: policies/tokenomics/canonical/mprd_tokenomics_v6_action_gate.tau not found"
+        );
         return;
     };
 

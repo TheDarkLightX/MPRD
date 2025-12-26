@@ -388,7 +388,10 @@ async fn settings_update_applies_when_only_one_field_is_present() {
     assert_eq!(res.status(), StatusCode::OK);
 
     let out: op_api::OperatorSettings = read_json(res).await;
-    assert!(matches!(out.deployment_mode, op_api::DeploymentMode::Trustless));
+    assert!(matches!(
+        out.deployment_mode,
+        op_api::DeploymentMode::Trustless
+    ));
     assert_eq!(out.decision_max, desired);
     assert_eq!(store.decision_max(), desired);
 }

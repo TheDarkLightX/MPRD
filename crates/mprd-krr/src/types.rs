@@ -3,7 +3,7 @@
 //! All types are content-addressed and implement CBC principles:
 //! invalid states are unrepresentable.
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::fmt;
 
 /// Content-addressed fact identifier.
@@ -22,7 +22,7 @@ impl FactId {
         bytes.copy_from_slice(&result);
         FactId(bytes)
     }
-    
+
     /// Get hex representation.
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
@@ -52,20 +52,20 @@ impl RuleFingerprint {
         let mut hasher = Sha256::new();
         hasher.update(b"krr.rule.v1");
         hasher.update(conclusion.0);
-        
+
         // Sort deps for determinism
         let mut sorted_deps: Vec<_> = deps.iter().collect();
         sorted_deps.sort_by_key(|d| d.0);
         for dep in sorted_deps {
             hasher.update(dep.0);
         }
-        
+
         let result = hasher.finalize();
         let mut bytes = [0u8; 32];
         bytes.copy_from_slice(&result);
         RuleFingerprint(bytes)
     }
-    
+
     /// Special fingerprint for axioms (base facts).
     pub fn axiom() -> Self {
         let mut hasher = Sha256::new();
@@ -94,14 +94,14 @@ impl JustificationHash {
         hasher.update(b"krr.just.v1");
         hasher.update(fact.0);
         hasher.update(rule.0);
-        
+
         // Sort deps for determinism
         let mut sorted_deps: Vec<_> = deps.iter().collect();
         sorted_deps.sort_by_key(|d| d.0);
         for dep in sorted_deps {
             hasher.update(dep.0);
         }
-        
+
         let result = hasher.finalize();
         let mut bytes = [0u8; 32];
         bytes.copy_from_slice(&result);
@@ -129,22 +129,22 @@ impl TrustScore {
             None
         }
     }
-    
+
     /// Create with clamping to valid range.
     pub fn clamped(score: f64) -> Self {
         TrustScore(score.clamp(0.0, 1.0))
     }
-    
+
     /// Full trust.
     pub fn one() -> Self {
         TrustScore(1.0)
     }
-    
+
     /// Zero trust.
     pub fn zero() -> Self {
         TrustScore(0.0)
     }
-    
+
     /// Get the inner value.
     pub fn value(&self) -> f64 {
         self.0
@@ -166,17 +166,17 @@ impl fmt::Display for TrustScore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_fact_id_deterministic() {
         let id1 = FactId::from_canonical("a(1)");
         let id2 = FactId::from_canonical("a(1)");
         let id3 = FactId::from_canonical("a(2)");
-        
+
         assert_eq!(id1, id2);
         assert_ne!(id1, id3);
     }
-    
+
     #[test]
     fn test_trust_score_bounds() {
         assert!(TrustScore::new(0.5).is_some());
@@ -185,17 +185,17 @@ mod tests {
         assert!(TrustScore::new(-0.1).is_none());
         assert!(TrustScore::new(1.1).is_none());
     }
-    
+
     #[test]
     fn test_rule_fingerprint_sorted() {
         let conclusion = FactId::from_canonical("c");
         let dep1 = FactId::from_canonical("a");
         let dep2 = FactId::from_canonical("b");
-        
+
         // Order shouldn't matter
         let fp1 = RuleFingerprint::from_derivation(&conclusion, &[dep1, dep2]);
         let fp2 = RuleFingerprint::from_derivation(&conclusion, &[dep2, dep1]);
-        
+
         assert_eq!(fp1, fp2);
     }
 }

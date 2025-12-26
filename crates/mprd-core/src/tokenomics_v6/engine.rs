@@ -234,7 +234,11 @@ impl TokenomicsV6 {
     /// This makes the MPRD control-plane pattern explicit:
     /// - `PolicyGateV6::check` corresponds to an `Allowed_op` authorization predicate
     /// - only if it returns `Ok(())` does the engine mutate state
-    pub fn apply<G: PolicyGateV6>(&mut self, gate: &G, action: ActionV6) -> Result<ActionOutcomeV6> {
+    pub fn apply<G: PolicyGateV6>(
+        &mut self,
+        gate: &G,
+        action: ActionV6,
+    ) -> Result<ActionOutcomeV6> {
         gate.check(self, &action)?;
         self.apply_unchecked(action)
     }
@@ -1019,8 +1023,8 @@ fn compute_new_carry_and_burn(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tokenomics_v6::{ActionOutcomeV6, ActionV6, AllowAllGateV6, DenyAllGateV6};
     use crate::tokenomics_v6::types::Bps;
+    use crate::tokenomics_v6::{ActionOutcomeV6, ActionV6, AllowAllGateV6, DenyAllGateV6};
 
     fn params() -> ParamsV6 {
         ParamsV6::new(

@@ -9,13 +9,23 @@ use super::{AuctionOutcome, EpochBudgetsV6, OpsPayrollOutcome, RuntimeBoundsV6};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActionV6 {
     /// Admit a new operator/seat (control-plane membership).
-    AdmitOperator { operator: OperatorId },
+    AdmitOperator {
+        operator: OperatorId,
+    },
     /// Credit liquid AGRS (boundary IO; deposits/mints live outside the kernel).
-    CreditAgrs { operator: OperatorId, amt: Agrs },
+    CreditAgrs {
+        operator: OperatorId,
+        amt: Agrs,
+    },
     /// Adjust OPI weight (policy-gated quality/slashing; not market-set).
-    SetOpi { operator: OperatorId, opi_bps: Bps },
+    SetOpi {
+        operator: OperatorId,
+        opi_bps: Bps,
+    },
     /// Update runtime safety bounds (DoS rails; not an economic parameter).
-    SetBounds { bounds: RuntimeBoundsV6 },
+    SetBounds {
+        bounds: RuntimeBoundsV6,
+    },
 
     StakeStart {
         operator: OperatorId,
@@ -23,7 +33,10 @@ pub enum ActionV6 {
         lock_epochs: u16,
         nonce: crate::Hash32,
     },
-    StakeEnd { operator: OperatorId, stake_id: StakeId },
+    StakeEnd {
+        operator: OperatorId,
+        stake_id: StakeId,
+    },
     AccrueBcrDrip,
 
     ApplyServiceTx(ServiceTx),
@@ -38,7 +51,9 @@ pub enum ActionV6 {
     FinalizeEpoch,
     SettleOpsPayroll,
     SettleAuction,
-    AdvanceEpoch { next_epoch: EpochId },
+    AdvanceEpoch {
+        next_epoch: EpochId,
+    },
 }
 
 /// Tokenomics v6 action outcomes (the observable "result" of a state transition).
@@ -50,4 +65,3 @@ pub enum ActionOutcomeV6 {
     SettleOpsPayroll(OpsPayrollOutcome),
     SettleAuction(AuctionOutcome),
 }
-

@@ -6,18 +6,18 @@
 //! - OWL 2 RL → TML compilation
 //! - Explanation generation (Why/Why-Not)
 
-pub mod types;
+pub mod composition;
 pub mod dag;
 pub mod ddmin;
-pub mod trust;
-pub mod tml;
-pub mod explain;
 pub mod error;
-pub mod composition;
+pub mod explain;
+pub mod tml;
+pub mod trust;
+pub mod types;
 
 // Re-exports
-pub use types::{FactId, TrustScore, RuleFingerprint, JustificationHash};
 pub use dag::{Justification, JustificationDag};
-pub use trust::{TrustSemiring, MinSemiring, ProductSemiring};
-pub use tml::{TmlRunner, TmlCli};
 pub use error::KrrError;
+pub use tml::{TmlCli, TmlRunner};
+pub use trust::{MinSemiring, ProductSemiring, TrustSemiring};
+pub use types::{FactId, JustificationHash, RuleFingerprint, TrustScore};

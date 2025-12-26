@@ -78,7 +78,10 @@ impl PrometheusExporter {
 
         out.push_str("# HELP decisions_total Total number of decisions.\n");
         out.push_str("# TYPE decisions_total counter\n");
-        out.push_str(&format!("decisions_total {}\n", self.metrics.decisions_total.get()));
+        out.push_str(&format!(
+            "decisions_total {}\n",
+            self.metrics.decisions_total.get()
+        ));
 
         out.push_str("# HELP decisions_latency_seconds Decision latency in seconds.\n");
         out.push_str("# TYPE decisions_latency_seconds histogram\n");
@@ -91,13 +94,8 @@ impl PrometheusExporter {
                 bound, cumulative
             ));
         }
-        cumulative = cumulative.saturating_add(
-            latency
-                .bucket_counts
-                .last()
-                .copied()
-                .unwrap_or_default(),
-        );
+        cumulative =
+            cumulative.saturating_add(latency.bucket_counts.last().copied().unwrap_or_default());
         out.push_str(&format!(
             "decisions_latency_seconds_bucket{{le=\"+Inf\"}} {}\n",
             cumulative

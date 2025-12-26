@@ -561,8 +561,7 @@ pub fn create_production_attestor(
             privacy.disclosed_fields.clone()
         };
 
-        let mode_config =
-            modes_v2::ModeConfig::mode_c(image_id, privacy.encryption.key_id.clone());
+        let mode_config = modes_v2::ModeConfig::mode_c(image_id, privacy.encryption.key_id.clone());
         let encryption_config = modes_v2::EncryptionConfig {
             key_id: privacy.encryption.key_id.clone(),
             algorithm: "AES-256-GCM".into(),
@@ -646,8 +645,7 @@ pub fn create_production_verifier(
             ));
         }
 
-        let mode_config =
-            modes_v2::ModeConfig::mode_c(image_id, privacy.encryption.key_id.clone());
+        let mode_config = modes_v2::ModeConfig::mode_c(image_id, privacy.encryption.key_id.clone());
         return modes_v2::create_robust_verifier(&mode_config);
     }
 

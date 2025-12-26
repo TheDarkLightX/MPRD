@@ -26,7 +26,7 @@ impl CheckResult {
     fn is_failure(&self) -> bool {
         matches!(self, CheckResult::Fail { .. })
     }
-    
+
     fn is_warning(&self) -> bool {
         matches!(self, CheckResult::Warn { .. })
     }
@@ -35,40 +35,40 @@ impl CheckResult {
 /// Run all diagnostic checks.
 pub fn run(config_path: Option<PathBuf>, verbose: bool) -> Result<()> {
     println!("🩺 MPRD Doctor - System Diagnostics\n");
-    
+
     let config = load_config(config_path.clone())?;
-    
+
     let mut results: Vec<(&str, CheckResult)> = Vec::new();
-    
+
     // 1. Config file check
     results.push(("Config file", check_config_file(&config_path)));
-    
+
     // 2. Tau binary check
     results.push(("Tau language", check_tau_binary(&config)));
-    
+
     // 3. IPFS check (if configured)
     if config.policy_storage.storage_type == "ipfs" {
         results.push(("IPFS daemon", check_ipfs(&config)));
     }
-    
+
     // 4. Risc0 configuration
     results.push(("Risc0 ZK", check_risc0(&config)));
-    
+
     // 5. Policy storage directory
     results.push(("Policy storage", check_policy_storage(&config)));
-    
+
     // 6. Execution configuration
     results.push(("Executor", check_executor(&config)));
-    
+
     // 7. Anti-replay configuration
     results.push(("Anti-replay", check_anti_replay(&config)));
-    
+
     // Print results
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-    
+
     let mut failures = 0;
     let mut warnings = 0;
-    
+
     for (name, result) in &results {
         match result {
             CheckResult::Pass { message } => {
@@ -77,13 +77,19 @@ pub fn run(config_path: Option<PathBuf>, verbose: bool) -> Result<()> {
                     println!();
                 }
             }
-            CheckResult::Warn { message, suggestion } => {
+            CheckResult::Warn {
+                message,
+                suggestion,
+            } => {
                 warnings += 1;
                 println!("⚠️  {}: {}", name, message);
                 println!("   💡 {}", suggestion);
                 println!();
             }
-            CheckResult::Fail { message, suggestion } => {
+            CheckResult::Fail {
+                message,
+                suggestion,
+            } => {
                 failures += 1;
                 println!("❌ {}: {}", name, message);
                 println!("   💡 {}", suggestion);
@@ -91,10 +97,10 @@ pub fn run(config_path: Option<PathBuf>, verbose: bool) -> Result<()> {
             }
         }
     }
-    
+
     // Summary
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-    
+
     if failures > 0 {
         println!("❌ {} check(s) failed, {} warning(s)", failures, warnings);
         println!("\n   Fix the issues above before running MPRD in production.");
@@ -106,7 +112,7 @@ pub fn run(config_path: Option<PathBuf>, verbose: bool) -> Result<()> {
         println!("✅ All checks passed!");
         println!("\n   MPRD is ready for mode: {}", config.mode);
     }
-    
+
     Ok(())
 }
 
@@ -115,9 +121,9 @@ fn check_config_file(path: &Option<PathBuf>) -> CheckResult {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("mprd")
         .join("config.json");
-    
+
     let check_path = path.as_ref().unwrap_or(&default_path);
-    
+
     if check_path.exists() {
         CheckResult::Pass {
             message: format!("Found at {}", check_path.display()),
@@ -132,7 +138,7 @@ fn check_config_file(path: &Option<PathBuf>) -> CheckResult {
 
 fn check_tau_binary(config: &MprdConfigFile) -> CheckResult {
     let tau_binary = config.tau_binary.as_deref().unwrap_or("tau");
-    
+
     match Command::new(tau_binary).arg("--version").output() {
         Ok(output) if output.status.success() => {
             let version = String::from_utf8_lossy(&output.stdout);
@@ -142,7 +148,8 @@ fn check_tau_binary(config: &MprdConfigFile) -> CheckResult {
         }
         Ok(_) => CheckResult::Fail {
             message: format!("Binary '{}' found but returned error", tau_binary),
-            suggestion: "Ensure Tau is correctly installed: https://github.com/IDNI/tau-lang".into(),
+            suggestion: "Ensure Tau is correctly installed: https://github.com/IDNI/tau-lang"
+                .into(),
         },
         Err(_) => CheckResult::Fail {
             message: format!("Binary '{}' not found", tau_binary),
@@ -157,7 +164,7 @@ fn check_ipfs(config: &MprdConfigFile) -> CheckResult {
         .ipfs_url
         .as_deref()
         .unwrap_or("http://localhost:5001");
-    
+
     // Validate URL first
     if let Err(e) = mprd_adapters::egress::validate_outbound_url(ipfs_url) {
         return CheckResult::Fail {
@@ -165,7 +172,7 @@ fn check_ipfs(config: &MprdConfigFile) -> CheckResult {
             suggestion: "Use a valid URL like http://localhost:5001".into(),
         };
     }
-    
+
     let client = match reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(5))
@@ -179,9 +186,9 @@ fn check_ipfs(config: &MprdConfigFile) -> CheckResult {
             };
         }
     };
-    
+
     let version_url = format!("{}/api/v0/version", ipfs_url);
-    
+
     match client.post(&version_url).send() {
         Ok(response) if response.status().is_success() => CheckResult::Pass {
             message: format!("Connected to {}", ipfs_url),
@@ -301,7 +308,7 @@ fn check_anti_replay(config: &MprdConfigFile) -> CheckResult {
         .and_then(|cfg| cfg.nonce_store_dir.as_ref())
         .cloned()
         .unwrap_or_else(|| PathBuf::from(".mprd/anti_replay"));
-    
+
     if anti_replay_dir.exists() {
         CheckResult::Pass {
             message: format!("Directory exists: {}", anti_replay_dir.display()),
@@ -330,16 +337,18 @@ mod tests {
 
     #[test]
     fn check_result_is_failure() {
-        let pass = CheckResult::Pass { message: "ok".into() };
-        let warn = CheckResult::Warn { 
-            message: "warn".into(), 
-            suggestion: "fix".into() 
+        let pass = CheckResult::Pass {
+            message: "ok".into(),
         };
-        let fail = CheckResult::Fail { 
-            message: "fail".into(), 
-            suggestion: "fix".into() 
+        let warn = CheckResult::Warn {
+            message: "warn".into(),
+            suggestion: "fix".into(),
         };
-        
+        let fail = CheckResult::Fail {
+            message: "fail".into(),
+            suggestion: "fix".into(),
+        };
+
         assert!(!pass.is_failure());
         assert!(!warn.is_failure());
         assert!(fail.is_failure());

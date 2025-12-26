@@ -590,8 +590,8 @@ impl StateEncryptor {
             state_ref: mprd_core::StateRef,
         }
 
-        let payload: EncryptedPayload =
-            serde_json::from_slice(&plaintext).map_err(|e| ModeError::SerializationError(e.to_string()))?;
+        let payload: EncryptedPayload = serde_json::from_slice(&plaintext)
+            .map_err(|e| ModeError::SerializationError(e.to_string()))?;
 
         let mut fields: HashMap<String, Value> = payload.fields.into_iter().collect();
         for (name, value) in &encrypted.revealed_fields {

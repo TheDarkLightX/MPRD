@@ -11,23 +11,34 @@
 //! - Fail-closed on malformed/unknown inputs (callers must validate at boundaries)
 //! - IO-free core (pure state machine); integration layers provide storage/network/time
 
-pub mod auction;
 pub mod actions;
+pub mod auction;
 pub mod bounds;
+pub mod ceo;
 pub mod engine;
 pub mod gate;
+#[cfg(kani)]
+mod kani_proofs;
 pub mod math;
+pub mod menu_graph;
+pub mod objective;
 pub mod pid;
+pub mod safety_controller;
 pub mod types;
 
-pub use auction::{AuctionBid, AuctionClearing, AuctionOutcome};
 pub use actions::{ActionOutcomeV6, ActionV6};
+pub use auction::{AuctionBid, AuctionClearing, AuctionOutcome};
 pub use bounds::RuntimeBoundsV6;
+pub use ceo::{CeoDecision, CeoObjective, GreedyCeo};
 pub use engine::{EpochBudgetsV6, OpsPayrollOutcome, ServiceTx, TokenomicsV6};
 pub use gate::{AllowAllGateV6, DenyAllGateV6, PolicyGateV6};
 pub use pid::{
     pid_step_bps, propose_v6, PidBpsConfig, PidBpsGains, PidBpsState, TokenomicsPidConfigV6,
     TokenomicsPidProposalV6, TokenomicsPidStateV6,
+};
+pub use objective::{
+    evaluate_hybrid, evaluate_opi_first, evaluate_profit_utility, ObjectiveConfig,
+    ObjectiveConfigState, ObjectiveEvaluator, ObjectiveId, ObjectiveState, ValidatedObjectiveConfig,
 };
 pub use types::{
     Agrs, AgrsPerBcr, Bcr, Bps, EpochId, OperatorId, ParamsV6, Shares, StakeId, StakeStartOutcome,

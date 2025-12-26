@@ -315,7 +315,9 @@ impl DecisionFilter {
                 matches!(decision.proof_status, op_api::ProofStatus::Failed)
                     || matches!(decision.execution_status, op_api::ExecutionStatus::Failed)
             }
-            DecisionFilter::Pending => matches!(decision.proof_status, op_api::ProofStatus::Pending),
+            DecisionFilter::Pending => {
+                matches!(decision.proof_status, op_api::ProofStatus::Pending)
+            }
         }
     }
 }
@@ -361,11 +363,7 @@ impl DecisionsQuery {
             .map(|filter| filter.unwrap_or(DecisionFilter::All))
     }
 
-    fn apply_filters(
-        &self,
-        filter: DecisionFilter,
-        items: &mut Vec<op_api::DecisionSummary>,
-    ) {
+    fn apply_filters(&self, filter: DecisionFilter, items: &mut Vec<op_api::DecisionSummary>) {
         if !matches!(filter, DecisionFilter::All) {
             items.retain(|d| filter.matches(d));
         }
@@ -408,8 +406,8 @@ async fn api_settings(State(state): State<AppState>) -> Json<op_api::OperatorSet
     let api_key_required = env_opt("MPRD_OPERATOR_API_KEY").is_some();
     let registry_state_path = env_opt("MPRD_OPERATOR_REGISTRY_STATE_PATH");
     let registry_key_hex = env_opt("MPRD_OPERATOR_REGISTRY_KEY_HEX");
-    let manifest_key_hex = env_opt("MPRD_OPERATOR_MANIFEST_KEY_HEX")
-        .or_else(|| registry_key_hex.clone());
+    let manifest_key_hex =
+        env_opt("MPRD_OPERATOR_MANIFEST_KEY_HEX").or_else(|| registry_key_hex.clone());
     let store_sensitive_enabled = state.store.store_sensitive_enabled();
     let decision_retention_days = state.store.decision_retention_days();
     let decision_max = state.store.decision_max();
@@ -429,10 +427,8 @@ async fn api_settings(State(state): State<AppState>) -> Json<op_api::OperatorSet
         .and_then(|hex_key| hex::decode(hex_key).ok())
         .map(|b| fingerprint_hex(&b));
 
-    let trust_anchors_configured = trust_anchors_configured_with(
-        registry_state_path.as_deref(),
-        registry_key_hex.as_deref(),
-    );
+    let trust_anchors_configured =
+        trust_anchors_configured_with(registry_state_path.as_deref(), registry_key_hex.as_deref());
 
     Json(op_api::OperatorSettings {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -540,7 +536,10 @@ fn autopilot_degradation_target(
     let mode = state.config.mode.trim().to_ascii_lowercase();
     let trustless = mode == "trustless" || mode == "private";
     if trustless && !trust_anchors_configured() {
-        return Some((op_api::AutopilotMode::Manual, "trust_anchors_missing".into()));
+        return Some((
+            op_api::AutopilotMode::Manual,
+            "trust_anchors_missing".into(),
+        ));
     }
 
     let verify_fail = verify_fail_rate_24h(&state.store, now);
@@ -557,7 +556,8 @@ fn autopilot_degradation_target(
         return Some((op_api::AutopilotMode::Assisted, "ack_timeout".into()));
     }
 
-    if matches!(current.mode, op_api::AutopilotMode::Autopilot) && has_unacked_critical_alerts(state)
+    if matches!(current.mode, op_api::AutopilotMode::Autopilot)
+        && has_unacked_critical_alerts(state)
     {
         return Some((op_api::AutopilotMode::Assisted, "unacked_critical".into()));
     }

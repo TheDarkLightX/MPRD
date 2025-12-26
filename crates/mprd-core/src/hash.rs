@@ -188,10 +188,7 @@ use rayon::prelude::*;
 /// This provides ~Nx speedup on multi-core systems when hashing many candidates.
 /// Useful during candidate set construction or verification.
 pub fn hash_candidates_parallel(candidates: &[CandidateAction]) -> Vec<Hash32> {
-    candidates
-        .par_iter()
-        .map(hash_candidate)
-        .collect()
+    candidates.par_iter().map(hash_candidate).collect()
 }
 
 /// Compute a deterministic hash for a candidate set using parallel hashing.
@@ -249,10 +246,7 @@ impl CachedCandidate {
 
     /// Create multiple cached candidates in parallel.
     pub fn from_candidates_parallel(candidates: Vec<CandidateAction>) -> Vec<Self> {
-        candidates
-            .into_par_iter()
-            .map(Self::new)
-            .collect()
+        candidates.into_par_iter().map(Self::new).collect()
     }
 }
 

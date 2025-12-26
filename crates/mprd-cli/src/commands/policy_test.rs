@@ -10,8 +10,8 @@ use mprd_core::mpb::{MpbPolicy, MpbPolicyEngine};
 use mprd_core::validation::{canonicalize_candidates_v1, canonicalize_state_snapshot_v1};
 use mprd_core::wire::{parse_or_legacy_bounded, ParsedPayload, WireKind};
 use mprd_core::{
-    CandidateAction, DefaultSelector, Hash32, PolicyEngine, Score, Selector, StateRef, StateSnapshot, Value,
-    MAX_CANDIDATES,
+    CandidateAction, DefaultSelector, Hash32, PolicyEngine, Score, Selector, StateRef,
+    StateSnapshot, Value, MAX_CANDIDATES,
 };
 use mprd_zk::bounded_deser::MAX_MPB_ARTIFACT_BYTES;
 use mprd_zk::policy_artifacts::decode_mpb_policy_artifact_bytes_v1;
@@ -71,8 +71,8 @@ pub fn run(policy_path: PathBuf, tests_path: PathBuf) -> Result<()> {
 }
 
 fn load_policy(path: &Path) -> Result<(MpbPolicyEngine, Hash32)> {
-    let bytes =
-        fs::read(path).with_context(|| format!("Failed to read policy file: {}", path.display()))?;
+    let bytes = fs::read(path)
+        .with_context(|| format!("Failed to read policy file: {}", path.display()))?;
 
     let payload = match parse_or_legacy_bounded(
         &bytes,
@@ -126,7 +126,8 @@ fn run_case(
 fn build_state_snapshot(state: HashMap<String, serde_json::Value>) -> Result<StateSnapshot> {
     let mut fields = HashMap::with_capacity(state.len());
     for (key, value) in state {
-        let value = json_to_value(value).with_context(|| format!("Invalid state value for {key}"))?;
+        let value =
+            json_to_value(value).with_context(|| format!("Invalid state value for {key}"))?;
         fields.insert(key, value);
     }
 

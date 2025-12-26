@@ -1674,11 +1674,10 @@ pub fn create_robust_attestor(config: &ModeConfig) -> Result<Box<dyn ZkAttestor>
             .map_err(|e| MprdError::ZkError(e.to_string()))?;
             Ok(Box::new(attestor))
         }
-        DeploymentMode::Private => {
-            Err(MprdError::ZkError(
-                "Mode C requires encryption config with master_key; use create_robust_private_attestor".into(),
-            ))
-        }
+        DeploymentMode::Private => Err(MprdError::ZkError(
+            "Mode C requires encryption config with master_key; use create_robust_private_attestor"
+                .into(),
+        )),
     }
 }
 

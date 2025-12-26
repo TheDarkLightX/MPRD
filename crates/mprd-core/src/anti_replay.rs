@@ -45,7 +45,7 @@ pub struct AntiReplayConfig {
 
 impl AntiReplayConfig {
     /// Create a new AntiReplayConfig with validation.
-    /// 
+    ///
     /// # Security
     /// Validates that `nonce_retention_ms >= max_token_age_ms + max_future_skew_ms`.
     /// This ensures nonces are retained for at least as long as tokens could be valid,
@@ -69,17 +69,17 @@ impl AntiReplayConfig {
         }
         if max_token_age_ms <= 0 {
             return Err(MprdError::ConfigError(
-                "max_token_age_ms must be positive".into()
+                "max_token_age_ms must be positive".into(),
             ));
         }
         if max_future_skew_ms < 0 {
             return Err(MprdError::ConfigError(
-                "max_future_skew_ms cannot be negative".into()
+                "max_future_skew_ms cannot be negative".into(),
             ));
         }
         if max_tracked_nonces == 0 {
             return Err(MprdError::ConfigError(
-                "max_tracked_nonces must be > 0".into()
+                "max_tracked_nonces must be > 0".into(),
             ));
         }
         Ok(Self {
@@ -89,9 +89,9 @@ impl AntiReplayConfig {
             max_tracked_nonces,
         })
     }
-    
+
     /// Create a config without validation (for tests and migration).
-    /// 
+    ///
     /// # Security Warning
     /// This bypasses safety checks. Use `new()` for production.
     #[doc(hidden)]
@@ -489,7 +489,9 @@ fn is_loopback_host(host: &str) -> bool {
     if host.eq_ignore_ascii_case("localhost") {
         return true;
     }
-    host.parse::<IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false)
+    host.parse::<IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
 }
 
 fn enforce_redis_tls_policy(endpoint: &RedisEndpoint, allow_insecure_redis: bool) -> Result<()> {
@@ -523,9 +525,11 @@ fn redis_tls_config() -> Arc<ClientConfig> {
     Arc::clone(TLS_CONFIG.get_or_init(|| {
         let mut roots = RootCertStore::empty();
         roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        Arc::new(ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth())
+        Arc::new(
+            ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
+        )
     }))
 }
 
@@ -577,9 +581,7 @@ impl RedisDistributedNonceStore {
         // Use tuple-based resolution to handle IPv6 correctly (avoids `::1:6379` format issue)
         let addrs: Vec<_> = (self.endpoint.host.as_str(), self.endpoint.port)
             .to_socket_addrs()
-            .map_err(|e| {
-                MprdError::ExecutionError(format!("Redis DNS resolution failed: {}", e))
-            })?
+            .map_err(|e| MprdError::ExecutionError(format!("Redis DNS resolution failed: {}", e)))?
             .collect();
         let sock = addrs.first().ok_or_else(|| {
             MprdError::ExecutionError("Redis DNS resolution returned no addresses".into())

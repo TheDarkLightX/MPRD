@@ -193,7 +193,7 @@ impl MarketRoutedProposer {
     ) -> Vec<CandidateAction> {
         // Fail-closed per-candidate: drop invalid ones rather than failing the whole proposer call.
         candidates.retain(|c| validate_candidate_action_v1(c).is_ok());
-        
+
         // Recompute hashes (untrusted proposers)
         for c in &mut candidates {
             c.candidate_hash = hash_candidate(c);

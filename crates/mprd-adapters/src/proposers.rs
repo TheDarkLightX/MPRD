@@ -51,7 +51,7 @@ impl HttpPoster for ReqwestHttpPoster {
             })?;
 
         let status = response.status().as_u16();
-        
+
         // Check Content-Length before reading body (DoS prevention fast path)
         if let Some(content_length) = response.content_length() {
             if content_length > MAX_RESPONSE_BYTES as u64 {
@@ -61,7 +61,7 @@ impl HttpPoster for ReqwestHttpPoster {
                 )));
             }
         }
-        
+
         // Bounded streaming read: stop reading if we exceed the limit (handles chunked encoding)
         use std::io::Read;
         let mut limited_reader = response.take((MAX_RESPONSE_BYTES + 1) as u64);
@@ -69,7 +69,7 @@ impl HttpPoster for ReqwestHttpPoster {
         limited_reader.read_to_end(&mut buf).map_err(|e| {
             MprdError::ExecutionError(format!("Failed to read proposer response: {}", e))
         })?;
-        
+
         // Check if we hit the limit
         if buf.len() > MAX_RESPONSE_BYTES {
             return Err(MprdError::BoundedValueExceeded(format!(
@@ -78,10 +78,7 @@ impl HttpPoster for ReqwestHttpPoster {
             )));
         }
 
-        Ok(HttpResponse {
-            status,
-            body: buf,
-        })
+        Ok(HttpResponse { status, body: buf })
     }
 }
 
@@ -286,10 +283,10 @@ impl Proposer for HttpProposer {
             };
             // Treat the proposer as untrusted: recompute candidate_hash locally.
             candidate.candidate_hash = hash_candidate(&candidate);
-            
+
             // Validate candidate against schema (CBC: fail-closed on invalid)
             validate_candidate_action_v1(&candidate)?;
-            
+
             out.push(candidate);
         }
         Ok(out)

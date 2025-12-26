@@ -42,24 +42,21 @@ where
     if elements.is_empty() || oracle.test(&[]) {
         return Vec::new();
     }
-    
+
     // Check if full set works
     if !oracle.test(elements) {
         return Vec::new();
     }
-    
+
     let mut current: Vec<T> = elements.to_vec();
     let mut n = 2;
-    
+
     while current.len() >= 2 {
         let chunk_size = (current.len() + n - 1) / n; // Ceiling division
-        let chunks: Vec<Vec<T>> = current
-            .chunks(chunk_size)
-            .map(|c| c.to_vec())
-            .collect();
-        
+        let chunks: Vec<Vec<T>> = current.chunks(chunk_size).map(|c| c.to_vec()).collect();
+
         let mut reduced = false;
-        
+
         // Try removing each chunk (complement test)
         for (i, _chunk) in chunks.iter().enumerate() {
             let complement: Vec<T> = chunks
@@ -68,7 +65,7 @@ where
                 .filter(|(j, _)| *j != i)
                 .flat_map(|(_, c)| c.iter().cloned())
                 .collect();
-            
+
             if !complement.is_empty() && oracle.test(&complement) {
                 current = complement;
                 n = n.saturating_sub(1).max(2);
@@ -76,11 +73,11 @@ where
                 break;
             }
         }
-        
+
         if reduced {
             continue;
         }
-        
+
         // Try each chunk alone
         for chunk in &chunks {
             if chunk.len() < current.len() && oracle.test(chunk) {
@@ -90,18 +87,18 @@ where
                 break;
             }
         }
-        
+
         if reduced {
             continue;
         }
-        
+
         // Increase granularity
         if n >= current.len() {
             break;
         }
         n = (n * 2).min(current.len());
     }
-    
+
     current
 }
 
@@ -126,7 +123,7 @@ where
             cache: std::cell::RefCell::new(HashSet::new()),
         }
     }
-    
+
     pub fn cache_hits(&self) -> usize {
         self.cache.borrow().len()
     }
@@ -140,11 +137,11 @@ where
     fn test(&self, subset: &[T]) -> bool {
         let mut sorted: Vec<T> = subset.to_vec();
         sorted.sort();
-        
+
         if self.cache.borrow().contains(&sorted) {
             return true; // Cached as passing
         }
-        
+
         let result = self.inner.test(subset);
         if result {
             self.cache.borrow_mut().insert(sorted);
@@ -156,52 +153,51 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_ddmin_simple() {
         // Elements: [1, 2, 3, 4, 5]
         // Property: contains 2 AND 4
         let elements = vec![1, 2, 3, 4, 5];
         let oracle = |subset: &[i32]| subset.contains(&2) && subset.contains(&4);
-        
+
         let result = ddmin(&elements, &oracle);
-        
+
         assert!(oracle(&result));
         assert!(result.contains(&2));
         assert!(result.contains(&4));
         // Should be minimal: exactly {2, 4}
         assert_eq!(result.len(), 2);
     }
-    
+
     #[test]
     fn test_ddmin_single_element() {
         let elements = vec![1, 2, 3];
         let oracle = |subset: &[i32]| subset.contains(&2);
-        
+
         let result = ddmin(&elements, &oracle);
-        
+
         assert_eq!(result, vec![2]);
     }
-    
+
     #[test]
     fn test_ddmin_all_required() {
         let elements = vec![1, 2, 3];
-        let oracle = |subset: &[i32]| {
-            subset.contains(&1) && subset.contains(&2) && subset.contains(&3)
-        };
-        
+        let oracle =
+            |subset: &[i32]| subset.contains(&1) && subset.contains(&2) && subset.contains(&3);
+
         let result = ddmin(&elements, &oracle);
-        
+
         assert_eq!(result.len(), 3);
     }
-    
+
     #[test]
     fn test_ddmin_empty_works() {
         let elements = vec![1, 2, 3];
         let oracle = |_subset: &[i32]| true; // Always passes
-        
+
         let result = ddmin(&elements, &oracle);
-        
+
         assert!(result.is_empty());
     }
 }

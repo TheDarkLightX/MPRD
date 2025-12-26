@@ -21,7 +21,10 @@ pub struct PidBpsState {
 
 impl Default for PidBpsState {
     fn default() -> Self {
-        Self { e_prev: 0, i_acc: 0 }
+        Self {
+            e_prev: 0,
+            i_acc: 0,
+        }
     }
 }
 
@@ -48,7 +51,9 @@ impl PidBpsConfig {
             ));
         }
         if self.i_min > self.i_max {
-            return Err(MprdError::InvalidInput("pid config invalid: i_min > i_max".into()));
+            return Err(MprdError::InvalidInput(
+                "pid config invalid: i_min > i_max".into(),
+            ));
         }
         Ok(())
     }
@@ -100,13 +105,15 @@ pub fn pid_step_bps(
     let max = cfg.max_bps.get() as i128;
     let next = proposed.clamp(min, max);
 
-    let next_u16 = u16::try_from(next).map_err(|_| {
-        MprdError::BoundedValueExceeded("pid next bps does not fit u16".into())
-    })?;
+    let next_u16 = u16::try_from(next)
+        .map_err(|_| MprdError::BoundedValueExceeded("pid next bps does not fit u16".into()))?;
 
     Ok((
         Bps::new(next_u16)?,
-        PidBpsState { e_prev: e, i_acc: i },
+        PidBpsState {
+            e_prev: e,
+            i_acc: i,
+        },
     ))
 }
 
@@ -324,7 +331,8 @@ mod tests {
         )
         .unwrap();
 
-        assert!(p.new_burn_surplus_bps.get() as u32 + p.new_auction_surplus_bps.get() as u32 <= 10_000);
+        assert!(
+            p.new_burn_surplus_bps.get() as u32 + p.new_auction_surplus_bps.get() as u32 <= 10_000
+        );
     }
 }
-

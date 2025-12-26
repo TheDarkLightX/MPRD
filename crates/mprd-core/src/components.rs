@@ -709,9 +709,7 @@ fn build_file_tracker(
 }
 
 fn build_memory_tracker(tracker_config: CoreAntiReplayConfig) -> Result<Arc<dyn NonceValidator>> {
-    Ok(Arc::new(InMemoryNonceTracker::with_config(
-        tracker_config,
-    )))
+    Ok(Arc::new(InMemoryNonceTracker::with_config(tracker_config)))
 }
 
 fn nonce_tracker_from_config(config: &crate::MprdConfig) -> Result<Arc<dyn NonceValidator>> {

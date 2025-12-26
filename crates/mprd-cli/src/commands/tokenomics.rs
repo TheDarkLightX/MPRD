@@ -26,7 +26,7 @@ pub fn pid_propose_v6(
     drip_measured_bps: u16,
     format: String,
 ) -> Result<()> {
-    let bps = |v: u16| Bps::new(v).context("invalid bps")?;
+    let bps = |v: u16| -> Result<Bps> { Bps::new(v).context("invalid bps") };
 
     // Default actuator safety rails per `internal/specs/mprd_operator_tokenomics.md` §9.5.
     let burn_cfg = PidBpsConfig {
@@ -115,4 +115,3 @@ pub fn pid_propose_v6(
 
     Ok(())
 }
-

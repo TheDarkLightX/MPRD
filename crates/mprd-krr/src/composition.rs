@@ -88,9 +88,7 @@ fn validate_wff(wff: &str) -> Result<(), KrrError> {
     }
 
     // SECURITY: Explicitly reject dangerous patterns
-    let dangerous_patterns = [
-        "quit", "exit", "load", "save", "exec", "system",
-    ];
+    let dangerous_patterns = ["quit", "exit", "load", "save", "exec", "system"];
 
     let wff_lower = wff.to_lowercase();
     for pattern in dangerous_patterns {
@@ -113,7 +111,7 @@ impl CompositionVerifier {
             timeout: Duration::from_millis(500),
         }
     }
-    
+
     /// Create a new verifier with custom timeout.
     pub fn with_timeout(tau_binary: impl Into<std::path::PathBuf>, timeout: Duration) -> Self {
         CompositionVerifier {
@@ -126,31 +124,38 @@ impl CompositionVerifier {
     ///
     /// Returns `Consistent` if there exists an assignment that satisfies all policies.
     /// Returns `Conflict` with minimal conflicting subset if policies are unsatisfiable.
-    pub fn check_consistency(&self, policies: &[PolicyConstraint]) -> Result<ConsistencyResult, KrrError> {
+    pub fn check_consistency(
+        &self,
+        policies: &[PolicyConstraint],
+    ) -> Result<ConsistencyResult, KrrError> {
         if policies.is_empty() {
             return Ok(ConsistencyResult::Consistent);
         }
-        
+
         // Conjoin all policies
         let combined_wff = self.conjoin_policies(policies);
-        
+
         // Check satisfiability
         if self.is_satisfiable(&combined_wff)? {
             return Ok(ConsistencyResult::Consistent);
         }
-        
+
         // Find minimal conflicting subset using ddmin
         let conflicting = self.find_minimal_conflict(policies)?;
-        
+
         Ok(ConsistencyResult::Conflict {
             conflicting_policies: conflicting.iter().map(|p| p.id.clone()).collect(),
             explanation: format!(
                 "Policies {} are mutually unsatisfiable",
-                conflicting.iter().map(|p| p.id.0.as_str()).collect::<Vec<_>>().join(", ")
+                conflicting
+                    .iter()
+                    .map(|p| p.id.0.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         })
     }
-    
+
     /// Check if policy A subsumes (is stricter than) policy B.
     ///
     /// Returns true if every action allowed by A is also allowed by B.
@@ -160,7 +165,7 @@ impl CompositionVerifier {
         let wff = format!("({}) && !({})", a.wff, b.wff);
         Ok(!self.is_satisfiable(&wff)?)
     }
-    
+
     /// Check backward compatibility: new policy accepts subset of old policy.
     pub fn is_backward_compatible(
         &self,
@@ -172,7 +177,7 @@ impl CompositionVerifier {
         if self.subsumes(new, old)? {
             return Ok(BackwardCompatResult::Compatible);
         }
-        
+
         // Find an example that new allows but old doesn't
         let diff_wff = format!("({}) && !({})", new.wff, old.wff);
         if self.is_satisfiable(&diff_wff)? {
@@ -180,10 +185,10 @@ impl CompositionVerifier {
                 explanation: "New policy allows actions that old policy rejected".into(),
             });
         }
-        
+
         Ok(BackwardCompatResult::Compatible)
     }
-    
+
     /// Conjoin multiple policy WFFs.
     fn conjoin_policies(&self, policies: &[PolicyConstraint]) -> String {
         policies
@@ -192,7 +197,7 @@ impl CompositionVerifier {
             .collect::<Vec<_>>()
             .join(" && ")
     }
-    
+
     /// Check if a WFF is satisfiable using Tau.
     ///
     /// # Security
@@ -201,44 +206,52 @@ impl CompositionVerifier {
     fn is_satisfiable(&self, wff: &str) -> Result<bool, KrrError> {
         use std::io::Write;
         use std::process::{Command, Stdio};
-        
+
         // SECURITY: Validate WFF before execution
         validate_wff(wff)?;
-        
+
         let script = format!("solve {}\nquit\n", wff);
-        
+
         let mut child = Command::new(&self.tau_binary)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| KrrError::TmlError(format!("Failed to spawn tau: {}", e)))?;
-        
+
         {
-            let stdin = child.stdin.as_mut()
+            let stdin = child
+                .stdin
+                .as_mut()
                 .ok_or_else(|| KrrError::TmlError("No stdin".into()))?;
-            stdin.write_all(script.as_bytes())
+            stdin
+                .write_all(script.as_bytes())
                 .map_err(|e| KrrError::TmlError(format!("Write failed: {}", e)))?;
         }
-        
-        let output = child.wait_with_output()
+
+        let output = child
+            .wait_with_output()
             .map_err(|e| KrrError::TmlError(format!("Wait failed: {}", e)))?;
-        
+
         // SECURITY: Fail closed on non-zero exit
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(KrrError::TmlError(format!("Tau failed with status {}: {}", 
-                output.status, stderr)));
+            return Err(KrrError::TmlError(format!(
+                "Tau failed with status {}: {}",
+                output.status, stderr
+            )));
         }
-        
+
         // SECURITY: Bound output size
         if output.stdout.len() > MAX_OUTPUT_BYTES {
             return Err(KrrError::TmlError(format!(
-                "Tau output exceeded {} bytes", MAX_OUTPUT_BYTES)));
+                "Tau output exceeded {} bytes",
+                MAX_OUTPUT_BYTES
+            )));
         }
-        
+
         let stdout = String::from_utf8_lossy(&output.stdout);
-        
+
         // Parse Tau output - fail closed on unexpected output
         if stdout.contains("solution:") || stdout.contains("solution: {") {
             // Has a solution = satisfiable
@@ -247,14 +260,16 @@ impl CompositionVerifier {
         if stdout.contains("no solution") || stdout.contains("unsat") {
             return Ok(false);
         }
-        
+
         // SECURITY: Fail closed on unexpected output
-        Err(KrrError::TmlError(format!("Unexpected tau output (fail closed): {}", 
-            &stdout[..stdout.len().min(200)])))
+        Err(KrrError::TmlError(format!(
+            "Unexpected tau output (fail closed): {}",
+            &stdout[..stdout.len().min(200)]
+        )))
     }
-    
+
     /// Find minimal conflicting subset using delta debugging.
-    /// 
+    ///
     /// # Errors
     /// Returns an error if Tau oracle fails (fail-closed for security).
     fn find_minimal_conflict<'a>(
@@ -263,25 +278,25 @@ impl CompositionVerifier {
     ) -> Result<Vec<&'a PolicyConstraint>, KrrError> {
         // Track oracle errors across ddmin iterations (fail-closed)
         let oracle_error: std::cell::RefCell<Option<KrrError>> = std::cell::RefCell::new(None);
-        
+
         // Oracle: returns true if policies conflict (unsatisfiable)
         // SECURITY: Fail-closed on Tau errors - we cannot assume satisfiable on error
         let oracle = |subset: &[&PolicyConstraint]| -> bool {
             if subset.len() < 2 {
                 return false; // Single policy can't conflict with itself
             }
-            
+
             // If we've already encountered an error, abort further oracle calls
             if oracle_error.borrow().is_some() {
                 return false;
             }
-            
+
             let wff = subset
                 .iter()
                 .map(|p| format!("({})", p.wff))
                 .collect::<Vec<_>>()
                 .join(" && ");
-            
+
             match self.is_satisfiable(&wff) {
                 Ok(is_sat) => !is_sat,
                 Err(e) => {
@@ -291,19 +306,20 @@ impl CompositionVerifier {
                 }
             }
         };
-        
+
         let policy_refs: Vec<&PolicyConstraint> = policies.iter().collect();
-        
+
         // Use ddmin to find minimal conflicting subset
         let minimal = crate::ddmin::ddmin(&policy_refs, &oracle);
-        
+
         // SECURITY: If oracle encountered any error, fail the entire operation
         if let Some(e) = oracle_error.into_inner() {
             return Err(KrrError::TmlError(format!(
-                "Tau oracle failed during conflict detection (fail-closed): {}", e
+                "Tau oracle failed during conflict detection (fail-closed): {}",
+                e
             )));
         }
-        
+
         Ok(minimal)
     }
 }
@@ -314,16 +330,14 @@ pub enum BackwardCompatResult {
     /// New policy is backward compatible.
     Compatible,
     /// New policy breaks backward compatibility.
-    Breaking {
-        explanation: String,
-    },
+    Breaking { explanation: String },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    
+
     fn tau_path() -> Option<PathBuf> {
         let paths = [
             "external/tau-lang/build-Release/tau",
@@ -336,7 +350,7 @@ mod tests {
         }
         None
     }
-    
+
     #[test]
     #[ignore] // Requires tau binary
     fn test_consistent_policies() {
@@ -344,18 +358,24 @@ mod tests {
             eprintln!("Skipping: tau binary not found");
             return;
         };
-        
+
         let verifier = CompositionVerifier::new(tau);
-        
+
         let policies = vec![
-            PolicyConstraint { id: PolicyId("p1".into()), wff: "1 = 1".into() },
-            PolicyConstraint { id: PolicyId("p2".into()), wff: "1 = 1".into() },
+            PolicyConstraint {
+                id: PolicyId("p1".into()),
+                wff: "1 = 1".into(),
+            },
+            PolicyConstraint {
+                id: PolicyId("p2".into()),
+                wff: "1 = 1".into(),
+            },
         ];
-        
+
         let result = verifier.check_consistency(&policies).unwrap();
         assert!(matches!(result, ConsistencyResult::Consistent));
     }
-    
+
     #[test]
     #[ignore] // Requires tau binary
     fn test_conflicting_policies() {
@@ -363,14 +383,20 @@ mod tests {
             eprintln!("Skipping: tau binary not found");
             return;
         };
-        
+
         let verifier = CompositionVerifier::new(tau);
-        
+
         let policies = vec![
-            PolicyConstraint { id: PolicyId("p1".into()), wff: "1 = 1".into() },
-            PolicyConstraint { id: PolicyId("p2".into()), wff: "1 = 0".into() }, // Contradiction
+            PolicyConstraint {
+                id: PolicyId("p1".into()),
+                wff: "1 = 1".into(),
+            },
+            PolicyConstraint {
+                id: PolicyId("p2".into()),
+                wff: "1 = 0".into(),
+            }, // Contradiction
         ];
-        
+
         let result = verifier.check_consistency(&policies).unwrap();
         assert!(matches!(result, ConsistencyResult::Conflict { .. }));
     }
