@@ -48,15 +48,26 @@ mprd policy algebra-diff --a old.pal --b new.pal
 
 If not equivalent, it prints a concrete assignment (a counterexample) showing how they differ.
 
+### Certify an emitted Tau gate
+
+To ensure the emitted sbf-only Tau gate matches the Policy Algebra semantics (for the booleanizable subset),
+you can certify equivalence via ROBDD:
+
+```bash
+mprd policy algebra-certify-tau --policy path/to/policy.pal --tau path/to/gate.tau --output-name allow
+```
+
+If not equivalent, it prints a concrete counterexample assignment over the policy’s boolean signals.
+
 ## API usage (Rust)
 
 `mprd_core::policy_algebra` exports:
 - `compile_allow_robdd(expr, limits) -> Robdd`
 - `policy_equiv_robdd(a, b, limits) -> BddEquivResult`
+ - `parse_emitted_tau_gate_allow_expr_v1(tau_source, output_name, limits) -> PolicyExpr`
 
 ## Next steps (if we want stronger certification)
 
 The current rail is “semantic hashing + counterexample diff”. If we want *proof-carrying* certification, the next steps are:
 - emit SAT proofs (e.g., DRAT) for equivalence checks and verify them with a small checker, or
 - run compilation inside a zkVM and bind the artifact to a receipt.
-

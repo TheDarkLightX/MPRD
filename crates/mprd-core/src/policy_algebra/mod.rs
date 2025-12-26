@@ -15,6 +15,7 @@ mod bdd;
 mod canon;
 mod eval;
 mod hash;
+mod tau_sbf_parse;
 mod tau_emit;
 mod trace;
 
@@ -25,6 +26,7 @@ pub use bdd::{
 pub use canon::CanonicalPolicy;
 pub use eval::{evaluate, EvalContext, PolicyEvalResult};
 pub use hash::{decode_policy_v1, policy_hash_v1, POLICY_ALGEBRA_HASH_DOMAIN_V1};
+pub use tau_sbf_parse::{parse_emitted_tau_gate_allow_expr_v1, parse_tau_sbf_expr_v1};
 pub use tau_emit::emit_tau_gate_v1;
 pub use trace::{PolicyTrace, TraceEntry, TraceReasonCode};
 

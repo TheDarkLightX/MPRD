@@ -144,7 +144,9 @@ pub fn compile_allow_robdd(expr: &PolicyExpr, limits: PolicyLimits) -> Result<Ro
 
     let mut b = BddBuilder::new(vars.clone(), max_bdd_nodes)?;
 
-    let main = strip_deny_if(canon.expr()).unwrap_or(PolicyExpr::True);
+    // If stripping removes the entire expression, the remaining "main" is `False`:
+    // a policy consisting only of veto declarations (`DenyIf`) does not by itself allow.
+    let main = strip_deny_if(canon.expr()).unwrap_or(PolicyExpr::False);
     let mut root = b.compile_expr(&main)?;
 
     for a in &veto_atoms {
@@ -508,7 +510,7 @@ impl BddBuilder {
 
     fn compile_allow_from_canon(&mut self, canon: &PolicyExpr) -> Result<BddId> {
         let veto_atoms: Vec<PolicyAtom> = canon.deny_if_atoms().into_iter().collect();
-        let main = strip_deny_if(canon).unwrap_or(PolicyExpr::True);
+        let main = strip_deny_if(canon).unwrap_or(PolicyExpr::False);
         let mut root = self.compile_expr(&main)?;
         for a in &veto_atoms {
             let v = self.var(a)?;
@@ -552,6 +554,7 @@ impl BddBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn lim() -> PolicyLimits {
         PolicyLimits::DEFAULT
@@ -628,5 +631,112 @@ mod tests {
         let expr = PolicyExpr::not(ban);
         let err = compile_allow_robdd(&expr, limits).unwrap_err();
         assert!(err.to_string().contains("DenyIf under Not"));
+    }
+
+    #[test]
+    fn robdd_hash_is_stable_for_semantic_deny_if_lift() {
+        let limits = lim();
+        let ok = PolicyExpr::atom("ok", limits).unwrap();
+        let ban = PolicyExpr::deny_if("ban", limits).unwrap();
+
+        // Semantics: ok & !ban
+        let with_deny_if = PolicyExpr::any(vec![ok.clone(), ban], limits).unwrap();
+        let explicit = PolicyExpr::all(vec![ok, PolicyExpr::not(PolicyExpr::atom("ban", limits).unwrap())], limits).unwrap();
+
+        let b1 = compile_allow_robdd(&with_deny_if, limits).unwrap();
+        let b2 = compile_allow_robdd(&explicit, limits).unwrap();
+
+        assert_eq!(b1.hash_v1(), b2.hash_v1());
+
+        let r = policy_equiv_robdd(&with_deny_if, &explicit, limits).unwrap();
+        assert!(r.equivalent);
+    }
+
+    fn arb_atom_name() -> impl Strategy<Value = &'static str> {
+        prop_oneof![
+            Just("a"),
+            Just("b"),
+            Just("c"),
+            Just("d"),
+            Just("e"),
+            Just("f"),
+        ]
+    }
+
+    fn arb_no_veto(limits: PolicyLimits) -> BoxedStrategy<PolicyExpr> {
+        let leaf = prop_oneof![
+            Just(PolicyExpr::True),
+            Just(PolicyExpr::False),
+            arb_atom_name().prop_map(move |n| PolicyExpr::atom(n, limits).unwrap()),
+        ];
+
+        leaf.prop_recursive(3, 48, 4, move |inner| {
+            prop_oneof![
+                inner.clone().prop_map(PolicyExpr::not),
+                proptest::collection::vec(inner.clone(), 0..=4)
+                    .prop_map(move |v| PolicyExpr::all(v, limits).unwrap()),
+                proptest::collection::vec(inner.clone(), 0..=4)
+                    .prop_map(move |v| PolicyExpr::any(v, limits).unwrap()),
+                proptest::collection::vec(inner.clone(), 0..=4).prop_map(move |v| {
+                    // Keep PBT valid under canonicalization: `k==0` remains valid even after
+                    // dedup/removals in canonicalization.
+                    PolicyExpr::threshold(0, v, limits).unwrap()
+                }),
+            ]
+        })
+        .boxed()
+    }
+
+    fn arb_with_veto(limits: PolicyLimits) -> BoxedStrategy<PolicyExpr> {
+        let no_veto = arb_no_veto(limits);
+        let veto_leaf = arb_atom_name().prop_map(move |n| PolicyExpr::deny_if(n, limits).unwrap());
+        let leaf = prop_oneof![no_veto.clone(), veto_leaf];
+
+        leaf.prop_recursive(3, 64, 4, move |inner| {
+            prop_oneof![
+                // Not is only allowed over deny-if-free subexpressions.
+                no_veto.clone().prop_map(PolicyExpr::not),
+                proptest::collection::vec(inner.clone(), 0..=4)
+                    .prop_map(move |v| PolicyExpr::all(v, limits).unwrap()),
+                proptest::collection::vec(inner.clone(), 0..=4)
+                    .prop_map(move |v| PolicyExpr::any(v, limits).unwrap()),
+                proptest::collection::vec(inner.clone(), 0..=4).prop_map(move |v| {
+                    PolicyExpr::threshold(0, v, limits).unwrap()
+                }),
+            ]
+        })
+        .boxed()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 64,
+            max_shrink_iters: 10_000,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn robdd_matches_policy_evaluate_for_random_policies(expr in arb_with_veto(PolicyLimits::DEFAULT)) {
+            let limits = lim();
+            let canon = CanonicalPolicy::new(expr, limits).unwrap();
+            let bdd = compile_allow_robdd(canon.expr(), limits).unwrap();
+
+            let vars = bdd.vars();
+            prop_assume!(vars.len() <= 12);
+            let n = vars.len();
+            let max = 1u64 << n;
+
+            for mask in 0..max {
+                let mut ctx = BTreeMap::new();
+                for (i, a) in vars.iter().enumerate() {
+                    let v = ((mask >> i) & 1) == 1;
+                    ctx.insert(a.as_str().to_string(), v);
+                }
+
+                let allowed_eval = super::super::evaluate(canon.expr(), &ctx, limits).unwrap().allowed();
+                let allowed_bdd = bdd.eval(|atom| *ctx.get(atom.as_str()).unwrap());
+                prop_assert_eq!(allowed_eval, allowed_bdd);
+            }
+        }
     }
 }
