@@ -658,6 +658,28 @@ enum TokenomicsCommands {
         #[arg(long, default_value = "human")]
         format: String,
     },
+
+    /// Fuzz Tokenomics v6 invariants with a deterministic action generator.
+    ///
+    /// This is a developer rail intended to find and minimize invariant violations in the
+    /// v6 state machine. It is deterministic given `seed`.
+    FuzzInvariantsV6 {
+        /// RNG seed (deterministic).
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+
+        /// Max actions per iteration.
+        #[arg(long, default_value_t = 300)]
+        steps: u32,
+
+        /// Number of independent iterations (seeds are derived from `seed`).
+        #[arg(long, default_value_t = 50)]
+        iters: u32,
+
+        /// Number of operators to admit and fund in each iteration.
+        #[arg(long, default_value_t = 4)]
+        operators: u32,
+    },
 }
 
 fn main() -> Result<()> {
@@ -942,6 +964,12 @@ fn main() -> Result<()> {
                 drip_measured_bps,
                 format,
             ),
+            TokenomicsCommands::FuzzInvariantsV6 {
+                seed,
+                steps,
+                iters,
+                operators,
+            } => commands::tokenomics::fuzz_invariants_v6(seed, steps, iters, operators),
         },
     }
 }
