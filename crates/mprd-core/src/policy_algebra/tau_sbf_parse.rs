@@ -260,8 +260,7 @@ impl<'a> Parser<'a> {
         if self.nodes_emitted > self.limits.max_nodes {
             return Err(MprdError::InvalidInput(format!(
                 "tau_sbf_parse: expression too large (nodes_emitted={} max_nodes={})",
-                self.nodes_emitted,
-                self.limits.max_nodes
+                self.nodes_emitted, self.limits.max_nodes
             )));
         }
         Ok(())
@@ -271,7 +270,9 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy_algebra::{emit_tau_gate_v1, policy_equiv_robdd, CanonicalPolicy, PolicyExpr};
+    use crate::policy_algebra::{
+        emit_tau_gate_v2, policy_equiv_robdd_policy_vs_tau_bits, CanonicalPolicy, PolicyExpr,
+    };
 
     fn lim() -> PolicyLimits {
         PolicyLimits::DEFAULT
@@ -283,17 +284,22 @@ mod tests {
         // a & b | c == (a & b) | c
         let expr = parse_tau_sbf_expr_v1("i_a[t] & i_b[t] | i_c[t]", limits).unwrap();
         let canon = CanonicalPolicy::new(expr, limits).unwrap();
-        let tau = emit_tau_gate_v1(canon.expr(), "allow", limits).unwrap();
+        let tau = emit_tau_gate_v2(canon.expr(), "allow", limits).unwrap();
         // Roundtrip the emitted gate; should parse.
         let parsed = parse_emitted_tau_gate_allow_expr_v1(&tau, "allow", limits).unwrap();
-        let r = policy_equiv_robdd(canon.expr(), &parsed, limits).unwrap();
+        let r = policy_equiv_robdd_policy_vs_tau_bits(canon.expr(), &parsed, limits).unwrap();
         assert!(r.equivalent);
 
         // Postfix not binds tightest.
         let expr = parse_tau_sbf_expr_v1("i_a[t]' | i_b[t]", limits).unwrap();
         let canon = CanonicalPolicy::new(expr, limits).unwrap();
         // Sanity: ensure hash-stable.
-        assert_eq!(canon.hash_v1(), CanonicalPolicy::new(canon.expr().clone(), limits).unwrap().hash_v1());
+        assert_eq!(
+            canon.hash_v1(),
+            CanonicalPolicy::new(canon.expr().clone(), limits)
+                .unwrap()
+                .hash_v1()
+        );
     }
 
     #[test]
@@ -302,12 +308,16 @@ mod tests {
         let a = PolicyExpr::atom("a", limits).unwrap();
         let b = PolicyExpr::atom("b", limits).unwrap();
         let ban = PolicyExpr::deny_if("ban", limits).unwrap();
-        let expr = PolicyExpr::all(vec![a, PolicyExpr::any(vec![b, ban], limits).unwrap()], limits).unwrap();
+        let expr = PolicyExpr::all(
+            vec![a, PolicyExpr::any(vec![b, ban], limits).unwrap()],
+            limits,
+        )
+        .unwrap();
         let canon = CanonicalPolicy::new(expr, limits).unwrap();
 
-        let tau = emit_tau_gate_v1(canon.expr(), "allow", limits).unwrap();
+        let tau = emit_tau_gate_v2(canon.expr(), "allow", limits).unwrap();
         let parsed = parse_emitted_tau_gate_allow_expr_v1(&tau, "allow", limits).unwrap();
-        let r = policy_equiv_robdd(canon.expr(), &parsed, limits).unwrap();
+        let r = policy_equiv_robdd_policy_vs_tau_bits(canon.expr(), &parsed, limits).unwrap();
         assert!(r.equivalent);
     }
 
@@ -318,4 +328,3 @@ mod tests {
         assert!(err.to_string().contains("did not find output rule"));
     }
 }
-

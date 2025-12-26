@@ -115,26 +115,174 @@ impl Robdd {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BddEquivResult {
     pub equivalent: bool,
-    /// A concrete assignment (total over all vars) witnessing non-equivalence.
-    pub counterexample: Option<BTreeMap<String, bool>>,
+    /// A concrete assignment (total over all *signals*) witnessing non-equivalence.
+    ///
+    /// `None` means the signal is missing (fail-closed).
+    pub counterexample: Option<BTreeMap<String, Option<bool>>>,
 }
 
-/// Compile a Policy Algebra expression into an allow/deny ROBDD (booleanizable subset).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DenyIfValue {
+    True,
+    False,
+}
+
+fn bit_present_name(a: &PolicyAtom, limits: PolicyLimits) -> Result<PolicyAtom> {
+    PolicyAtom::new(format!("p_{}", a.as_str()), limits)
+}
+
+fn bit_value_name(a: &PolicyAtom, limits: PolicyLimits) -> Result<PolicyAtom> {
+    PolicyAtom::new(format!("v_{}", a.as_str()), limits)
+}
+
+fn bit_var_order(signals: &BTreeSet<PolicyAtom>, limits: PolicyLimits) -> Result<Vec<PolicyAtom>> {
+    let mut vars = Vec::with_capacity(signals.len().saturating_mul(2));
+    for a in signals {
+        vars.push(bit_present_name(a, limits)?);
+        vars.push(bit_value_name(a, limits)?);
+    }
+    Ok(vars)
+}
+
+/// Lower a canonical Policy Algebra expression to a pure boolean expression over *presence bits*.
+///
+/// Each signal `a` becomes two boolean atoms:
+/// - `p_a` : present bit (1 if present)
+/// - `v_a` : value bit (1 if true; required to be 0 when `p_a` is 0)
+///
+/// The lowered expression is true iff `evaluate(expr, ctx)` returns `Allow` under the
+/// veto-first, fail-closed semantics.
+fn lower_to_presence_bits(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
+    fn lower_main(
+        expr: &PolicyExpr,
+        deny_if_value: DenyIfValue,
+        limits: PolicyLimits,
+    ) -> Result<PolicyExpr> {
+        Ok(match expr {
+            PolicyExpr::True => PolicyExpr::True,
+            PolicyExpr::False => PolicyExpr::False,
+            PolicyExpr::Atom(a) => {
+                // Allow iff present && value.
+                let p = PolicyExpr::Atom(bit_present_name(a, limits)?);
+                let v = PolicyExpr::Atom(bit_value_name(a, limits)?);
+                PolicyExpr::all(vec![p, v], limits)?
+            }
+            PolicyExpr::DenyIf(_) => match deny_if_value {
+                DenyIfValue::True => PolicyExpr::True,
+                DenyIfValue::False => PolicyExpr::False,
+            },
+            PolicyExpr::Not(p) => {
+                // `DenyIf` under `Not` is rejected by outer validation. Still, force False
+                // semantics if it were present.
+                PolicyExpr::not(lower_main(p, DenyIfValue::False, limits)?)
+            }
+            PolicyExpr::All(children) => {
+                let mut out = Vec::with_capacity(children.len());
+                for ch in children {
+                    out.push(lower_main(ch, DenyIfValue::True, limits)?);
+                }
+                PolicyExpr::all(out, limits)?
+            }
+            PolicyExpr::Any(children) => {
+                let mut out = Vec::with_capacity(children.len());
+                for ch in children {
+                    out.push(lower_main(ch, DenyIfValue::False, limits)?);
+                }
+                PolicyExpr::any(out, limits)?
+            }
+            PolicyExpr::Threshold { k, children } => {
+                if *k == 0 {
+                    PolicyExpr::True
+                } else {
+                    let n = u16::try_from(children.len()).unwrap_or(u16::MAX);
+                    if *k == n {
+                        let mut out = Vec::with_capacity(children.len());
+                        for ch in children {
+                            out.push(lower_main(ch, DenyIfValue::False, limits)?);
+                        }
+                        PolicyExpr::all(out, limits)?
+                    } else {
+                        return Err(MprdError::InvalidInput(format!(
+                            "lower_to_presence_bits: Threshold(k={k}) not supported (n={})",
+                            children.len()
+                        )));
+                    }
+                }
+            }
+        })
+    }
+
+    // Main formula (DenyIf treated as neutral, modeled context-sensitively).
+    let main = lower_main(expr, DenyIfValue::False, limits)?;
+
+    // Veto constraints: for every DenyIf atom `a`, require `p_a && !v_a` (missing vetoes).
+    let veto_atoms: Vec<PolicyAtom> = expr.deny_if_atoms().into_iter().collect();
+    if veto_atoms.is_empty() {
+        return Ok(main);
+    }
+
+    let mut conj = Vec::new();
+    conj.push(main);
+    for a in veto_atoms {
+        let p = PolicyExpr::Atom(bit_present_name(&a, limits)?);
+        let v = PolicyExpr::Atom(bit_value_name(&a, limits)?);
+        let ok = PolicyExpr::all(vec![p, PolicyExpr::not(v)], limits)?;
+        conj.push(ok);
+    }
+
+    // If we ever exceed max_children, build nested conjunctions deterministically.
+    fn nested_all(mut parts: Vec<PolicyExpr>, limits: PolicyLimits) -> Result<PolicyExpr> {
+        if parts.len() <= limits.max_children {
+            return PolicyExpr::all(parts, limits);
+        }
+        // Chunk into groups of max_children and fold.
+        let mut acc: Vec<PolicyExpr> = Vec::new();
+        while !parts.is_empty() {
+            let take = parts.len().min(limits.max_children);
+            let chunk = parts.drain(0..take).collect::<Vec<_>>();
+            acc.push(PolicyExpr::all(chunk, limits)?);
+        }
+        nested_all(acc, limits)
+    }
+
+    nested_all(conj, limits)
+}
+
+fn tristate_counterexample_from_bits(
+    signals: &BTreeSet<PolicyAtom>,
+    bits: &BTreeMap<String, bool>,
+    limits: PolicyLimits,
+) -> Result<BTreeMap<String, Option<bool>>> {
+    let mut out: BTreeMap<String, Option<bool>> = BTreeMap::new();
+    for a in signals {
+        let p = bit_present_name(a, limits)?;
+        let v = bit_value_name(a, limits)?;
+        let present = bits.get(p.as_str()).copied().unwrap_or(false);
+        let value = bits.get(v.as_str()).copied().unwrap_or(false);
+        let tri = if present { Some(value) } else { None };
+        out.insert(a.as_str().to_string(), tri);
+    }
+    Ok(out)
+}
+
+/// Compile a Policy Algebra expression into an allow/deny ROBDD (booleanizable subset),
+/// modeling **missing signals** explicitly via presence bits.
 ///
 /// Restrictions (fail-closed):
 /// - `DenyIf` must not appear under `Not`.
 /// - `Threshold(k, children)` is only supported for `k == 0` or `k == n`.
 ///
 /// Semantics:
-/// - All `DenyIf(atom)` become a top-level veto: `¬atom`.
-/// - `DenyIf` nodes are removed from the "main" boolean formula.
+/// - Each signal `a` is modeled as `(p_a, v_a)` where `p_a` is presence, `v_a` is value.
+/// - `Atom(a)` compiles to `p_a ∧ v_a` (missing => deny).
+/// - Each `DenyIf(a)` adds a veto constraint `p_a ∧ ¬v_a` (missing => veto deny).
 pub fn compile_allow_robdd(expr: &PolicyExpr, limits: PolicyLimits) -> Result<Robdd> {
     limits.validate()?;
     let canon = CanonicalPolicy::new(expr.clone(), limits)?;
     validate_no_deny_if_under_not(canon.expr(), false)?;
 
-    let vars: Vec<PolicyAtom> = canon.expr().atoms().into_iter().collect();
-    let veto_atoms: Vec<PolicyAtom> = canon.expr().deny_if_atoms().into_iter().collect();
+    let signals: BTreeSet<PolicyAtom> = canon.expr().atoms();
+    let vars: Vec<PolicyAtom> = bit_var_order(&signals, limits)?;
 
     let max_bdd_nodes = limits
         .max_nodes
@@ -142,19 +290,10 @@ pub fn compile_allow_robdd(expr: &PolicyExpr, limits: PolicyLimits) -> Result<Ro
         .max(limits.max_nodes)
         .min(1_000_000);
 
+    let lowered = lower_to_presence_bits(canon.expr(), limits)?;
+
     let mut b = BddBuilder::new(vars.clone(), max_bdd_nodes)?;
-
-    // If stripping removes the entire expression, the remaining "main" is `False`:
-    // a policy consisting only of veto declarations (`DenyIf`) does not by itself allow.
-    let main = strip_deny_if(canon.expr()).unwrap_or(PolicyExpr::False);
-    let mut root = b.compile_expr(&main)?;
-
-    for a in &veto_atoms {
-        let v = b.var(a)?;
-        let not_v = b.apply_not(v)?;
-        root = b.apply(Op::And, root, not_v)?;
-    }
-
+    let root = b.compile_expr(&lowered)?;
     Ok(Robdd {
         vars,
         nodes: b.nodes,
@@ -165,14 +304,18 @@ pub fn compile_allow_robdd(expr: &PolicyExpr, limits: PolicyLimits) -> Result<Ro
 /// Check semantic equivalence of two Policy Algebra expressions (booleanizable subset).
 ///
 /// Returns a counterexample assignment if not equivalent.
-pub fn policy_equiv_robdd(a: &PolicyExpr, b: &PolicyExpr, limits: PolicyLimits) -> Result<BddEquivResult> {
+pub fn policy_equiv_robdd(
+    a: &PolicyExpr,
+    b: &PolicyExpr,
+    limits: PolicyLimits,
+) -> Result<BddEquivResult> {
     limits.validate()?;
 
-    // Use a union variable order so missing atoms in one policy are still part of the comparison.
-    let mut vars: BTreeSet<PolicyAtom> = BTreeSet::new();
-    vars.extend(a.atoms());
-    vars.extend(b.atoms());
-    let vars: Vec<PolicyAtom> = vars.into_iter().collect();
+    // Union signal set, then derive a stable bit variable order.
+    let mut signals: BTreeSet<PolicyAtom> = BTreeSet::new();
+    signals.extend(a.atoms());
+    signals.extend(b.atoms());
+    let vars: Vec<PolicyAtom> = bit_var_order(&signals, limits)?;
 
     let max_bdd_nodes = limits
         .max_nodes
@@ -185,16 +328,18 @@ pub fn policy_equiv_robdd(a: &PolicyExpr, b: &PolicyExpr, limits: PolicyLimits) 
     validate_no_deny_if_under_not(ca.expr(), false)?;
     validate_no_deny_if_under_not(cb.expr(), false)?;
 
+    let la = lower_to_presence_bits(ca.expr(), limits)?;
     let mut ba = BddBuilder::new(vars.clone(), max_bdd_nodes)?;
-    let ra = ba.compile_allow_from_canon(ca.expr())?;
+    let ra = ba.compile_expr(&la)?;
     let robdd_a = Robdd {
         vars: vars.clone(),
         nodes: ba.nodes,
         root: ra,
     };
 
+    let lb = lower_to_presence_bits(cb.expr(), limits)?;
     let mut bb = BddBuilder::new(vars.clone(), max_bdd_nodes)?;
-    let rb = bb.compile_allow_from_canon(cb.expr())?;
+    let rb = bb.compile_expr(&lb)?;
     let robdd_b = Robdd {
         vars: vars.clone(),
         nodes: bb.nodes,
@@ -224,9 +369,10 @@ pub fn policy_equiv_robdd(a: &PolicyExpr, b: &PolicyExpr, limits: PolicyLimits) 
         )
     })?;
 
+    let ce = tristate_counterexample_from_bits(&signals, &assignment, limits)?;
     Ok(BddEquivResult {
         equivalent: false,
-        counterexample: Some(assignment),
+        counterexample: Some(ce),
     })
 }
 
@@ -266,24 +412,103 @@ fn sat_assignment(bdd: &Robdd) -> Option<BTreeMap<String, bool>> {
     Some(full)
 }
 
-fn strip_deny_if(expr: &PolicyExpr) -> Option<PolicyExpr> {
-    match expr {
-        PolicyExpr::DenyIf(_) => None,
-        PolicyExpr::True => Some(PolicyExpr::True),
-        PolicyExpr::False => Some(PolicyExpr::False),
-        PolicyExpr::Atom(a) => Some(PolicyExpr::Atom(a.clone())),
-        PolicyExpr::Not(p) => strip_deny_if(p).map(|c| PolicyExpr::Not(Box::new(c))),
-        PolicyExpr::All(children) => Some(PolicyExpr::All(
-            children.iter().filter_map(strip_deny_if).collect(),
-        )),
-        PolicyExpr::Any(children) => Some(PolicyExpr::Any(
-            children.iter().filter_map(strip_deny_if).collect(),
-        )),
-        PolicyExpr::Threshold { k, children } => Some(PolicyExpr::Threshold {
-            k: *k,
-            children: children.iter().filter_map(strip_deny_if).collect(),
-        }),
+/// Compare a Policy Algebra expression (signal-level) to a boolean expression over presence bits.
+///
+/// Intended for certifying emitted Tau gates:
+/// - `policy` is the Policy Algebra policy (signals are `a`, `b`, ... with missing semantics).
+/// - `tau_bits` is a boolean formula over derived atoms `p_<a>` and `v_<a>`.
+pub fn policy_equiv_robdd_policy_vs_tau_bits(
+    policy: &PolicyExpr,
+    tau_bits: &PolicyExpr,
+    limits: PolicyLimits,
+) -> Result<BddEquivResult> {
+    limits.validate()?;
+
+    // Signals come from the policy and from any p_/v_ atoms referenced by tau_bits.
+    fn extract_signals_from_bits(
+        bits_expr: &PolicyExpr,
+        limits: PolicyLimits,
+    ) -> Result<BTreeSet<PolicyAtom>> {
+        let mut out = BTreeSet::new();
+        for a in bits_expr.atoms() {
+            let s = a.as_str();
+            let Some(rest) = s.strip_prefix("p_").or_else(|| s.strip_prefix("v_")) else {
+                return Err(MprdError::InvalidInput(format!(
+                    "tau_bits contains non-bit atom '{s}' (expected prefix 'p_' or 'v_')"
+                )));
+            };
+            if rest.is_empty() {
+                return Err(MprdError::InvalidInput(
+                    "tau_bits contains empty signal name after prefix".into(),
+                ));
+            }
+            out.insert(PolicyAtom::new(rest.to_string(), limits)?);
+        }
+        Ok(out)
     }
+
+    let mut signals: BTreeSet<PolicyAtom> = BTreeSet::new();
+    signals.extend(policy.atoms());
+    signals.extend(extract_signals_from_bits(tau_bits, limits)?);
+
+    let vars: Vec<PolicyAtom> = bit_var_order(&signals, limits)?;
+
+    let max_bdd_nodes = limits
+        .max_nodes
+        .saturating_mul(16)
+        .max(limits.max_nodes)
+        .min(1_000_000);
+
+    let cp = CanonicalPolicy::new(policy.clone(), limits)?;
+    validate_no_deny_if_under_not(cp.expr(), false)?;
+    let lp = lower_to_presence_bits(cp.expr(), limits)?;
+
+    let ct = CanonicalPolicy::new(tau_bits.clone(), limits)?;
+
+    let mut bp = BddBuilder::new(vars.clone(), max_bdd_nodes)?;
+    let rp = bp.compile_expr(&lp)?;
+    let robdd_p = Robdd {
+        vars: vars.clone(),
+        nodes: bp.nodes,
+        root: rp,
+    };
+
+    let mut bt = BddBuilder::new(vars.clone(), max_bdd_nodes)?;
+    let rt = bt.compile_expr(ct.expr())?;
+    let robdd_t = Robdd {
+        vars: vars.clone(),
+        nodes: bt.nodes,
+        root: rt,
+    };
+
+    let mut bd = BddBuilder::new(vars.clone(), max_bdd_nodes)?;
+    let dp = bd.import(&robdd_p)?;
+    let dt = bd.import(&robdd_t)?;
+    let diff = bd.apply(Op::Xor, dp, dt)?;
+    let diff_robdd = Robdd {
+        vars,
+        nodes: bd.nodes,
+        root: diff,
+    };
+
+    if diff == BddId::FALSE {
+        return Ok(BddEquivResult {
+            equivalent: true,
+            counterexample: None,
+        });
+    }
+
+    let assignment = sat_assignment(&diff_robdd).ok_or_else(|| {
+        MprdError::ExecutionError(
+            "ROBDD diff was non-false but no satisfying assignment found".into(),
+        )
+    })?;
+
+    let ce = tristate_counterexample_from_bits(&signals, &assignment, limits)?;
+    Ok(BddEquivResult {
+        equivalent: false,
+        counterexample: Some(ce),
+    })
 }
 
 fn validate_no_deny_if_under_not(expr: &PolicyExpr, under_not: bool) -> Result<()> {
@@ -430,7 +655,13 @@ impl BddBuilder {
                 let va = self.var_of(a);
                 let vb = self.var_of(b);
                 let v = match (va, vb) {
-                    (Some(x), Some(y)) => if x <= y { x } else { y },
+                    (Some(x), Some(y)) => {
+                        if x <= y {
+                            x
+                        } else {
+                            y
+                        }
+                    }
                     (Some(x), None) => x,
                     (None, Some(y)) => y,
                     (None, None) => unreachable!("terminals handled above"),
@@ -508,18 +739,6 @@ impl BddBuilder {
         }
     }
 
-    fn compile_allow_from_canon(&mut self, canon: &PolicyExpr) -> Result<BddId> {
-        let veto_atoms: Vec<PolicyAtom> = canon.deny_if_atoms().into_iter().collect();
-        let main = strip_deny_if(canon).unwrap_or(PolicyExpr::False);
-        let mut root = self.compile_expr(&main)?;
-        for a in &veto_atoms {
-            let v = self.var(a)?;
-            let not_v = self.apply_not(v)?;
-            root = self.apply(Op::And, root, not_v)?;
-        }
-        Ok(root)
-    }
-
     fn import(&mut self, bdd: &Robdd) -> Result<BddId> {
         // Import by reconstructing under this builder's var order.
         // This keeps the equivalence checker simple and deterministic.
@@ -529,7 +748,12 @@ impl BddBuilder {
             ));
         }
 
-        fn go(dst: &mut BddBuilder, src: &Robdd, id: BddId, memo: &mut BTreeMap<BddId, BddId>) -> Result<BddId> {
+        fn go(
+            dst: &mut BddBuilder,
+            src: &Robdd,
+            id: BddId,
+            memo: &mut BTreeMap<BddId, BddId>,
+        ) -> Result<BddId> {
             if let Some(v) = memo.get(&id).copied() {
                 return Ok(v);
             }
@@ -560,19 +784,31 @@ mod tests {
         PolicyLimits::DEFAULT
     }
 
-    fn full_ctx(bdd: &Robdd, trues: &[&str]) -> BTreeMap<String, bool> {
+    #[derive(Clone, Copy, Debug)]
+    enum Tri {
+        Missing,
+        False,
+        True,
+    }
+
+    fn ctx_from_tri(assign: &[(&str, Tri)]) -> BTreeMap<String, bool> {
         let mut m = BTreeMap::new();
-        for a in bdd.vars() {
-            m.insert(a.as_str().to_string(), false);
-        }
-        for t in trues {
-            m.insert((*t).to_string(), true);
+        for (k, v) in assign {
+            match v {
+                Tri::Missing => {}
+                Tri::False => {
+                    m.insert((*k).to_string(), false);
+                }
+                Tri::True => {
+                    m.insert((*k).to_string(), true);
+                }
+            }
         }
         m
     }
 
     #[test]
-    fn robdd_matches_policy_evaluate_for_total_assignments() {
+    fn robdd_matches_policy_evaluate_for_tristate_assignments() {
         let limits = lim();
         let a = PolicyExpr::atom("a", limits).unwrap();
         let b = PolicyExpr::atom("b", limits).unwrap();
@@ -580,24 +816,46 @@ mod tests {
         let ban = PolicyExpr::deny_if("ban", limits).unwrap();
 
         // (a && (b || c)) with a veto guard `ban`.
-        let expr = PolicyExpr::all(vec![a, PolicyExpr::any(vec![b, c, ban], limits).unwrap()], limits).unwrap();
+        let expr = PolicyExpr::all(
+            vec![a, PolicyExpr::any(vec![b, c, ban], limits).unwrap()],
+            limits,
+        )
+        .unwrap();
         let canon = CanonicalPolicy::new(expr, limits).unwrap();
 
         let bdd = compile_allow_robdd(canon.expr(), limits).unwrap();
-        assert!(bdd.vars().iter().any(|x| x.as_str() == "ban"));
 
-        // Exhaustive over a,b,c,ban (2^4).
-        for mask in 0u8..16 {
-            let mut trues = Vec::new();
-            for (i, name) in ["a", "b", "c", "ban"].iter().enumerate() {
-                if (mask >> i) & 1 == 1 {
-                    trues.push(*name);
+        // Exhaustive over a,b,c,ban ∈ {missing,false,true} => 3^4 = 81.
+        let domain = [Tri::Missing, Tri::False, Tri::True];
+        for &ta in &domain {
+            for &tb in &domain {
+                for &tc in &domain {
+                    for &tban in &domain {
+                        let ctx = ctx_from_tri(&[("a", ta), ("b", tb), ("c", tc), ("ban", tban)]);
+
+                        let allowed_eval = super::super::evaluate(canon.expr(), &ctx, limits)
+                            .unwrap()
+                            .allowed();
+
+                        // Derive presence bits for the ROBDD.
+                        let allowed_bdd = bdd.eval(|atom| {
+                            let name = atom.as_str();
+                            if let Some(sig) = name.strip_prefix("p_") {
+                                ctx.contains_key(sig)
+                            } else if let Some(sig) = name.strip_prefix("v_") {
+                                *ctx.get(sig).unwrap_or(&false)
+                            } else {
+                                false
+                            }
+                        });
+
+                        assert_eq!(
+                            allowed_eval, allowed_bdd,
+                            "a={ta:?} b={tb:?} c={tc:?} ban={tban:?}"
+                        );
+                    }
                 }
             }
-            let ctx = full_ctx(&bdd, &trues);
-            let allowed_eval = super::super::evaluate(canon.expr(), &ctx, limits).unwrap().allowed();
-            let allowed_bdd = bdd.eval(|atom| ctx.get(atom.as_str()).copied().unwrap_or(false));
-            assert_eq!(allowed_eval, allowed_bdd, "mask={mask} trues={trues:?}");
         }
     }
 
@@ -615,13 +873,6 @@ mod tests {
         let ce = r.counterexample.unwrap();
         assert!(ce.contains_key("a"));
         assert!(ce.contains_key("b"));
-
-        let b1 = compile_allow_robdd(&p1, limits).unwrap();
-        let b2 = compile_allow_robdd(&p2, limits).unwrap();
-
-        let v1 = b1.eval(|atom| *ce.get(atom.as_str()).unwrap());
-        let v2 = b2.eval(|atom| *ce.get(atom.as_str()).unwrap());
-        assert_ne!(v1, v2);
     }
 
     #[test]
@@ -634,22 +885,61 @@ mod tests {
     }
 
     #[test]
-    fn robdd_hash_is_stable_for_semantic_deny_if_lift() {
+    fn robdd_matches_explicit_presence_bit_encoding_for_deny_if_veto() {
         let limits = lim();
         let ok = PolicyExpr::atom("ok", limits).unwrap();
         let ban = PolicyExpr::deny_if("ban", limits).unwrap();
 
-        // Semantics: ok & !ban
+        // Policy: ok with a deny-if veto guard `ban`.
         let with_deny_if = PolicyExpr::any(vec![ok.clone(), ban], limits).unwrap();
-        let explicit = PolicyExpr::all(vec![ok, PolicyExpr::not(PolicyExpr::atom("ban", limits).unwrap())], limits).unwrap();
 
-        let b1 = compile_allow_robdd(&with_deny_if, limits).unwrap();
-        let b2 = compile_allow_robdd(&explicit, limits).unwrap();
+        // Explicit presence-bit formula:
+        // (p_ok & v_ok) & (p_ban & !v_ban)
+        let p_ok = PolicyExpr::atom("p_ok", limits).unwrap();
+        let v_ok = PolicyExpr::atom("v_ok", limits).unwrap();
+        let p_ban = PolicyExpr::atom("p_ban", limits).unwrap();
+        let v_ban = PolicyExpr::atom("v_ban", limits).unwrap();
+        let explicit = PolicyExpr::all(
+            vec![
+                PolicyExpr::all(vec![p_ok, v_ok], limits).unwrap(),
+                PolicyExpr::all(vec![p_ban, PolicyExpr::not(v_ban)], limits).unwrap(),
+            ],
+            limits,
+        )
+        .unwrap();
 
-        assert_eq!(b1.hash_v1(), b2.hash_v1());
+        let lowered = lower_to_presence_bits(&with_deny_if, limits).unwrap();
+        let canon_lowered = CanonicalPolicy::new(lowered, limits).unwrap();
+        let canon_explicit = CanonicalPolicy::new(explicit, limits).unwrap();
 
-        let r = policy_equiv_robdd(&with_deny_if, &explicit, limits).unwrap();
-        assert!(r.equivalent);
+        let mut signals = BTreeSet::new();
+        signals.insert(PolicyAtom::new("ok".to_string(), limits).unwrap());
+        signals.insert(PolicyAtom::new("ban".to_string(), limits).unwrap());
+        let vars = bit_var_order(&signals, limits).unwrap();
+
+        let max_bdd_nodes = limits
+            .max_nodes
+            .saturating_mul(16)
+            .max(limits.max_nodes)
+            .min(1_000_000);
+
+        let mut b1 = BddBuilder::new(vars.clone(), max_bdd_nodes).unwrap();
+        let r1 = b1.compile_expr(canon_lowered.expr()).unwrap();
+        let robdd1 = Robdd {
+            vars: vars.clone(),
+            nodes: b1.nodes,
+            root: r1,
+        };
+
+        let mut b2 = BddBuilder::new(vars.clone(), max_bdd_nodes).unwrap();
+        let r2 = b2.compile_expr(canon_explicit.expr()).unwrap();
+        let robdd2 = Robdd {
+            vars: vars.clone(),
+            nodes: b2.nodes,
+            root: r2,
+        };
+
+        assert_eq!(robdd1.hash_v1(), robdd2.hash_v1());
     }
 
     fn arb_atom_name() -> impl Strategy<Value = &'static str> {
@@ -700,9 +990,8 @@ mod tests {
                     .prop_map(move |v| PolicyExpr::all(v, limits).unwrap()),
                 proptest::collection::vec(inner.clone(), 0..=4)
                     .prop_map(move |v| PolicyExpr::any(v, limits).unwrap()),
-                proptest::collection::vec(inner.clone(), 0..=4).prop_map(move |v| {
-                    PolicyExpr::threshold(0, v, limits).unwrap()
-                }),
+                proptest::collection::vec(inner.clone(), 0..=4)
+                    .prop_map(move |v| { PolicyExpr::threshold(0, v, limits).unwrap() }),
             ]
         })
         .boxed()
@@ -716,25 +1005,47 @@ mod tests {
         })]
 
         #[test]
-        fn robdd_matches_policy_evaluate_for_random_policies(expr in arb_with_veto(PolicyLimits::DEFAULT)) {
+        fn robdd_matches_policy_evaluate_for_random_policies_with_missing(expr in arb_with_veto(PolicyLimits::DEFAULT)) {
             let limits = lim();
             let canon = CanonicalPolicy::new(expr, limits).unwrap();
             let bdd = compile_allow_robdd(canon.expr(), limits).unwrap();
 
-            let vars = bdd.vars();
-            prop_assume!(vars.len() <= 12);
-            let n = vars.len();
-            let max = 1u64 << n;
+            let signals = canon.expr().atoms();
+            prop_assume!(signals.len() <= 6);
 
-            for mask in 0..max {
-                let mut ctx = BTreeMap::new();
-                for (i, a) in vars.iter().enumerate() {
-                    let v = ((mask >> i) & 1) == 1;
-                    ctx.insert(a.as_str().to_string(), v);
+            // Exhaustive tri-state over signals: 3^n (n<=6 => <=729).
+            let sigs: Vec<String> = signals.iter().map(|a| a.as_str().to_string()).collect();
+            let n = sigs.len();
+            let max = 3u64.pow(n as u32);
+
+            for mut code in 0..max {
+                let mut ctx: BTreeMap<String, bool> = BTreeMap::new();
+                for s in &sigs {
+                    let digit = (code % 3) as u8;
+                    code /= 3;
+                    match digit {
+                        0 => {} // missing
+                        1 => {
+                            ctx.insert(s.clone(), false);
+                        }
+                        2 => {
+                            ctx.insert(s.clone(), true);
+                        }
+                        _ => unreachable!(),
+                    }
                 }
 
                 let allowed_eval = super::super::evaluate(canon.expr(), &ctx, limits).unwrap().allowed();
-                let allowed_bdd = bdd.eval(|atom| *ctx.get(atom.as_str()).unwrap());
+                let allowed_bdd = bdd.eval(|atom| {
+                    let name = atom.as_str();
+                    if let Some(sig) = name.strip_prefix("p_") {
+                        ctx.contains_key(sig)
+                    } else if let Some(sig) = name.strip_prefix("v_") {
+                        *ctx.get(sig).unwrap_or(&false)
+                    } else {
+                        false
+                    }
+                });
                 prop_assert_eq!(allowed_eval, allowed_bdd);
             }
         }
