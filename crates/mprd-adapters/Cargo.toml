@@ -15,6 +15,7 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
 tracing = "0.1"
 sha2 = "0.10"
+nom = "7"
 
 [dev-dependencies]
 tempfile = "3.0"

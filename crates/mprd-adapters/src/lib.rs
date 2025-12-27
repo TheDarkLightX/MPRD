@@ -18,6 +18,7 @@
 pub mod egress;
 pub mod executors;
 pub mod models_market;
+pub mod nli;
 pub mod proposers;
 pub mod storage;
 
@@ -29,6 +30,8 @@ pub use executors::{
 pub use storage::{IpfsConfig, IpfsPolicyStorage, LocalPolicyStorage};
 
 pub use proposers::{HttpProposer, HttpProposerConfig};
+
+pub use nli::{LocalNliProposer, LocalNliProposerConfig, OPERATOR_COMMAND_FIELD_V1};
 
 pub use models_market::{
     FileModelsMarketSnapshotProvider, MarketRoutedProposer, ModelsMarketRoutingConfig,
