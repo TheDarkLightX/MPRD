@@ -212,6 +212,46 @@ struct OperatorExecutionUpdateV1 {
     pub duration_ms: u64,
 }
 
+fn validate_proof_status_transition(
+    current: &api::ProofStatus,
+    next: &api::ProofStatus,
+) -> anyhow::Result<()> {
+    use api::ProofStatus::*;
+    match (current, next) {
+        (&Pending, &Pending) | (&Pending, &Verified) | (&Pending, &Failed) => Ok(()),
+        (&Verified, &Verified) | (&Failed, &Failed) => Ok(()),
+        (&Verified, _) | (&Failed, _) => Err(anyhow::anyhow!(
+            "invalid proof status transition: {current:?} -> {next:?}"
+        )),
+    }
+}
+
+fn validate_execution_status_transition(
+    verdict: &api::Verdict,
+    proof_status: &api::ProofStatus,
+    current: &api::ExecutionStatus,
+    next: &api::ExecutionStatus,
+) -> anyhow::Result<()> {
+    use api::ExecutionStatus::*;
+    if matches!(verdict, api::Verdict::Denied) {
+        return Err(anyhow::anyhow!(
+            "execution not permitted for denied decisions"
+        ));
+    }
+    if !matches!(proof_status, api::ProofStatus::Verified) {
+        return Err(anyhow::anyhow!(
+            "execution requires verified proof (status={proof_status:?})"
+        ));
+    }
+    match (current, next) {
+        (&Skipped, &Success) | (&Skipped, &Failed) => Ok(()),
+        (&Success, &Success) | (&Failed, &Failed) => Ok(()),
+        _ => Err(anyhow::anyhow!(
+            "invalid execution status transition: {current:?} -> {next:?}"
+        )),
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OperatorRetentionSettingsV1 {
@@ -648,6 +688,8 @@ impl OperatorStore {
         proof_status: api::ProofStatus,
         verified_at_ms: i64,
     ) -> anyhow::Result<()> {
+        let record = self.read_record(decision_id_hex)?;
+        validate_proof_status_transition(&record.summary.proof_status, &proof_status)?;
         let update = OperatorProofStatusUpdateV1 {
             proof_status,
             verified_at_ms,
@@ -666,6 +708,18 @@ impl OperatorStore {
         executor: String,
         duration_ms: u64,
     ) -> anyhow::Result<()> {
+        let record = self.read_record(decision_id_hex)?;
+        let next_status = if success {
+            api::ExecutionStatus::Success
+        } else {
+            api::ExecutionStatus::Failed
+        };
+        validate_execution_status_transition(
+            &record.summary.verdict,
+            &record.summary.proof_status,
+            &record.summary.execution_status,
+            &next_status,
+        )?;
         let update = OperatorExecutionUpdateV1 {
             success,
             message,
@@ -1036,6 +1090,68 @@ mod tests {
         }
     }
 
+    fn sample_decision_inputs(
+        allowed: bool,
+    ) -> (
+        DecisionToken,
+        ProofBundle,
+        StateSnapshot,
+        Vec<CandidateAction>,
+        Vec<RuleVerdict>,
+        Decision,
+    ) {
+        let policy_hash = Hash32([1u8; 32]);
+        let state_hash = Hash32([2u8; 32]);
+        let candidate = CandidateAction {
+            action_type: "X".into(),
+            params: HashMap::new(),
+            score: Score(1),
+            candidate_hash: Hash32([3u8; 32]),
+        };
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash,
+            decision_commitment: Hash32([4u8; 32]),
+        };
+        let verdicts = vec![RuleVerdict {
+            allowed,
+            reasons: vec![],
+            limits: HashMap::new(),
+        }];
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash,
+            state_ref: StateRef::unknown(),
+        };
+        let proof = ProofBundle {
+            policy_hash,
+            state_hash,
+            candidate_set_hash: Hash32([5u8; 32]),
+            chosen_action_hash: Hash32([6u8; 32]),
+            limits_hash: Hash32([7u8; 32]),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let token = DecisionToken {
+            policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 1,
+                registry_root: Hash32([9u8; 32]),
+            },
+            state_hash,
+            state_ref: StateRef::unknown(),
+            chosen_action_hash: Hash32([6u8; 32]),
+            nonce_or_tx_hash: Hash32([10u8; 32]),
+            timestamp_ms: 123,
+            signature: vec![1, 2, 3],
+        };
+        (token, proof, state, vec![candidate], verdicts, decision)
+    }
+
     #[test]
     fn incident_snooze_roundtrips_and_clears() {
         let tmp = TempDir::new().expect("tempdir");
@@ -1159,6 +1275,60 @@ mod tests {
         let items = store.list_autopilot_actions(1).expect("list 1");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, "a2");
+    }
+
+    #[test]
+    fn proof_status_transition_rejects_regression() {
+        let tmp = TempDir::new().expect("tempdir");
+        let store = OperatorStore::new(tmp.path()).expect("store");
+
+        let (token, proof, state, candidates, verdicts, decision) = sample_decision_inputs(true);
+        let id = store
+            .write_verified_decision(&token, &proof, &state, &candidates, &verdicts, &decision)
+            .expect("write decision");
+
+        store
+            .write_proof_status(&id, op_api::ProofStatus::Verified, 123)
+            .expect("idempotent verified");
+        assert!(store
+            .write_proof_status(&id, op_api::ProofStatus::Failed, 124)
+            .is_err());
+    }
+
+    #[test]
+    fn execution_requires_allowed_and_verified() {
+        let tmp = TempDir::new().expect("tempdir");
+        let store = OperatorStore::new(tmp.path()).expect("store");
+
+        let (token, proof, state, candidates, verdicts, decision) = sample_decision_inputs(false);
+        let id = store
+            .write_verified_decision(&token, &proof, &state, &candidates, &verdicts, &decision)
+            .expect("write decision");
+
+        assert!(store
+            .write_execution_result(&id, true, None, "exec".into(), 5)
+            .is_err());
+    }
+
+    #[test]
+    fn execution_status_transition_is_idempotent() {
+        let tmp = TempDir::new().expect("tempdir");
+        let store = OperatorStore::new(tmp.path()).expect("store");
+
+        let (token, proof, state, candidates, verdicts, decision) = sample_decision_inputs(true);
+        let id = store
+            .write_verified_decision(&token, &proof, &state, &candidates, &verdicts, &decision)
+            .expect("write decision");
+
+        store
+            .write_execution_result(&id, true, None, "exec".into(), 5)
+            .expect("first success");
+        store
+            .write_execution_result(&id, true, None, "exec".into(), 5)
+            .expect("idempotent success");
+        assert!(store
+            .write_execution_result(&id, false, None, "exec".into(), 5)
+            .is_err());
     }
 
     #[test]

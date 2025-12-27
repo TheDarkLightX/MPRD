@@ -7,6 +7,7 @@ members = [
     "crates/mprd-cli",
     "crates/mprd-mpb",
     "crates/mprd-models-market",
+    "crates/mprd-services",
     "crates/mprd-asde",
     "crates/mprd-generators",
     "crates/mprd-perf",

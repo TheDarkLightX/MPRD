@@ -601,6 +601,10 @@ class Controller:
     def decide(self, *, epoch: int, state: SimState, ctx: "EpochContext") -> Knobs:
         raise NotImplementedError
 
+    def on_epoch_end(self, record: "EpochRecord") -> None:
+        # Optional hook for stateful / learning controllers.
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class EpochContext:
@@ -717,6 +721,195 @@ class OpiFirstController(Controller):
             if best is None or cand > best:
                 best = cand
         return best[4] if best is not None else state.knobs
+
+
+def all_knobs() -> list[Knobs]:
+    """
+    Enumerate all CBC-valid knob nodes in the v6 safe menu lattice, sorted by key.
+
+    Count is ~21k, so this is cheap and keeps exploration planners simple.
+    """
+    out: list[Knobs] = []
+    for b in range(0, 46):
+        for a in range(5, 51):
+            # Split cap in lattice units: burn_units + auction_units <= 50.
+            if b + a > 50:
+                continue
+            for d in range(1, 21):
+                out.append(Knobs(burn_units=b, auction_units=a, drip_units=d))
+    out.sort(key=lambda k: k.key())
+    return out
+
+
+ALL_KNOBS: list[Knobs] = all_knobs()
+
+
+def dist_inf_units(a: Knobs, b: Knobs) -> int:
+    return max(
+        abs(a.burn_units - b.burn_units),
+        abs(a.auction_units - b.auction_units),
+        abs(a.drip_units - b.drip_units),
+    )
+
+def iter_inf_ball(cur: Knobs, h: int) -> list[Knobs]:
+    """
+    Enumerate the CBC-valid `dist∞(cur, x) <= h` candidate set deterministically.
+
+    This is an algorithmic performance rail: instead of scanning all ~21k nodes and filtering,
+    we directly enumerate the (2h+1)^3 lattice cube intersected with the split cap.
+    """
+    if h <= 0:
+        return [cur]
+
+    b0, a0, d0 = cur.burn_units, cur.auction_units, cur.drip_units
+    b_min = max(0, b0 - h)
+    b_max = min(45, b0 + h)
+    a_min = max(5, a0 - h)
+    a_max = min(50, a0 + h)
+    d_min = max(1, d0 - h)
+    d_max = min(20, d0 + h)
+
+    out: list[Knobs] = []
+    for b in range(b_min, b_max + 1):
+        for a in range(a_min, a_max + 1):
+            if b + a > 50:
+                continue
+            for d in range(d_min, d_max + 1):
+                out.append(Knobs(burn_units=b, auction_units=a, drip_units=d))
+    # Deterministic ordering: ascending key is canonical.
+    out.sort(key=lambda k: k.key())
+    return out
+
+
+class LipschitzUcbController(Controller):
+    """
+    Model-free Lipschitz UCB controller on the safe-menu lattice.
+
+    This is intentionally simple:
+      - reward is the observed Δ(net_worth_total) per epoch
+      - UB/LB are computed via a Lipschitz envelope over the `dist∞` metric
+      - the controller moves one step toward the best-UCB *target* inside a bounded horizon
+
+    Optional safety gate:
+      - "safe_improve": only move if LB(target) >= UB(baseline) + margin
+    """
+
+    def __init__(
+        self,
+        *,
+        lipschitz_L: int,
+        horizon: int,
+        window: int,
+        gate: str,
+        margin: int,
+        churn_penalty: int,
+    ) -> None:
+        if lipschitz_L < 0:
+            raise ValueError("lipschitz_L must be >= 0")
+        if horizon <= 0:
+            raise ValueError("horizon must be > 0")
+        if window <= 0:
+            raise ValueError("window must be > 0")
+        if gate not in ("none", "safe_improve"):
+            raise ValueError("gate must be one of: none, safe_improve")
+        if margin < 0:
+            raise ValueError("margin must be >= 0")
+        if churn_penalty < 0:
+            raise ValueError("churn_penalty must be >= 0")
+
+        self._L = lipschitz_L
+        self._h = horizon
+        self._window = window
+        self._gate = gate
+        self._margin = margin
+        self._churn_penalty = churn_penalty
+
+        # Sliding observation window: list[(knobs_key, knobs, reward)].
+        self._obs: list[tuple[int, Knobs, int]] = []
+        self._prev_nw_total: int | None = None
+
+    def _ub(self, candidate: Knobs) -> int:
+        # UB(x) = min_o (r_o + L * dist(o, x))
+        assert self._obs
+        best: int | None = None
+        for _key, k, r in self._obs:
+            v = r + self._L * dist_inf_units(k, candidate)
+            best = v if best is None else min(best, v)
+        assert best is not None
+        return best
+
+    def _lb(self, candidate: Knobs) -> int:
+        # LB(x) = max_o (r_o - L * dist(o, x))
+        assert self._obs
+        best: int | None = None
+        for _key, k, r in self._obs:
+            v = r - self._L * dist_inf_units(k, candidate)
+            best = v if best is None else max(best, v)
+        assert best is not None
+        return best
+
+    def _pick_target(self, cur: Knobs) -> Knobs:
+        best: tuple[int, int, int, int, Knobs] | None = None  # (score, ub, -dist, -key, knobs)
+        for k in iter_inf_ball(cur, self._h):
+            d = dist_inf_units(cur, k)
+            ub = self._ub(k)
+            score = ub - self._churn_penalty * d
+            cand = (score, ub, -d, -k.key(), k)
+            if best is None or cand > best:
+                best = cand
+        return best[4] if best is not None else cur
+
+    def _step_towards(self, cur: Knobs, tgt: Knobs) -> Knobs:
+        # One-step "sign" delta (like dist∞ shortest-path navigation); fall back to best neighbor.
+        db = 0 if cur.burn_units == tgt.burn_units else (1 if cur.burn_units < tgt.burn_units else -1)
+        da = 0 if cur.auction_units == tgt.auction_units else (1 if cur.auction_units < tgt.auction_units else -1)
+        dd = 0 if cur.drip_units == tgt.drip_units else (1 if cur.drip_units < tgt.drip_units else -1)
+        preferred = cur.try_apply(Delta(db=db, da=da, dd=dd))
+        if preferred is not None:
+            return preferred
+
+        # Split-cap plateaus can make the naive sign-step invalid; pick the neighbor that reduces dist∞ most.
+        best: tuple[int, int, Knobs] | None = None  # (dist, key, knobs)
+        for d in DELTAS:
+            nxt = cur.try_apply(d)
+            if nxt is None:
+                continue
+            dist = dist_inf_units(nxt, tgt)
+            cand = (dist, nxt.key(), nxt)
+            if best is None or cand < best:
+                best = cand
+        return best[2] if best is not None else cur
+
+    def decide(self, *, epoch: int, state: SimState, ctx: EpochContext) -> Knobs:
+        cur = state.knobs
+
+        # Cold start: without any observations, stay put (baseline).
+        if not self._obs:
+            return cur
+
+        baseline = cur
+        tgt = self._pick_target(cur)
+
+        if self._gate == "safe_improve":
+            ub_base = self._ub(baseline)
+            lb_tgt = self._lb(tgt)
+            if lb_tgt < ub_base + self._margin:
+                tgt = baseline
+
+        return self._step_towards(cur, tgt)
+
+    def on_epoch_end(self, record: EpochRecord) -> None:
+        # Reward is Δ(net_worth_total) for the epoch, attributed to the knobs used.
+        if self._prev_nw_total is None:
+            self._prev_nw_total = record.nw_total
+            return
+        reward = record.nw_total - self._prev_nw_total
+        self._prev_nw_total = record.nw_total
+
+        key = record.knobs.key()
+        self._obs.append((key, record.knobs, reward))
+        if len(self._obs) > self._window:
+            self._obs = self._obs[-self._window :]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1055,6 +1248,7 @@ def run_simulation(*, seed: int, epochs: int, controller: Controller, state: Sim
                 nw_bcr_mtm_agrs=nw_bcr,
             )
         )
+        controller.on_epoch_end(records[-1])
 
     return records
 
@@ -1066,6 +1260,12 @@ def build_controller(
     churn_penalty_agrs: int,
     reserve_floor_agrs: int,
     revenue_floor_agrs: int,
+    lipschitz_L: int,
+    lipschitz_horizon: int,
+    lipschitz_window: int,
+    lipschitz_gate: str,
+    lipschitz_margin: int,
+    lipschitz_churn_penalty: int,
     fixed: FixedParams,
     models: SimModels,
 ) -> Controller:
@@ -1086,6 +1286,15 @@ def build_controller(
             fixed=fixed,
             models=models,
         )
+    if strategy == "lipschitz_ucb":
+        return LipschitzUcbController(
+            lipschitz_L=lipschitz_L,
+            horizon=lipschitz_horizon,
+            window=lipschitz_window,
+            gate=lipschitz_gate,
+            margin=lipschitz_margin,
+            churn_penalty=lipschitz_churn_penalty,
+        )
     raise ValueError(f"unknown strategy: {strategy}")
 
 
@@ -1097,7 +1306,7 @@ def main() -> None:
         "--strategy",
         type=str,
         default="baseline",
-        choices=["baseline", "profit_utility", "opi_first", "random"],
+        choices=["baseline", "profit_utility", "opi_first", "random", "lipschitz_ucb"],
     )
     ap.add_argument("--burn-units", type=int, default=30, help="initial burn units (0..45)")
     ap.add_argument("--auction-units", type=int, default=10, help="initial auction units (5..50)")
@@ -1128,6 +1337,18 @@ def main() -> None:
     ap.add_argument("--churn-penalty-agrs", type=int, default=50, help="profit_utility: penalty per L1 unit moved")
     ap.add_argument("--reserve-floor-agrs", type=int, default=0, help="profit_utility: reject moves that end < floor")
     ap.add_argument("--revenue-floor-agrs", type=int, default=60_000, help="opi_first: required expected next-epoch net fees")
+    ap.add_argument("--lipschitz-L", type=int, default=500, help="lipschitz_ucb: L (reward units per dist∞ step)")
+    ap.add_argument("--lipschitz-horizon", type=int, default=6, help="lipschitz_ucb: candidate dist∞ horizon")
+    ap.add_argument("--lipschitz-window", type=int, default=64, help="lipschitz_ucb: observation window size")
+    ap.add_argument(
+        "--lipschitz-gate",
+        type=str,
+        default="none",
+        choices=["none", "safe_improve"],
+        help="lipschitz_ucb: optional safe gate",
+    )
+    ap.add_argument("--lipschitz-margin", type=int, default=0, help="lipschitz_ucb: margin for safe gate (>= 0)")
+    ap.add_argument("--lipschitz-churn-penalty", type=int, default=0, help="lipschitz_ucb: penalty per dist∞ step (>= 0)")
     ap.add_argument("--json", action="store_true", help="emit a machine-readable JSON summary only")
     args = ap.parse_args()
 
@@ -1141,6 +1362,16 @@ def main() -> None:
         raise SystemExit("--revenue-floor-agrs must be >= 0")
     if args.initial_bcr < 0:
         raise SystemExit("--initial-bcr must be >= 0")
+    if args.lipschitz_L < 0:
+        raise SystemExit("--lipschitz-L must be >= 0")
+    if args.lipschitz_horizon <= 0:
+        raise SystemExit("--lipschitz-horizon must be > 0")
+    if args.lipschitz_window <= 0:
+        raise SystemExit("--lipschitz-window must be > 0")
+    if args.lipschitz_margin < 0:
+        raise SystemExit("--lipschitz-margin must be >= 0")
+    if args.lipschitz_churn_penalty < 0:
+        raise SystemExit("--lipschitz-churn-penalty must be >= 0")
     if not (0 <= args.initial_opi_bps <= BPS):
         raise SystemExit("--initial-opi-bps must be in [0,10_000]")
     if not (0 <= args.initial_bcr_price_bps <= BPS):
@@ -1209,6 +1440,12 @@ def main() -> None:
         churn_penalty_agrs=args.churn_penalty_agrs,
         reserve_floor_agrs=args.reserve_floor_agrs,
         revenue_floor_agrs=args.revenue_floor_agrs,
+        lipschitz_L=args.lipschitz_L,
+        lipschitz_horizon=args.lipschitz_horizon,
+        lipschitz_window=args.lipschitz_window,
+        lipschitz_gate=args.lipschitz_gate,
+        lipschitz_margin=args.lipschitz_margin,
+        lipschitz_churn_penalty=args.lipschitz_churn_penalty,
         fixed=fixed,
         models=models,
     )
@@ -1257,6 +1494,12 @@ def main() -> None:
             "bcr_price_ema_alpha_bps": args.bcr_price_ema_alpha_bps,
             "opi_adjust_bps": args.opi_adjust_bps,
             "opi_shock_sigma_bps": args.opi_shock_sigma_bps,
+            "lipschitz_L": args.lipschitz_L,
+            "lipschitz_horizon": args.lipschitz_horizon,
+            "lipschitz_window": args.lipschitz_window,
+            "lipschitz_gate": args.lipschitz_gate,
+            "lipschitz_margin": args.lipschitz_margin,
+            "lipschitz_churn_penalty": args.lipschitz_churn_penalty,
         },
         "initial": {
             "burn_bps": knobs0.burn_bps(),
