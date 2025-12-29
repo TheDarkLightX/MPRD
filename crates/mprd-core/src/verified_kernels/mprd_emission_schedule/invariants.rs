@@ -1,6 +1,6 @@
 //! Invariant checker for mprd_emission_schedule.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -21,17 +21,34 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // HalvingSchedule
-    if !((if state.epoch < state.halving_period { 1000 } else { if state.epoch < (state.halving_period.checked_mul(2).ok_or(Error::Overflow)?) { 500 } else { if state.epoch < (state.halving_period.checked_mul(3).ok_or(Error::Overflow)?) { 250 } else { if state.epoch < (state.halving_period.checked_mul(4).ok_or(Error::Overflow)?) { 125 } else { 100 } } } } == state.emission_rate)) {
+    if !(if state.epoch < state.halving_period {
+        1000
+    } else {
+        if state.epoch < (state.halving_period.checked_mul(2).ok_or(Error::Overflow)?) {
+            500
+        } else {
+            if state.epoch < (state.halving_period.checked_mul(3).ok_or(Error::Overflow)?) {
+                250
+            } else {
+                if state.epoch < (state.halving_period.checked_mul(4).ok_or(Error::Overflow)?) {
+                    125
+                } else {
+                    100
+                }
+            }
+        }
+    } == state.emission_rate)
+    {
         return Err(Error::InvariantViolation("HalvingSchedule"));
     }
 
     // MaxSupplyCap
-    if !((state.total_emitted <= 10000)) {
+    if !(state.total_emitted <= 10000) {
         return Err(Error::InvariantViolation("MaxSupplyCap"));
     }
 
     // PerEpochCap
-    if !((state.epoch_budget <= state.emission_rate)) {
+    if !(state.epoch_budget <= state.emission_rate) {
         return Err(Error::InvariantViolation("PerEpochCap"));
     }
 

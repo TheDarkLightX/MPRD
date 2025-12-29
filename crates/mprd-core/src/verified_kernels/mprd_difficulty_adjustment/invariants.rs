@@ -1,6 +1,6 @@
 //! Invariant checker for mprd_difficulty_adjustment.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -18,12 +18,12 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // AdjustmentFactorCap
-    if !((state.adjustment_factor <= 200)) {
+    if !(state.adjustment_factor <= 200) {
         return Err(Error::InvariantViolation("AdjustmentFactorCap"));
     }
 
     // MinDifficulty
-    if !((state.difficulty_level >= 1)) {
+    if !(state.difficulty_level >= 1) {
         return Err(Error::InvariantViolation("MinDifficulty"));
     }
 

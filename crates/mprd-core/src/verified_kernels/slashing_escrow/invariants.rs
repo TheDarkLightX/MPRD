@@ -1,6 +1,6 @@
 //! Invariant checker for slashing_escrow.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -12,37 +12,43 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // ActiveDeadlinePositive
-    if !(((!((Phase::Challenged == state.phase) || (Phase::Locked == state.phase))) || (state.challenge_deadline > 0))) {
+    if !((!((Phase::Challenged == state.phase) || (Phase::Locked == state.phase)))
+        || (state.challenge_deadline > 0))
+    {
         return Err(Error::InvariantViolation("ActiveDeadlinePositive"));
     }
 
     // EvidenceOnlyWhenChallenged
-    if !(((!state.evidence_submitted) || ((Phase::Challenged == state.phase) || (Phase::Slashed == state.phase)))) {
+    if !((!state.evidence_submitted)
+        || ((Phase::Challenged == state.phase) || (Phase::Slashed == state.phase)))
+    {
         return Err(Error::InvariantViolation("EvidenceOnlyWhenChallenged"));
     }
 
     // LockedNoEvidence
-    if !(((!(Phase::Locked == state.phase)) || (false == state.evidence_submitted))) {
+    if !((!(Phase::Locked == state.phase)) || (false == state.evidence_submitted)) {
         return Err(Error::InvariantViolation("LockedNoEvidence"));
     }
 
     // NonTrivialBond
-    if !((state.bond_amount >= 100)) {
+    if !(state.bond_amount >= 100) {
         return Err(Error::InvariantViolation("NonTrivialBond"));
     }
 
     // ObjectiveSlashing
-    if !(((!(Phase::Slashed == state.phase)) || (true == state.evidence_submitted))) {
+    if !((!(Phase::Slashed == state.phase)) || (true == state.evidence_submitted)) {
         return Err(Error::InvariantViolation("ObjectiveSlashing"));
     }
 
     // ReleasedNoEvidence
-    if !(((!(Phase::Released == state.phase)) || (false == state.evidence_submitted))) {
+    if !((!(Phase::Released == state.phase)) || (false == state.evidence_submitted)) {
         return Err(Error::InvariantViolation("ReleasedNoEvidence"));
     }
 
     // ResolvedDeadlineZero
-    if !(((!((Phase::Released == state.phase) || (Phase::Slashed == state.phase))) || (0 == state.challenge_deadline))) {
+    if !((!((Phase::Released == state.phase) || (Phase::Slashed == state.phase)))
+        || (0 == state.challenge_deadline))
+    {
         return Err(Error::InvariantViolation("ResolvedDeadlineZero"));
     }
 

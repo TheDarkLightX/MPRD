@@ -1,6 +1,6 @@
 //! Invariant checker for drip_payroll.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -18,27 +18,27 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // BudgetCap
-    if !((state.total_payout <= state.epoch_budget)) {
+    if !(state.total_payout <= state.epoch_budget) {
         return Err(Error::InvariantViolation("BudgetCap"));
     }
 
     // PaidImpliesRecipientsPaid
-    if !(((!(Phase::Paid == state.phase)) || (state.recipients_paid > 0))) {
+    if !((!(Phase::Paid == state.phase)) || (state.recipients_paid > 0)) {
         return Err(Error::InvariantViolation("PaidImpliesRecipientsPaid"));
     }
 
     // PendingImpliesZeroPayout
-    if !(((!(Phase::Pending == state.phase)) || (0 == state.total_payout))) {
+    if !((!(Phase::Pending == state.phase)) || (0 == state.total_payout)) {
         return Err(Error::InvariantViolation("PendingImpliesZeroPayout"));
     }
 
     // PendingImpliesZeroRecipients
-    if !(((!(Phase::Pending == state.phase)) || (0 == state.recipients_paid))) {
+    if !((!(Phase::Pending == state.phase)) || (0 == state.recipients_paid)) {
         return Err(Error::InvariantViolation("PendingImpliesZeroRecipients"));
     }
 
     // ZeroRecipientsImpliesZeroPayout
-    if !(((!(0 == state.recipients_paid)) || (0 == state.total_payout))) {
+    if !((!(0 == state.recipients_paid)) || (0 == state.total_payout)) {
         return Err(Error::InvariantViolation("ZeroRecipientsImpliesZeroPayout"));
     }
 

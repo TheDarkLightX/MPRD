@@ -1,6 +1,6 @@
 //! Invariant checker for policy_registry_gate.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -15,12 +15,12 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // EpochNonNegative
-    if !((state.current_epoch >= 0)) {
+    if !(state.current_epoch >= 0) {
         return Err(Error::InvariantViolation("EpochNonNegative"));
     }
 
     // PolicyCountBounded
-    if !((state.policy_count <= 100)) {
+    if !(state.policy_count <= 100) {
         return Err(Error::InvariantViolation("PolicyCountBounded"));
     }
 

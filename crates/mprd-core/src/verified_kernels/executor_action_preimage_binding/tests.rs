@@ -3,13 +3,13 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    
+
     #[test]
     fn init_satisfies_invariants() {
         let s = State::init();
         assert!(check_invariants(&s).is_ok());
     }
-    
+
     #[test]
     fn test_execute_from_init() {
         let s = State::init();
@@ -17,7 +17,7 @@ mod tests {
         // This may fail if precondition not satisfied from init
         let _ = step(&s, cmd);
     }
-    
+
     #[test]
     fn test_hash_mismatch_from_init() {
         let s = State::init();
@@ -25,7 +25,7 @@ mod tests {
         // This may fail if precondition not satisfied from init
         let _ = step(&s, cmd);
     }
-    
+
     #[test]
     fn test_limits_binding_fail_from_init() {
         let s = State::init();
@@ -33,7 +33,7 @@ mod tests {
         // This may fail if precondition not satisfied from init
         let _ = step(&s, cmd);
     }
-    
+
     #[test]
     fn test_preimage_missing_from_init() {
         let s = State::init();
@@ -41,7 +41,7 @@ mod tests {
         // This may fail if precondition not satisfied from init
         let _ = step(&s, cmd);
     }
-    
+
     #[test]
     fn test_reject_from_init() {
         let s = State::init();
@@ -49,7 +49,7 @@ mod tests {
         // This may fail if precondition not satisfied from init
         let _ = step(&s, cmd);
     }
-    
+
     #[test]
     fn test_schema_invalid_from_init() {
         let s = State::init();
@@ -57,7 +57,7 @@ mod tests {
         // This may fail if precondition not satisfied from init
         let _ = step(&s, cmd);
     }
-    
+
     // TODO: Add CE regression tests here
     // TODO: Add MBT equivalence harness
 }

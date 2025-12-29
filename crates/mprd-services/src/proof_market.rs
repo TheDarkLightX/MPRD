@@ -189,11 +189,18 @@ impl Market {
         if slot.phase != SlotPhase::Committed {
             return Err(ErrorCode::SlotWrongPhase);
         }
-        slot.phase = SlotPhase::Proving { started_at: self.now };
+        slot.phase = SlotPhase::Proving {
+            started_at: self.now,
+        };
         Ok(())
     }
 
-    pub fn settle(&mut self, sid: SlotId, payout: Amount, job_hash: Hash32) -> Result<(), ErrorCode> {
+    pub fn settle(
+        &mut self,
+        sid: SlotId,
+        payout: Amount,
+        job_hash: Hash32,
+    ) -> Result<(), ErrorCode> {
         let slot = self.slots.get_mut(&sid).ok_or(ErrorCode::SlotMissing)?;
         if !matches!(slot.phase, SlotPhase::Proving { .. }) {
             return Err(ErrorCode::SlotWrongPhase);
@@ -253,7 +260,10 @@ impl Market {
     }
 
     pub fn tick(&mut self, dt: Time) -> Result<(), ErrorCode> {
-        self.now = self.now.checked_add(dt).ok_or(ErrorCode::ArithmeticOverflow)?;
+        self.now = self
+            .now
+            .checked_add(dt)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
         Ok(())
     }
 
@@ -383,13 +393,15 @@ mod tests {
                     job_hash,
                 }),
             any::<SlotId>().prop_map(|sid| Action::StartProving { sid }),
-            (any::<SlotId>(), 0u64..10_000u64, any::<Hash32>()).prop_map(|(sid, payout, job_hash)| {
-                Action::Settle {
-                    sid,
-                    payout,
-                    job_hash,
+            (any::<SlotId>(), 0u64..10_000u64, any::<Hash32>()).prop_map(
+                |(sid, payout, job_hash)| {
+                    Action::Settle {
+                        sid,
+                        payout,
+                        job_hash,
+                    }
                 }
-            }),
+            ),
             any::<SlotId>().prop_map(|sid| Action::Expire { sid }),
             any::<SlotId>().prop_map(|sid| Action::Slash { sid }),
             (0u64..100u64).prop_map(|dt| Action::Tick { dt }),
@@ -537,4 +549,3 @@ mod tests {
         }
     }
 }
-

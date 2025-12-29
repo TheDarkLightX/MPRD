@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
-use crate::{Hash32, MprdError, Result};
 use crate::verified_kernels::policy_algebra_operators;
+use crate::{Hash32, MprdError, Result};
 
 use super::ast::{PolicyAtom, PolicyExpr, PolicyLimits, PolicyOutcomeKind};
 use super::hash::policy_hash_v1;
@@ -103,7 +103,9 @@ pub fn evaluate(
 
         fn step(&mut self, cmd: policy_algebra_operators::Command) -> Result<()> {
             let (st, _) = policy_algebra_operators::step(&self.state, cmd).map_err(|e| {
-                MprdError::BoundedValueExceeded(format!("policy_algebra_operators budget exceeded: {e}"))
+                MprdError::BoundedValueExceeded(format!(
+                    "policy_algebra_operators budget exceeded: {e}"
+                ))
             })?;
             self.state = st;
             Ok(())

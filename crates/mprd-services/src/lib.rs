@@ -5,7 +5,7 @@
 //! - OPI Oracle v6: `internal/specs/opi_oracle_spec_v6.md`
 //! - Optimistic Relay v15: `internal/specs/optimistic_relay_spec_v15.md`
 
-pub mod optimistic_relay;
 pub mod opi_oracle;
+pub mod optimistic_relay;
 pub mod proof_market;
 pub mod types;

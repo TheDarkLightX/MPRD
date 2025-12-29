@@ -1,7 +1,7 @@
 //! Step function for ui_mode_adaptive_gates.
 //! This is the CBC kernel chokepoint.
 
-use super::{{types::*, state::State, command::Command, invariants::check_invariants}};
+use super::{command::Command, invariants::check_invariants, state::State, types::*};
 
 /// Effects produced by a transition (data, not side effects).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -10,7 +10,7 @@ pub struct Effects {
 }
 
 /// Execute a transition: (state, command) -> Result<(new_state, effects), Error>
-/// 
+///
 /// This is the single chokepoint for all state transitions.
 /// Invariants are checked pre and post; preconditions in guards.
 pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
@@ -23,7 +23,7 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             if !(true) {
                 return Err(Error::PreconditionFailed("configure_anchors guard"));
             }
-            
+
             let next = State {
                 anchors_configured: true,
                 mode: state.mode.clone(),
@@ -37,10 +37,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::GoLocal => {
-            if !((Mode::Local != state.mode)) {
+            if !(Mode::Local != state.mode) {
                 return Err(Error::PreconditionFailed("go_local guard"));
             }
-            
+
             let next = State {
                 anchors_configured: state.anchors_configured.clone(),
                 mode: Mode::Local,
@@ -54,15 +54,23 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::GoPrivate => {
-            if !((Mode::Private != state.mode)) {
+            if !(Mode::Private != state.mode) {
                 return Err(Error::PreconditionFailed("go_private guard"));
             }
-            
+
             let next = State {
                 anchors_configured: state.anchors_configured.clone(),
                 mode: Mode::Private,
-                run_pipeline_disabled: if state.anchors_configured { false } else { true },
-                trust_anchor_warning: if state.anchors_configured { false } else { true },
+                run_pipeline_disabled: if state.anchors_configured {
+                    false
+                } else {
+                    true
+                },
+                trust_anchor_warning: if state.anchors_configured {
+                    false
+                } else {
+                    true
+                },
                 zk_actions_disabled: false,
             };
             let mut post = next;
@@ -71,15 +79,23 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::GoTrustless => {
-            if !((Mode::Trustless != state.mode)) {
+            if !(Mode::Trustless != state.mode) {
                 return Err(Error::PreconditionFailed("go_trustless guard"));
             }
-            
+
             let next = State {
                 anchors_configured: state.anchors_configured.clone(),
                 mode: Mode::Trustless,
-                run_pipeline_disabled: if state.anchors_configured { false } else { true },
-                trust_anchor_warning: if state.anchors_configured { false } else { true },
+                run_pipeline_disabled: if state.anchors_configured {
+                    false
+                } else {
+                    true
+                },
+                trust_anchor_warning: if state.anchors_configured {
+                    false
+                } else {
+                    true
+                },
                 zk_actions_disabled: false,
             };
             let mut post = next;

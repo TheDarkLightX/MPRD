@@ -1,6 +1,6 @@
 //! Invariant checker for mprd_v6_stake_penalty_shares.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -27,17 +27,23 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // CarryCapped
-    if !((state.auction_carry <= 5)) {
+    if !(state.auction_carry <= 5) {
         return Err(Error::InvariantViolation("CarryCapped"));
     }
 
     // SharesActiveLeIssuedTotal
-    if !((state.shares_active <= state.total_shares_issued)) {
+    if !(state.shares_active <= state.total_shares_issued) {
         return Err(Error::InvariantViolation("SharesActiveLeIssuedTotal"));
     }
 
     // SharesActiveMatchesStake
-    if !(if state.stake_active { (state.shares_active == state.stake_shares) && (state.stake_amount > 0) && (state.stake_shares > 0) } else { (0 == state.shares_active) && (0 == state.stake_amount) && (0 == state.stake_shares) }) {
+    if !(if state.stake_active {
+        (state.shares_active == state.stake_shares)
+            && (state.stake_amount > 0)
+            && (state.stake_shares > 0)
+    } else {
+        (0 == state.shares_active) && (0 == state.stake_amount) && (0 == state.stake_shares)
+    }) {
         return Err(Error::InvariantViolation("SharesActiveMatchesStake"));
     }
 

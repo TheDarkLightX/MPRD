@@ -213,7 +213,8 @@ impl<P: Proposer, V: Verifier> CegisLoop<P, V> {
     }
 
     fn capture_counterexample(&mut self, cx: Counterexample) {
-        self.metrics.counterexamples_captured = self.metrics.counterexamples_captured.saturating_add(1);
+        self.metrics.counterexamples_captured =
+            self.metrics.counterexamples_captured.saturating_add(1);
         self.counterexamples.push(cx);
         if self.counterexamples.len() > self.max_counterexamples {
             self.counterexamples.truncate(self.max_counterexamples);
@@ -325,7 +326,12 @@ impl PolicyAlgebraVerifier {
         })
     }
 
-    fn signal_for(&self, state: &State, action: ActionId, atom: &policy_algebra::PolicyAtom) -> Option<bool> {
+    fn signal_for(
+        &self,
+        state: &State,
+        action: ActionId,
+        atom: &policy_algebra::PolicyAtom,
+    ) -> Option<bool> {
         // State-provided signals.
         if let Some(v) = state.signals.get(atom.as_str()).copied() {
             return Some(v);
@@ -351,7 +357,10 @@ impl PolicyAlgebraVerifier {
         for e in trace.entries() {
             use policy_algebra::TraceReasonCode::*;
             match e.reason {
-                DenySignalFalse | DenyMissingSignal | DenyVetoSignalTrue | DenyVetoMissingSignal => {
+                DenySignalFalse
+                | DenyMissingSignal
+                | DenyVetoSignalTrue
+                | DenyVetoMissingSignal => {
                     if let Some(atom) = self.node_hash_to_atom.get(&e.node_hash) {
                         return Some(atom.clone());
                     }
@@ -401,7 +410,10 @@ impl Verifier for PolicyAlgebraVerifier {
     }
 }
 
-fn build_node_hash_to_atom_map(expr: &PolicyExpr, limits: PolicyLimits) -> Result<BTreeMap<Hash32, String>> {
+fn build_node_hash_to_atom_map(
+    expr: &PolicyExpr,
+    limits: PolicyLimits,
+) -> Result<BTreeMap<Hash32, String>> {
     use policy_algebra::PolicyExpr::*;
 
     fn walk(
@@ -453,9 +465,11 @@ mod tests {
 
     impl Proposer for SequenceProposer {
         fn propose(&mut self, _state: &State, _cxs: &[Counterexample]) -> Result<Action> {
-            let a = self.actions.get(self.idx).copied().ok_or_else(|| {
-                MprdError::InvalidInput("proposer ran out of actions".into())
-            })?;
+            let a = self
+                .actions
+                .get(self.idx)
+                .copied()
+                .ok_or_else(|| MprdError::InvalidInput("proposer ran out of actions".into()))?;
             self.idx = self.idx.saturating_add(1);
             Ok(a)
         }
@@ -496,7 +510,10 @@ mod tests {
         assert_eq!(loop_.metrics.counterexamples_captured, 1);
         assert!(loop_.metrics.time_to_first_valid_ms.is_some());
         assert_eq!(loop_.counterexamples.len(), 1);
-        assert_eq!(loop_.counterexamples[0].failed_atom.as_deref(), Some("action_db_pos"));
+        assert_eq!(
+            loop_.counterexamples[0].failed_atom.as_deref(),
+            Some("action_db_pos")
+        );
     }
 
     #[test]

@@ -12,7 +12,6 @@
 #[cfg(kani)]
 pub mod kani_harnesses;
 
-
 // Artifact/commit kernels
 pub mod artifact_commit_consistency_gate;
 
@@ -78,4 +77,3 @@ pub mod tokenomics_ceo_menu;
 // UI kernels
 pub mod ui_mode_adaptive_gates;
 pub mod ui_trust_anchor_fingerprints_only;
-

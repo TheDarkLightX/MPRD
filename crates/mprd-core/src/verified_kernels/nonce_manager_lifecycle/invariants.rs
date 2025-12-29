@@ -1,6 +1,6 @@
 //! Invariant checker for nonce_manager_lifecycle.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -18,17 +18,17 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // ConsumedBounded
-    if !((state.consumed_count <= 1000)) {
+    if !(state.consumed_count <= 1000) {
         return Err(Error::InvariantViolation("ConsumedBounded"));
     }
 
     // TimeNotBeforeWindow
-    if !((state.current_time >= state.window_start)) {
+    if !(state.current_time >= state.window_start) {
         return Err(Error::InvariantViolation("TimeNotBeforeWindow"));
     }
 
     // WindowPositive
-    if !((state.window_size >= 1)) {
+    if !(state.window_size >= 1) {
         return Err(Error::InvariantViolation("WindowPositive"));
     }
 

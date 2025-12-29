@@ -1,7 +1,7 @@
 //! Step function for policy_registry_gate.
 //! This is the CBC kernel chokepoint.
 
-use super::{{types::*, state::State, command::Command, invariants::check_invariants}};
+use super::{command::Command, invariants::check_invariants, state::State, types::*};
 
 /// Effects produced by a transition (data, not side effects).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -10,7 +10,7 @@ pub struct Effects {
 }
 
 /// Execute a transition: (state, command) -> Result<(new_state, effects), Error>
-/// 
+///
 /// This is the single chokepoint for all state transitions.
 /// Invariants are checked pre and post; preconditions in guards.
 pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
@@ -23,10 +23,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             if new_epoch < 0u64 || new_epoch > 1000u64 {
                 return Err(Error::ParamDomainViolation("new_epoch"));
             }
-            if !(((new_epoch > state.current_epoch) && (!state.frozen))) {
+            if !((new_epoch > state.current_epoch) && (!state.frozen)) {
                 return Err(Error::PreconditionFailed("advance_epoch guard"));
             }
-            
+
             let next = State {
                 current_epoch: new_epoch,
                 frozen: state.frozen.clone(),
@@ -39,10 +39,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::Freeze => {
-            if !((!state.frozen)) {
+            if !(!state.frozen) {
                 return Err(Error::PreconditionFailed("freeze guard"));
             }
-            
+
             let next = State {
                 current_epoch: state.current_epoch.clone(),
                 frozen: true,
@@ -58,11 +58,13 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             if block_height < 0u64 || block_height > 10000u64 {
                 return Err(Error::ParamDomainViolation("block_height"));
             }
-            let guard_ok = ((state.policy_count < 100) && (block_height >= state.last_update_height) && (!state.frozen));
+            let guard_ok = ((state.policy_count < 100)
+                && (block_height >= state.last_update_height)
+                && (!state.frozen));
             if !guard_ok {
                 return Err(Error::PreconditionFailed("register_policy guard"));
             }
-            
+
             let next = State {
                 current_epoch: state.current_epoch.clone(),
                 frozen: state.frozen.clone(),

@@ -1,6 +1,6 @@
 //! Invariant checker for executor_circuit_breaker.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -15,17 +15,23 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // ClosedMeansRecovered
-    if !(((!(ExecutorCircuitBreakerState::Closed == state.state)) || (state.consecutive_failures < 5))) {
+    if !((!(ExecutorCircuitBreakerState::Closed == state.state))
+        || (state.consecutive_failures < 5))
+    {
         return Err(Error::InvariantViolation("ClosedMeansRecovered"));
     }
 
     // FailureThresholdOpens
-    if !(((!(state.consecutive_failures >= 5)) || (ExecutorCircuitBreakerState::Closed != state.state))) {
+    if !((!(state.consecutive_failures >= 5))
+        || (ExecutorCircuitBreakerState::Closed != state.state))
+    {
         return Err(Error::InvariantViolation("FailureThresholdOpens"));
     }
 
     // HalfOpenRequiresCooldown
-    if !(((!(ExecutorCircuitBreakerState::Halfopen == state.state)) || (0 == state.cooldown_remaining))) {
+    if !((!(ExecutorCircuitBreakerState::Halfopen == state.state))
+        || (0 == state.cooldown_remaining))
+    {
         return Err(Error::InvariantViolation("HalfOpenRequiresCooldown"));
     }
 

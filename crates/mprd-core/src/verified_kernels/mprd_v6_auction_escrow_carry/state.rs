@@ -1,6 +1,5 @@
 //! State struct for mprd_v6_auction_escrow_carry.
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
     pub auction_carry: u64,

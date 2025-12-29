@@ -1,6 +1,6 @@
 //! Invariant checker for tokenomics_ceo_menu.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -15,7 +15,12 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // SplitCap
-    if !(((state.auction_units.checked_add(state.burn_units).ok_or(Error::Overflow)?) <= 50)) {
+    if !((state
+        .auction_units
+        .checked_add(state.burn_units)
+        .ok_or(Error::Overflow)?)
+        <= 50)
+    {
         return Err(Error::InvariantViolation("SplitCap"));
     }
 

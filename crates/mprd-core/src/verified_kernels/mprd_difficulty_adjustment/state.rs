@@ -1,6 +1,5 @@
 //! State struct for mprd_difficulty_adjustment.
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
     pub adjustment_factor: u64,

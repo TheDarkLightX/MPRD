@@ -1,7 +1,7 @@
 //! Step function for ui_trust_anchor_fingerprints_only.
 //! This is the CBC kernel chokepoint.
 
-use super::{{types::*, state::State, command::Command, invariants::check_invariants}};
+use super::{command::Command, invariants::check_invariants, state::State, types::*};
 
 /// Effects produced by a transition (data, not side effects).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -10,7 +10,7 @@ pub struct Effects {
 }
 
 /// Execute a transition: (state, command) -> Result<(new_state, effects), Error>
-/// 
+///
 /// This is the single chokepoint for all state transitions.
 /// Invariants are checked pre and post; preconditions in guards.
 pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
@@ -20,10 +20,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
     // Dispatch to transition handler.
     let (post, effects) = match cmd {
         Command::AttemptRawDisplay => {
-            if !(((DisplayState::Attemptedrawleak != state.display_state) && state.key_loaded)) {
+            if !((DisplayState::Attemptedrawleak != state.display_state) && state.key_loaded) {
                 return Err(Error::PreconditionFailed("attempt_raw_display guard"));
             }
-            
+
             let next = State {
                 display_state: DisplayState::Attemptedrawleak,
                 key_loaded: state.key_loaded.clone(),
@@ -38,7 +38,7 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             if !(state.key_loaded) {
                 return Err(Error::PreconditionFailed("clear_key guard"));
             }
-            
+
             let next = State {
                 display_state: DisplayState::Hidden,
                 key_loaded: false,
@@ -50,10 +50,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::DisplayFingerprint => {
-            if !(((DisplayState::Showingfingerprint != state.display_state) && state.key_loaded)) {
+            if !((DisplayState::Showingfingerprint != state.display_state) && state.key_loaded) {
                 return Err(Error::PreconditionFailed("display_fingerprint guard"));
             }
-            
+
             let next = State {
                 display_state: DisplayState::Showingfingerprint,
                 key_loaded: state.key_loaded.clone(),
@@ -65,10 +65,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::HideDisplay => {
-            if !((DisplayState::Hidden != state.display_state)) {
+            if !(DisplayState::Hidden != state.display_state) {
                 return Err(Error::PreconditionFailed("hide_display guard"));
             }
-            
+
             let next = State {
                 display_state: DisplayState::Hidden,
                 key_loaded: state.key_loaded.clone(),
@@ -80,10 +80,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::LoadKey => {
-            if !((!state.key_loaded)) {
+            if !(!state.key_loaded) {
                 return Err(Error::PreconditionFailed("load_key guard"));
             }
-            
+
             let next = State {
                 display_state: state.display_state.clone(),
                 key_loaded: true,
