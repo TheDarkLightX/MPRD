@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mprd-registry
+  namespace: mprd
+data:
+  # Replace this with your signed registry checkpoint JSON (SignedRegistryStateV1).
+  registry_state.json: |
+    {}

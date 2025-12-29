@@ -1,0 +1,75 @@
+services:
+  # Demo mode: no trust anchors, no ZK registry binding. Useful to validate wiring/UI quickly.
+  mprd-demo:
+    profiles: ["demo"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        RISC0_BUILD: "0"
+    ports:
+      - "8080:8080"
+    environment:
+      MPRD_CONFIG: /data/config.json
+      MPRD_OPERATOR_STORE_DIR: /data/operator
+      RUST_LOG: info
+    volumes:
+      - mprd-data:/data
+      - ./deploy/examples/config.demo.json:/data/config.json:ro
+    command:
+      - serve
+      - --bind
+      - 0.0.0.0:8080
+      - --policy-dir
+      - /data/policies
+      - --insecure-demo
+
+  # Production wiring: registry-bound policy engine + fail-closed executor guards.
+  #
+  # Required env vars:
+  # - MPRD_REGISTRY_KEY_HEX (32-byte hex, 64 chars)
+  # - MPRD_TOKEN_SIGNING_KEY_HEX (32-byte hex, 64 chars)
+  #
+  # Required bind mounts:
+  # - ./deploy/run/registry_state.json -> /data/registry_state.json (signed checkpoint JSON)
+  # - ./deploy/run/artifacts/ -> /data/artifacts/ (policy artifacts named <hex(policy_hash)>)
+  mprd:
+    profiles: ["prod"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Set to "1" only when you want to embed real Risc0 methods (slow; requires toolchain install).
+        RISC0_BUILD: "0"
+    ports:
+      - "8080:8080"
+    environment:
+      MPRD_CONFIG: /data/config.json
+      MPRD_OPERATOR_STORE_DIR: /data/operator
+      # Used by the operator API health/alerts.
+      MPRD_OPERATOR_REGISTRY_STATE_PATH: /data/registry_state.json
+      MPRD_OPERATOR_REGISTRY_KEY_HEX: ${MPRD_REGISTRY_KEY_HEX:?set MPRD_REGISTRY_KEY_HEX}
+      MPRD_OPERATOR_MANIFEST_KEY_HEX: ${MPRD_MANIFEST_KEY_HEX:-${MPRD_REGISTRY_KEY_HEX}}
+      RUST_LOG: info
+    volumes:
+      - mprd-data:/data
+      - ./deploy/examples/config.prod.json:/data/config.json:ro
+      - ./deploy/run/registry_state.json:/data/registry_state.json:ro
+      - ./deploy/run/artifacts:/data/artifacts:ro
+    command:
+      - serve
+      - --bind
+      - 0.0.0.0:8080
+      - --policy-dir
+      - /data/policies
+      - --registry-state
+      - /data/registry_state.json
+      - --registry-key
+      - ${MPRD_REGISTRY_KEY_HEX}
+      - --signing-key
+      - ${MPRD_TOKEN_SIGNING_KEY_HEX:?set MPRD_TOKEN_SIGNING_KEY_HEX}
+      - --artifacts-dir
+      - /data/artifacts
+
+volumes:
+  mprd-data: {}

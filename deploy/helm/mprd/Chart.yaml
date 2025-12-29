@@ -1,0 +1,6 @@
+apiVersion: v2
+name: mprd
+description: MPRD operator API (mprd serve)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

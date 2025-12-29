@@ -1,0 +1,22 @@
+{
+  "mode": "trustless",
+  "policy_storage": {
+    "storage_type": "local",
+    "local_dir": "/data/policies",
+    "ipfs_url": null
+  },
+  "tau_binary": null,
+  "risc0_image_id": "0000000000000000000000000000000000000000000000000000000000000000",
+  "execution": {
+    "executor_type": "file",
+    "http_url": null,
+    "audit_file": "/data/audit.jsonl"
+  },
+  "anti_replay": {
+    "nonce_store_dir": "/data/anti_replay"
+  },
+  "registry_state_path": null,
+  "registry_verifying_key_hex": null,
+  "token_signing_key_hex": null,
+  "policy_artifacts_dir": null
+}

@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mprd.fullname" . }}
+  labels:
+    {{- include "mprd.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "mprd.name" . }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "mprd.name" . }}
+        {{- include "mprd.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: mprd
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            - --bind
+            - 0.0.0.0:{{ .Values.service.port }}
+            - --policy-dir
+            - /data/policies
+            {{- if .Values.insecureDemo }}
+            - --insecure-demo
+            {{- else }}
+            - --registry-state
+            - /registry/registry_state.json
+            - --registry-key
+            - $(MPRD_REGISTRY_KEY_HEX)
+            - --signing-key
+            - $(MPRD_TOKEN_SIGNING_KEY_HEX)
+            - --artifacts-dir
+            - /data/artifacts
+            {{- end }}
+          env:
+            - name: MPRD_CONFIG
+              value: /config/config.json
+            - name: MPRD_OPERATOR_STORE_DIR
+              value: /data/operator
+            - name: RUST_LOG
+              value: info
+            {{- if not .Values.insecureDemo }}
+            - name: MPRD_OPERATOR_REGISTRY_STATE_PATH
+              value: /registry/registry_state.json
+            - name: MPRD_REGISTRY_KEY_HEX
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mprd.fullname" . }}-secrets
+                  key: MPRD_REGISTRY_KEY_HEX
+            - name: MPRD_OPERATOR_REGISTRY_KEY_HEX
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mprd.fullname" . }}-secrets
+                  key: MPRD_REGISTRY_KEY_HEX
+            - name: MPRD_TOKEN_SIGNING_KEY_HEX
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mprd.fullname" . }}-secrets
+                  key: MPRD_TOKEN_SIGNING_KEY_HEX
+            - name: MPRD_OPERATOR_MANIFEST_KEY_HEX
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mprd.fullname" . }}-secrets
+                  key: MPRD_MANIFEST_KEY_HEX
+                  optional: true
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: registry
+              mountPath: /registry
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "mprd.fullname" . }}-config
+        - name: registry
+          configMap:
+            name: {{ include "mprd.fullname" . }}-registry
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "mprd.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
