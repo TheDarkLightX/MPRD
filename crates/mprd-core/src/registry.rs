@@ -7,6 +7,7 @@ use crate::{
     hash::{sha256_domain, POLICY_TAU_DOMAIN_V1},
     Hash32, MprdError, PolicyHash, Result,
 };
+use crate::verified_kernels::policy_registry_gate;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -89,14 +90,47 @@ pub trait PolicyRegistry: Send + Sync {
 
 /// In-memory policy registry for development and testing.
 pub struct InMemoryPolicyRegistry {
-    specs: RwLock<HashMap<Hash32, TauSpec>>,
+    inner: RwLock<RegistryInner>,
+}
+
+#[derive(Debug)]
+struct RegistryInner {
+    specs: HashMap<Hash32, TauSpec>,
+    gate: policy_registry_gate::State,
+    next_block_height: u64,
+}
+
+impl RegistryInner {
+    fn new() -> Self {
+        Self {
+            specs: HashMap::new(),
+            gate: policy_registry_gate::State::init(),
+            next_block_height: 0,
+        }
+    }
+
+    fn clamp_block_height(raw: u64) -> u64 {
+        raw.min(10_000)
+    }
+
+    fn alloc_block_height(&mut self, spec: &TauSpec) -> u64 {
+        // Prefer explicit caller-provided monotonic context if present (deterministic input).
+        // Fall back to an internal monotone counter (deterministic per-process).
+        if let Some(ms) = spec.metadata.registered_at {
+            let v = u64::try_from(ms).unwrap_or(0);
+            return Self::clamp_block_height(v);
+        }
+        let h = Self::clamp_block_height(self.next_block_height);
+        self.next_block_height = self.next_block_height.saturating_add(1);
+        h
+    }
 }
 
 impl InMemoryPolicyRegistry {
     /// Create a new empty registry.
     pub fn new() -> Self {
         Self {
-            specs: RwLock::new(HashMap::new()),
+            inner: RwLock::new(RegistryInner::new()),
         }
     }
 
@@ -108,6 +142,42 @@ impl InMemoryPolicyRegistry {
         }
         Ok(registry)
     }
+
+    /// Advance the registry epoch (monotone, fail-closed when frozen).
+    ///
+    /// This is a governance primitive: deployments SHOULD gate it via authorization.
+    pub fn advance_epoch(&self, new_epoch: u64) -> Result<()> {
+        let mut inner = self
+            .inner
+            .write()
+            .map_err(|_| MprdError::ExecutionError("Policy registry lock poisoned".into()))?;
+        let (st, _) = policy_registry_gate::step(
+            &inner.gate,
+            policy_registry_gate::Command::AdvanceEpoch { new_epoch },
+        )
+        .map_err(|e| MprdError::ExecutionError(format!("policy_registry_gate rejected advance_epoch: {e}")))?;
+        inner.gate = st;
+        Ok(())
+    }
+
+    /// Freeze the registry (disables further updates, fail-closed).
+    pub fn freeze(&self) -> Result<()> {
+        let mut inner = self
+            .inner
+            .write()
+            .map_err(|_| MprdError::ExecutionError("Policy registry lock poisoned".into()))?;
+        let (st, _) =
+            policy_registry_gate::step(&inner.gate, policy_registry_gate::Command::Freeze)
+                .map_err(|e| MprdError::ExecutionError(format!("policy_registry_gate rejected freeze: {e}")))?;
+        inner.gate = st;
+        Ok(())
+    }
+
+    /// Return the current policy registry gate state (for observability/auditing).
+    pub fn gate_state(&self) -> policy_registry_gate::State {
+        let inner = self.inner.read().ok();
+        inner.map(|g| g.gate.clone()).unwrap_or_else(policy_registry_gate::State::init)
+    }
 }
 
 impl Default for InMemoryPolicyRegistry {
@@ -118,13 +188,13 @@ impl Default for InMemoryPolicyRegistry {
 
 impl PolicyRegistry for InMemoryPolicyRegistry {
     fn register(&self, spec: TauSpec) -> Result<PolicyHash> {
-        let mut specs = self
-            .specs
+        let mut inner = self
+            .inner
             .write()
             .map_err(|_| MprdError::ExecutionError("Policy registry lock poisoned".into()))?;
 
         // Check for collision with different content
-        if let Some(existing) = specs.get(&spec.policy_hash) {
+        if let Some(existing) = inner.specs.get(&spec.policy_hash) {
             if existing.content != spec.content {
                 return Err(MprdError::PolicyHashCollision {
                     hash: spec.policy_hash,
@@ -134,30 +204,39 @@ impl PolicyRegistry for InMemoryPolicyRegistry {
             return Ok(spec.policy_hash);
         }
 
+        // CBC governance gate: enforce monotone, bounded update discipline.
+        let block_height = inner.alloc_block_height(&spec);
+        let (st, _) = policy_registry_gate::step(
+            &inner.gate,
+            policy_registry_gate::Command::RegisterPolicy { block_height },
+        )
+        .map_err(|e| MprdError::ExecutionError(format!("policy_registry_gate rejected register: {e}")))?;
+        inner.gate = st;
+
         let hash = spec.policy_hash.clone();
-        specs.insert(hash.clone(), spec);
+        inner.specs.insert(hash.clone(), spec);
         Ok(hash)
     }
 
     fn get(&self, policy_hash: &PolicyHash) -> Option<TauSpec> {
-        let specs = self.specs.read().ok()?;
-        specs.get(policy_hash).cloned()
+        let inner = self.inner.read().ok()?;
+        inner.specs.get(policy_hash).cloned()
     }
 
     fn contains(&self, policy_hash: &PolicyHash) -> bool {
-        let specs = match self.specs.read() {
+        let inner = match self.inner.read() {
             Ok(s) => s,
             Err(_) => return false,
         };
-        specs.contains_key(policy_hash)
+        inner.specs.contains_key(policy_hash)
     }
 
     fn list(&self) -> Vec<PolicyHash> {
-        let specs = match self.specs.read() {
+        let inner = match self.inner.read() {
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };
-        specs.keys().cloned().collect()
+        inner.specs.keys().cloned().collect()
     }
 }
 

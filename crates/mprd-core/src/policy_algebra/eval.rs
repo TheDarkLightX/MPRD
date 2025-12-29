@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::{Hash32, MprdError, Result};
+use crate::verified_kernels::policy_algebra_operators;
 
 use super::ast::{PolicyAtom, PolicyExpr, PolicyLimits, PolicyOutcomeKind};
 use super::hash::policy_hash_v1;
@@ -86,6 +87,58 @@ pub fn evaluate(
 
     let mut trace = PolicyTrace::new();
 
+    // CBC: use the verified policy_algebra_operators kernel as a bounded evaluation budget.
+    // This is intentionally orthogonal to the policy semantics (DenyIf, 3-valued outcomes).
+    #[derive(Debug)]
+    struct KernelBudget {
+        state: policy_algebra_operators::State,
+    }
+
+    impl KernelBudget {
+        fn new() -> Self {
+            Self {
+                state: policy_algebra_operators::State::init(),
+            }
+        }
+
+        fn step(&mut self, cmd: policy_algebra_operators::Command) -> Result<()> {
+            let (st, _) = policy_algebra_operators::step(&self.state, cmd).map_err(|e| {
+                MprdError::BoundedValueExceeded(format!("policy_algebra_operators budget exceeded: {e}"))
+            })?;
+            self.state = st;
+            Ok(())
+        }
+
+        fn enter_composite(&mut self) -> Result<()> {
+            self.step(policy_algebra_operators::Command::PushComposite)
+        }
+
+        fn leave_composite(&mut self) -> Result<()> {
+            self.step(policy_algebra_operators::Command::PopComposite)
+        }
+
+        fn charge_not(&mut self) -> Result<()> {
+            // Use a deterministic dummy input; we only want the bounded counter semantics.
+            self.step(policy_algebra_operators::Command::EvalNot { sub_result: false })
+        }
+
+        fn charge_and(&mut self) -> Result<()> {
+            self.step(policy_algebra_operators::Command::EvalAnd {
+                left_result: true,
+                right_result: true,
+            })
+        }
+
+        fn charge_or(&mut self) -> Result<()> {
+            self.step(policy_algebra_operators::Command::EvalOr {
+                left_result: false,
+                right_result: false,
+            })
+        }
+    }
+
+    let mut budget = KernelBudget::new();
+
     // Phase 1: evaluate veto guards globally.
     let mut deny_if_atoms: BTreeSet<PolicyAtom> = BTreeSet::new();
     deny_if_set(expr, &mut deny_if_atoms);
@@ -138,6 +191,7 @@ pub fn evaluate(
         ctx: &impl EvalContext,
         limits: PolicyLimits,
         trace: &mut PolicyTrace,
+        budget: &mut KernelBudget,
     ) -> Result<PolicyOutcomeKind> {
         let node_hash = policy_hash_v1(expr);
 
@@ -150,18 +204,26 @@ pub fn evaluate(
                 Some(false) => PolicyOutcomeKind::DenySoft,
             },
             PolicyExpr::DenyIf(_) => PolicyOutcomeKind::Neutral,
-            PolicyExpr::Not(p) => match eval_node(p, ctx, limits, trace)? {
-                PolicyOutcomeKind::Allow => PolicyOutcomeKind::DenySoft,
-                PolicyOutcomeKind::DenySoft => PolicyOutcomeKind::Allow,
-                PolicyOutcomeKind::DenyVeto => PolicyOutcomeKind::Allow,
-                PolicyOutcomeKind::Neutral => PolicyOutcomeKind::Neutral,
-            },
+            PolicyExpr::Not(p) => {
+                budget.enter_composite()?;
+                budget.charge_not()?;
+                let out = match eval_node(p, ctx, limits, trace, budget)? {
+                    PolicyOutcomeKind::Allow => PolicyOutcomeKind::DenySoft,
+                    PolicyOutcomeKind::DenySoft => PolicyOutcomeKind::Allow,
+                    PolicyOutcomeKind::DenyVeto => PolicyOutcomeKind::Allow,
+                    PolicyOutcomeKind::Neutral => PolicyOutcomeKind::Neutral,
+                };
+                budget.leave_composite()?;
+                out
+            }
             PolicyExpr::All(children) => {
+                budget.enter_composite()?;
+                budget.charge_and()?;
                 let mut saw_any = false;
                 let mut local_out = PolicyOutcomeKind::Allow;
                 for ch in children {
                     saw_any = true;
-                    match eval_node(ch, ctx, limits, trace)? {
+                    match eval_node(ch, ctx, limits, trace, budget)? {
                         PolicyOutcomeKind::Allow | PolicyOutcomeKind::Neutral => {}
                         PolicyOutcomeKind::DenySoft => {
                             local_out = PolicyOutcomeKind::DenySoft;
@@ -174,16 +236,18 @@ pub fn evaluate(
                     }
                 }
                 if !saw_any {
-                    PolicyOutcomeKind::Allow
-                } else {
-                    local_out
+                    local_out = PolicyOutcomeKind::Allow;
                 }
+                budget.leave_composite()?;
+                local_out
             }
             PolicyExpr::Any(children) => {
+                budget.enter_composite()?;
+                budget.charge_or()?;
                 let mut any_allow = false;
                 let mut veto = false;
                 for ch in children {
-                    match eval_node(ch, ctx, limits, trace)? {
+                    match eval_node(ch, ctx, limits, trace, budget)? {
                         PolicyOutcomeKind::Allow => {
                             any_allow = true;
                             break;
@@ -195,22 +259,27 @@ pub fn evaluate(
                         PolicyOutcomeKind::DenySoft | PolicyOutcomeKind::Neutral => {}
                     }
                 }
-                if veto {
+                let out = if veto {
                     PolicyOutcomeKind::DenyVeto
                 } else if any_allow {
                     PolicyOutcomeKind::Allow
                 } else {
                     PolicyOutcomeKind::DenySoft
-                }
+                };
+                budget.leave_composite()?;
+                out
             }
             PolicyExpr::Threshold { k, children } => {
+                budget.enter_composite()?;
+                budget.charge_and()?;
                 if *k == 0 {
+                    budget.leave_composite()?;
                     PolicyOutcomeKind::Allow
                 } else {
                     let mut allow_count: usize = 0;
                     let mut veto = false;
                     for ch in children {
-                        match eval_node(ch, ctx, limits, trace)? {
+                        match eval_node(ch, ctx, limits, trace, budget)? {
                             PolicyOutcomeKind::Allow => {
                                 allow_count = allow_count.saturating_add(1);
                             }
@@ -221,13 +290,15 @@ pub fn evaluate(
                             PolicyOutcomeKind::DenySoft | PolicyOutcomeKind::Neutral => {}
                         }
                     }
-                    if veto {
+                    let out = if veto {
                         PolicyOutcomeKind::DenyVeto
                     } else if allow_count >= (*k as usize) {
                         PolicyOutcomeKind::Allow
                     } else {
                         PolicyOutcomeKind::DenySoft
-                    }
+                    };
+                    budget.leave_composite()?;
+                    out
                 }
             }
         };
@@ -259,6 +330,6 @@ pub fn evaluate(
         Ok(out)
     }
 
-    let outcome = eval_node(expr, ctx, limits, &mut trace)?;
+    let outcome = eval_node(expr, ctx, limits, &mut trace, &mut budget)?;
     Ok(PolicyEvalResult { outcome, trace })
 }

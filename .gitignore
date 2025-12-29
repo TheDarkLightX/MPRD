@@ -36,6 +36,8 @@ __pycache__/
 # Test artifacts
 *.log
 /tmp/
+.esso/
+.tmp/
 
 # Journal submissions (private until published)
 /submissions/
