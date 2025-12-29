@@ -1,6 +1,5 @@
 //! State struct for mprd_emission_schedule.
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
     pub emission_rate: u64,

@@ -1,6 +1,6 @@
 //! Invariant checker for reserve_management.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -12,12 +12,12 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // EmergencyImpliesLowCoverage
-    if !(((!(true == state.emergency_mode)) || (state.coverage_ratio_bps < 5000))) {
+    if !((!(true == state.emergency_mode)) || (state.coverage_ratio_bps < 5000)) {
         return Err(Error::InvariantViolation("EmergencyImpliesLowCoverage"));
     }
 
     // ReserveNonNegative
-    if !((state.reserve_balance >= 0)) {
+    if !(state.reserve_balance >= 0) {
         return Err(Error::InvariantViolation("ReserveNonNegative"));
     }
 

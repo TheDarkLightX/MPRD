@@ -1,6 +1,6 @@
 //! Invariant checker for mprd_v6_fee_lanes_bcr_caps.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -18,7 +18,20 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // EpochOffsetCap50Pct
-    if !((state.offset_total <= ({ let n = state.base_fee_gross.checked_mul(50).ok_or(Error::Overflow)?; let d = 100; if d == 0 { 0 } else { n.div_euclid(d) } }))) {
+    if !(state.offset_total
+        <= ({
+            let n = state
+                .base_fee_gross
+                .checked_mul(50)
+                .ok_or(Error::Overflow)?;
+            let d = 100;
+            if d == 0 {
+                0
+            } else {
+                n.div_euclid(d)
+            }
+        }))
+    {
         return Err(Error::InvariantViolation("EpochOffsetCap50Pct"));
     }
 

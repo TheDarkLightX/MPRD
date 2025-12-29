@@ -1,6 +1,6 @@
 //! Invariant checker for bcr_staking.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -9,47 +9,49 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // BondedAmountNonNegative
-    if !((state.bonded_amount >= 0)) {
+    if !(state.bonded_amount >= 0) {
         return Err(Error::InvariantViolation("BondedAmountNonNegative"));
     }
 
     // BondedImpliesPositive
-    if !(((!(Phase::Bonded == state.phase)) || (state.bonded_amount > 0))) {
+    if !((!(Phase::Bonded == state.phase)) || (state.bonded_amount > 0)) {
         return Err(Error::InvariantViolation("BondedImpliesPositive"));
     }
 
     // IdleImpliesZero
-    if !(((!(Phase::Idle == state.phase)) || (0 == state.bonded_amount))) {
+    if !((!(Phase::Idle == state.phase)) || (0 == state.bonded_amount)) {
         return Err(Error::InvariantViolation("IdleImpliesZero"));
     }
 
     // IdleNoPendingSlash
-    if !(((!(Phase::Idle == state.phase)) || (false == state.pending_slash))) {
+    if !((!(Phase::Idle == state.phase)) || (false == state.pending_slash)) {
         return Err(Error::InvariantViolation("IdleNoPendingSlash"));
     }
 
     // PendingSlashImpliesPositive
-    if !(((!state.pending_slash) || (state.bonded_amount > 0))) {
+    if !((!state.pending_slash) || (state.bonded_amount > 0)) {
         return Err(Error::InvariantViolation("PendingSlashImpliesPositive"));
     }
 
     // PendingSlashImpliesStakedPhase
-    if !(((!state.pending_slash) || ((Phase::Bonded == state.phase) || (Phase::Unbonding == state.phase)))) {
+    if !((!state.pending_slash)
+        || ((Phase::Bonded == state.phase) || (Phase::Unbonding == state.phase)))
+    {
         return Err(Error::InvariantViolation("PendingSlashImpliesStakedPhase"));
     }
 
     // SlashedImpliesZero
-    if !(((!(Phase::Slashed == state.phase)) || (0 == state.bonded_amount))) {
+    if !((!(Phase::Slashed == state.phase)) || (0 == state.bonded_amount)) {
         return Err(Error::InvariantViolation("SlashedImpliesZero"));
     }
 
     // SlashedNoPendingSlash
-    if !(((!(Phase::Slashed == state.phase)) || (false == state.pending_slash))) {
+    if !((!(Phase::Slashed == state.phase)) || (false == state.pending_slash)) {
         return Err(Error::InvariantViolation("SlashedNoPendingSlash"));
     }
 
     // UnbondingImpliesPositive
-    if !(((!(Phase::Unbonding == state.phase)) || (state.bonded_amount > 0))) {
+    if !((!(Phase::Unbonding == state.phase)) || (state.bonded_amount > 0)) {
         return Err(Error::InvariantViolation("UnbondingImpliesPositive"));
     }
 

@@ -1,6 +1,6 @@
 //! Invariant checker for mprd_v6_auction_escrow_carry.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -33,12 +33,17 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // CarryCapped
-    if !((state.auction_carry <= 3)) {
+    if !(state.auction_carry <= 3) {
         return Err(Error::InvariantViolation("CarryCapped"));
     }
 
     // EscrowMatchesBids
-    if !(((state.bid1_qty.checked_add(state.bid2_qty).ok_or(Error::Overflow)?) == state.bcr_escrow)) {
+    if !((state
+        .bid1_qty
+        .checked_add(state.bid2_qty)
+        .ok_or(Error::Overflow)?)
+        == state.bcr_escrow)
+    {
         return Err(Error::InvariantViolation("EscrowMatchesBids"));
     }
 

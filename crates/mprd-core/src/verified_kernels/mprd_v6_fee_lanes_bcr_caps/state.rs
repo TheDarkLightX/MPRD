@@ -1,6 +1,5 @@
 //! State struct for mprd_v6_fee_lanes_bcr_caps.
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
     pub base_fee_gross: u64,

@@ -426,9 +426,8 @@ fn verify_chain(path: &Path) -> Result<(Hash32, bool)> {
         return Ok((Hash32([0u8; 32]), false));
     }
 
-    let contents = std::fs::read_to_string(path).map_err(|e| {
-        MprdError::ExecutionError(format!("failed to read decision log: {e}"))
-    })?;
+    let contents = std::fs::read_to_string(path)
+        .map_err(|e| MprdError::ExecutionError(format!("failed to read decision log: {e}")))?;
 
     let mut prev_hash = Hash32([0u8; 32]);
     let mut saw_unverified_v1 = false;

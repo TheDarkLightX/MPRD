@@ -3,11 +3,11 @@
 //! Maintains a mapping from `PolicyHash` to `TauSpec`, enforcing invariant S6:
 //! for a given `policy_hash`, the underlying Tau spec is immutable.
 
+use crate::verified_kernels::policy_registry_gate;
 use crate::{
     hash::{sha256_domain, POLICY_TAU_DOMAIN_V1},
     Hash32, MprdError, PolicyHash, Result,
 };
-use crate::verified_kernels::policy_registry_gate;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -155,7 +155,9 @@ impl InMemoryPolicyRegistry {
             &inner.gate,
             policy_registry_gate::Command::AdvanceEpoch { new_epoch },
         )
-        .map_err(|e| MprdError::ExecutionError(format!("policy_registry_gate rejected advance_epoch: {e}")))?;
+        .map_err(|e| {
+            MprdError::ExecutionError(format!("policy_registry_gate rejected advance_epoch: {e}"))
+        })?;
         inner.gate = st;
         Ok(())
     }
@@ -168,7 +170,9 @@ impl InMemoryPolicyRegistry {
             .map_err(|_| MprdError::ExecutionError("Policy registry lock poisoned".into()))?;
         let (st, _) =
             policy_registry_gate::step(&inner.gate, policy_registry_gate::Command::Freeze)
-                .map_err(|e| MprdError::ExecutionError(format!("policy_registry_gate rejected freeze: {e}")))?;
+                .map_err(|e| {
+                    MprdError::ExecutionError(format!("policy_registry_gate rejected freeze: {e}"))
+                })?;
         inner.gate = st;
         Ok(())
     }
@@ -176,7 +180,9 @@ impl InMemoryPolicyRegistry {
     /// Return the current policy registry gate state (for observability/auditing).
     pub fn gate_state(&self) -> policy_registry_gate::State {
         let inner = self.inner.read().ok();
-        inner.map(|g| g.gate.clone()).unwrap_or_else(policy_registry_gate::State::init)
+        inner
+            .map(|g| g.gate.clone())
+            .unwrap_or_else(policy_registry_gate::State::init)
     }
 }
 
@@ -210,7 +216,9 @@ impl PolicyRegistry for InMemoryPolicyRegistry {
             &inner.gate,
             policy_registry_gate::Command::RegisterPolicy { block_height },
         )
-        .map_err(|e| MprdError::ExecutionError(format!("policy_registry_gate rejected register: {e}")))?;
+        .map_err(|e| {
+            MprdError::ExecutionError(format!("policy_registry_gate rejected register: {e}"))
+        })?;
         inner.gate = st;
 
         let hash = spec.policy_hash.clone();

@@ -1,6 +1,6 @@
 //! Invariant checker for mprd_operator_mining_round.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -30,27 +30,29 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // Budget
-    if !(((state.rewards_paid.checked_mul(10).ok_or(Error::Overflow)?) <= state.round_reward)) {
+    if !((state.rewards_paid.checked_mul(10).ok_or(Error::Overflow)?) <= state.round_reward) {
         return Err(Error::InvariantViolation("Budget"));
     }
 
     // DisputedOnlyWhenInconclusive
-    if !(((!(Phase::Disputed == state.phase)) || (VerifierResult::Inconclusive == state.verifier_result))) {
+    if !((!(Phase::Disputed == state.phase))
+        || (VerifierResult::Inconclusive == state.verifier_result))
+    {
         return Err(Error::InvariantViolation("DisputedOnlyWhenInconclusive"));
     }
 
     // PaidImpliesAllPaid
-    if !(((!(Phase::Paid == state.phase)) || (state.rewards_paid == state.valid_count))) {
+    if !((!(Phase::Paid == state.phase)) || (state.rewards_paid == state.valid_count)) {
         return Err(Error::InvariantViolation("PaidImpliesAllPaid"));
     }
 
     // PaidLeqValid
-    if !((state.rewards_paid <= state.valid_count)) {
+    if !(state.rewards_paid <= state.valid_count) {
         return Err(Error::InvariantViolation("PaidLeqValid"));
     }
 
     // ValidLeqSubmissions
-    if !((state.valid_count <= state.submissions_count)) {
+    if !(state.valid_count <= state.submissions_count) {
         return Err(Error::InvariantViolation("ValidLeqSubmissions"));
     }
 

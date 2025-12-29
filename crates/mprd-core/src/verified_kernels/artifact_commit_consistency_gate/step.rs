@@ -1,7 +1,7 @@
 //! Step function for artifact_commit_consistency_gate.
 //! This is the CBC kernel chokepoint.
 
-use super::{{types::*, state::State, command::Command, invariants::check_invariants}};
+use super::{command::Command, invariants::check_invariants, state::State, types::*};
 
 /// Effects produced by a transition (data, not side effects).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -10,7 +10,7 @@ pub struct Effects {
 }
 
 /// Execute a transition: (state, command) -> Result<(new_state, effects), Error>
-/// 
+///
 /// This is the single chokepoint for all state transitions.
 /// Invariants are checked pre and post; preconditions in guards.
 pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
@@ -20,11 +20,14 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
     // Dispatch to transition handler.
     let (post, effects) = match cmd {
         Command::Accept => {
-            let guard_ok = ((ModelResult::Pending == state.result) && ((!state.checkpoint_required) || state.checkpoint_ok) && state.commit_sig_ok && state.mst_consistency_ok);
+            let guard_ok = ((ModelResult::Pending == state.result)
+                && ((!state.checkpoint_required) || state.checkpoint_ok)
+                && state.commit_sig_ok
+                && state.mst_consistency_ok);
             if !guard_ok {
                 return Err(Error::PreconditionFailed("accept guard"));
             }
-            
+
             let next = State {
                 checkpoint_ok: state.checkpoint_ok.clone(),
                 checkpoint_required: state.checkpoint_required.clone(),
@@ -38,10 +41,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::CheckpointFails => {
-            if !(((ModelResult::Pending == state.result) && state.checkpoint_required)) {
+            if !((ModelResult::Pending == state.result) && state.checkpoint_required) {
                 return Err(Error::PreconditionFailed("checkpoint_fails guard"));
             }
-            
+
             let next = State {
                 checkpoint_ok: false,
                 checkpoint_required: state.checkpoint_required.clone(),
@@ -55,10 +58,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::MstFails => {
-            if !((ModelResult::Pending == state.result)) {
+            if !(ModelResult::Pending == state.result) {
                 return Err(Error::PreconditionFailed("mst_fails guard"));
             }
-            
+
             let next = State {
                 checkpoint_ok: state.checkpoint_ok.clone(),
                 checkpoint_required: state.checkpoint_required.clone(),
@@ -72,11 +75,14 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::Reject => {
-            let guard_ok = ((ModelResult::Pending == state.result) && (!(((!state.checkpoint_required) || state.checkpoint_ok) && state.commit_sig_ok && state.mst_consistency_ok)));
+            let guard_ok = ((ModelResult::Pending == state.result)
+                && (!(((!state.checkpoint_required) || state.checkpoint_ok)
+                    && state.commit_sig_ok
+                    && state.mst_consistency_ok)));
             if !guard_ok {
                 return Err(Error::PreconditionFailed("reject guard"));
             }
-            
+
             let next = State {
                 checkpoint_ok: state.checkpoint_ok.clone(),
                 checkpoint_required: state.checkpoint_required.clone(),
@@ -90,10 +96,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::RequireCheckpoint => {
-            if !((ModelResult::Pending == state.result)) {
+            if !(ModelResult::Pending == state.result) {
                 return Err(Error::PreconditionFailed("require_checkpoint guard"));
             }
-            
+
             let next = State {
                 checkpoint_ok: state.checkpoint_ok.clone(),
                 checkpoint_required: true,
@@ -107,10 +113,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::SigFails => {
-            if !((ModelResult::Pending == state.result)) {
+            if !(ModelResult::Pending == state.result) {
                 return Err(Error::PreconditionFailed("sig_fails guard"));
             }
-            
+
             let next = State {
                 checkpoint_ok: state.checkpoint_ok.clone(),
                 checkpoint_required: state.checkpoint_required.clone(),

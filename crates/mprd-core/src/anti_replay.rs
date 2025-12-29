@@ -16,8 +16,8 @@
 //! 3. Implement WAL or similar for crash recovery
 //! 4. Replicate nonce state across nodes in distributed deployments
 
-use crate::{DecisionToken, MprdError, NonceHash, PolicyHash, Result};
 use crate::verified_kernels::nonce_manager_lifecycle;
+use crate::{DecisionToken, MprdError, NonceHash, PolicyHash, Result};
 use rustls::{ClientConfig, RootCertStore};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -291,7 +291,9 @@ impl NonceLifecycleGate {
 
         let (st, _) = nonce_manager_lifecycle::step(
             &self.state,
-            nonce_manager_lifecycle::Command::ConsumeNonce { nonce_time: now_time },
+            nonce_manager_lifecycle::Command::ConsumeNonce {
+                nonce_time: now_time,
+            },
         )
         .map_err(|e| {
             MprdError::BoundedValueExceeded(format!(

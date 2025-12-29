@@ -1,6 +1,5 @@
 //! State struct for mprd_v6_stake_penalty_shares.
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
     pub agrs_balance: u64,

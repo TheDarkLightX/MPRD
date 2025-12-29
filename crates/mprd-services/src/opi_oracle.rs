@@ -13,8 +13,12 @@ pub type Nonce = u64;
 pub enum Phase {
     Commit,
     Reveal,
-    Aggregated { aggregated_value: Option<MetricValue> },
-    Finalized { aggregated_value: MetricValue },
+    Aggregated {
+        aggregated_value: Option<MetricValue>,
+    },
+    Finalized {
+        aggregated_value: MetricValue,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,7 +79,8 @@ impl OPIRound {
         trim_k: usize,
         min_reporters: usize,
     ) -> Result<Self, ErrorCode> {
-        let config = OracleRoundConfig::new(commit_deadline, reveal_deadline, trim_k, min_reporters)?;
+        let config =
+            OracleRoundConfig::new(commit_deadline, reveal_deadline, trim_k, min_reporters)?;
         Ok(Self::new(round_id, config))
     }
 
@@ -107,7 +112,11 @@ impl OPIRound {
         self.commits.len()
     }
 
-    pub fn step(&mut self, action: Action, hasher: &impl CommitmentHasher) -> Result<(), ErrorCode> {
+    pub fn step(
+        &mut self,
+        action: Action,
+        hasher: &impl CommitmentHasher,
+    ) -> Result<(), ErrorCode> {
         match action {
             Action::Commit { rep, h } => self.commit(rep, h),
             Action::Reveal { rep, v, n } => self.reveal(rep, v, n, hasher),
@@ -209,12 +218,17 @@ impl OPIRound {
         let Some(a) = aggregated_value else {
             return Err(ErrorCode::AggregationFailed);
         };
-        self.phase = Phase::Finalized { aggregated_value: a };
+        self.phase = Phase::Finalized {
+            aggregated_value: a,
+        };
         Ok(())
     }
 
     pub fn tick(&mut self, dt: Time) -> Result<(), ErrorCode> {
-        self.now = self.now.checked_add(dt).ok_or(ErrorCode::ArithmeticOverflow)?;
+        self.now = self
+            .now
+            .checked_add(dt)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
         if self.phase == Phase::Commit && self.now >= self.config.commit_deadline {
             self.phase = Phase::Reveal;
         }
@@ -249,13 +263,17 @@ impl OPIRound {
         }
 
         match self.phase {
-            Phase::Aggregated { aggregated_value: Some(a) } => {
+            Phase::Aggregated {
+                aggregated_value: Some(a),
+            } => {
                 let values = self.revealed_values();
                 if !robust_agg_ok(self.config.trim_k, &values, a) {
                     return Err(OpiOracleInvariantViolation::RobustAggregation);
                 }
             }
-            Phase::Finalized { aggregated_value: a } => {
+            Phase::Finalized {
+                aggregated_value: a,
+            } => {
                 let values = self.revealed_values();
                 if !robust_agg_ok(self.config.trim_k, &values, a) {
                     return Err(OpiOracleInvariantViolation::RobustAggregation);
@@ -285,11 +303,20 @@ fn compute_commitment_hash(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
-    Commit { rep: ReporterId, h: Hash32 },
-    Reveal { rep: ReporterId, v: MetricValue, n: Nonce },
+    Commit {
+        rep: ReporterId,
+        h: Hash32,
+    },
+    Reveal {
+        rep: ReporterId,
+        v: MetricValue,
+        n: Nonce,
+    },
     Aggregate,
     Finalize,
-    Tick { dt: Time },
+    Tick {
+        dt: Time,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -399,7 +426,12 @@ mod tests {
         r.validate_invariants(&hasher).expect("invariants");
 
         r.finalize().expect("finalize");
-        assert_eq!(r.phase(), Phase::Finalized { aggregated_value: 67 });
+        assert_eq!(
+            r.phase(),
+            Phase::Finalized {
+                aggregated_value: 67
+            }
+        );
         r.validate_invariants(&hasher).expect("invariants");
     }
 
@@ -442,4 +474,3 @@ mod tests {
         }
     }
 }
-

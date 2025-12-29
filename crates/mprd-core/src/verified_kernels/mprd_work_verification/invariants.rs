@@ -1,6 +1,6 @@
 //! Invariant checker for mprd_work_verification.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -18,17 +18,23 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // DisputedOnlyWhenInconclusive
-    if !(((!(Phase::Disputed == state.phase)) || (VerifierResult::Inconclusive == state.verifier_result))) {
+    if !((!(Phase::Disputed == state.phase))
+        || (VerifierResult::Inconclusive == state.verifier_result))
+    {
         return Err(Error::InvariantViolation("DisputedOnlyWhenInconclusive"));
     }
 
     // InvalidImpliesObjectiveFailure
-    if !(((!(Phase::Invalid == state.phase)) || ((0 == state.proof_valid) || (0 == state.spec_satisfied)))) {
+    if !((!(Phase::Invalid == state.phase))
+        || ((0 == state.proof_valid) || (0 == state.spec_satisfied)))
+    {
         return Err(Error::InvariantViolation("InvalidImpliesObjectiveFailure"));
     }
 
     // RewardedRequiresProofAndSpec
-    if !(((!(Phase::Rewarded == state.phase)) || ((1 == state.proof_valid) && (1 == state.spec_satisfied)))) {
+    if !((!(Phase::Rewarded == state.phase))
+        || ((1 == state.proof_valid) && (1 == state.spec_satisfied)))
+    {
         return Err(Error::InvariantViolation("RewardedRequiresProofAndSpec"));
     }
 

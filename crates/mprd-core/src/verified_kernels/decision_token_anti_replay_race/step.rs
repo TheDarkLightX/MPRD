@@ -1,7 +1,7 @@
 //! Step function for decision_token_anti_replay_race.
 //! This is the CBC kernel chokepoint.
 
-use super::{{types::*, state::State, command::Command, invariants::check_invariants}};
+use super::{command::Command, invariants::check_invariants, state::State, types::*};
 
 /// Effects produced by a transition (data, not side effects).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -10,7 +10,7 @@ pub struct Effects {
 }
 
 /// Execute a transition: (state, command) -> Result<(new_state, effects), Error>
-/// 
+///
 /// This is the single chokepoint for all state transitions.
 /// Invariants are checked pre and post; preconditions in guards.
 pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
@@ -20,10 +20,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
     // Dispatch to transition handler.
     let (post, effects) = match cmd {
         Command::AClaim => {
-            if !(((PhaseA::Validatinga == state.phase_a) && (!state.token_claimed))) {
+            if !((PhaseA::Validatinga == state.phase_a) && (!state.token_claimed)) {
                 return Err(Error::PreconditionFailed("a_claim guard"));
             }
-            
+
             let next = State {
                 phase_a: PhaseA::Claimeda,
                 phase_b: state.phase_b.clone(),
@@ -36,10 +36,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::AExecute => {
-            if !(((state.successes < 1) && (PhaseA::Claimeda == state.phase_a))) {
+            if !((state.successes < 1) && (PhaseA::Claimeda == state.phase_a)) {
                 return Err(Error::PreconditionFailed("a_execute guard"));
             }
-            
+
             let next = State {
                 phase_a: PhaseA::Executeda,
                 phase_b: state.phase_b.clone(),
@@ -52,10 +52,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::AReject => {
-            if !(((PhaseA::Validatinga == state.phase_a) && state.token_claimed)) {
+            if !((PhaseA::Validatinga == state.phase_a) && state.token_claimed) {
                 return Err(Error::PreconditionFailed("a_reject guard"));
             }
-            
+
             let next = State {
                 phase_a: PhaseA::Rejecteda,
                 phase_b: state.phase_b.clone(),
@@ -68,10 +68,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::AStartValidate => {
-            if !((PhaseA::Idlea == state.phase_a)) {
+            if !(PhaseA::Idlea == state.phase_a) {
                 return Err(Error::PreconditionFailed("a_start_validate guard"));
             }
-            
+
             let next = State {
                 phase_a: PhaseA::Validatinga,
                 phase_b: state.phase_b.clone(),
@@ -84,10 +84,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::BClaim => {
-            if !(((PhaseB::Validatingb == state.phase_b) && (!state.token_claimed))) {
+            if !((PhaseB::Validatingb == state.phase_b) && (!state.token_claimed)) {
                 return Err(Error::PreconditionFailed("b_claim guard"));
             }
-            
+
             let next = State {
                 phase_a: state.phase_a.clone(),
                 phase_b: PhaseB::Claimedb,
@@ -100,10 +100,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::BExecute => {
-            if !(((state.successes < 1) && (PhaseB::Claimedb == state.phase_b))) {
+            if !((state.successes < 1) && (PhaseB::Claimedb == state.phase_b)) {
                 return Err(Error::PreconditionFailed("b_execute guard"));
             }
-            
+
             let next = State {
                 phase_a: state.phase_a.clone(),
                 phase_b: PhaseB::Executedb,
@@ -116,10 +116,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::BReject => {
-            if !(((PhaseB::Validatingb == state.phase_b) && state.token_claimed)) {
+            if !((PhaseB::Validatingb == state.phase_b) && state.token_claimed) {
                 return Err(Error::PreconditionFailed("b_reject guard"));
             }
-            
+
             let next = State {
                 phase_a: state.phase_a.clone(),
                 phase_b: PhaseB::Rejectedb,
@@ -132,10 +132,10 @@ pub fn step(state: &State, cmd: Command) -> Result<(State, Effects), Error> {
             (post, effects)
         }
         Command::BStartValidate => {
-            if !((PhaseB::Idleb == state.phase_b)) {
+            if !(PhaseB::Idleb == state.phase_b) {
                 return Err(Error::PreconditionFailed("b_start_validate guard"));
             }
-            
+
             let next = State {
                 phase_a: state.phase_a.clone(),
                 phase_b: PhaseB::Validatingb,

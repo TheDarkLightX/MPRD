@@ -1,6 +1,6 @@
 //! Invariant checker for fee_distribution.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -15,17 +15,29 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // CollectingNoSpend
-    if !(((!(Phase::Collecting == state.phase)) || ((0 == state.burned) && (0 == state.distributed)))) {
+    if !((!(Phase::Collecting == state.phase)) || ((0 == state.burned) && (0 == state.distributed)))
+    {
         return Err(Error::InvariantViolation("CollectingNoSpend"));
     }
 
     // CompleteExact
-    if !(((!(Phase::Complete == state.phase)) || ((state.burned.checked_add(state.distributed).ok_or(Error::Overflow)?) == state.collected))) {
+    if !((!(Phase::Complete == state.phase))
+        || ((state
+            .burned
+            .checked_add(state.distributed)
+            .ok_or(Error::Overflow)?)
+            == state.collected))
+    {
         return Err(Error::InvariantViolation("CompleteExact"));
     }
 
     // Conservation
-    if !(((state.burned.checked_add(state.distributed).ok_or(Error::Overflow)?) <= state.collected)) {
+    if !((state
+        .burned
+        .checked_add(state.distributed)
+        .ok_or(Error::Overflow)?)
+        <= state.collected)
+    {
         return Err(Error::InvariantViolation("Conservation"));
     }
 

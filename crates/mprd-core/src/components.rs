@@ -593,15 +593,18 @@ impl ExecutionGuardBoxedExecutor {
         Self { inner }
     }
 
-    fn evaluate_gate_state(verified: &crate::VerifiedBundle<'_>) -> executor_action_preimage_binding::State {
+    fn evaluate_gate_state(
+        verified: &crate::VerifiedBundle<'_>,
+    ) -> executor_action_preimage_binding::State {
         let token = verified.token();
         let proof = verified.proof();
 
         let preimage_present = !proof.chosen_action_preimage.is_empty();
 
-        let limits_binding_ok = crate::limits::verify_limits_binding_v1(&proof.limits_hash, &proof.limits_bytes)
-            .and_then(|_| crate::limits::parse_limits_v1(&proof.limits_bytes).map(|_| ()))
-            .is_ok();
+        let limits_binding_ok =
+            crate::limits::verify_limits_binding_v1(&proof.limits_hash, &proof.limits_bytes)
+                .and_then(|_| crate::limits::parse_limits_v1(&proof.limits_bytes).map(|_| ()))
+                .is_ok();
 
         let action_hash_matches = if preimage_present {
             let h = crate::hash::hash_candidate_preimage_v1(&proof.chosen_action_preimage);
@@ -656,12 +659,14 @@ impl ExecutionGuardBoxedExecutor {
 
         match post.result {
             executor_action_preimage_binding::ModelResult::Executed => Ok(()),
-            executor_action_preimage_binding::ModelResult::Rejected => Err(crate::MprdError::InvalidInput(
-                "execution guard rejected (preimage/limits/schema)".into(),
-            )),
-            executor_action_preimage_binding::ModelResult::Pending => Err(crate::MprdError::ExecutionError(
-                "execution guard returned pending result".into(),
-            )),
+            executor_action_preimage_binding::ModelResult::Rejected => {
+                Err(crate::MprdError::InvalidInput(
+                    "execution guard rejected (preimage/limits/schema)".into(),
+                ))
+            }
+            executor_action_preimage_binding::ModelResult::Pending => Err(
+                crate::MprdError::ExecutionError("execution guard returned pending result".into()),
+            ),
         }
     }
 }
@@ -799,13 +804,10 @@ impl CircuitBreakerBoxedExecutor {
             now_ms: Arc::new(|| {
                 let ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .map_err(|_| {
-                        crate::MprdError::ExecutionError("system clock error".into())
-                    })?
+                    .map_err(|_| crate::MprdError::ExecutionError("system clock error".into()))?
                     .as_millis();
-                i64::try_from(ms).map_err(|_| {
-                    crate::MprdError::ExecutionError("system clock overflow".into())
-                })
+                i64::try_from(ms)
+                    .map_err(|_| crate::MprdError::ExecutionError("system clock overflow".into()))
             }),
             gate: Mutex::new(CircuitBreakerGate::new()),
         })
@@ -839,10 +841,9 @@ impl ExecutorAdapter for CircuitBreakerBoxedExecutor {
         let now_ms = (self.now_ms)()?;
 
         {
-            let mut gate = self
-                .gate
-                .lock()
-                .map_err(|_| crate::MprdError::ExecutionError("Circuit breaker lock poisoned".into()))?;
+            let mut gate = self.gate.lock().map_err(|_| {
+                crate::MprdError::ExecutionError("Circuit breaker lock poisoned".into())
+            })?;
             gate.observe_time(self.tick_ms, now_ms)?;
             gate.try_half_open_if_ready()?;
             if gate.is_open() {
@@ -858,10 +859,9 @@ impl ExecutorAdapter for CircuitBreakerBoxedExecutor {
             return result;
         };
 
-        let mut gate = self
-            .gate
-            .lock()
-            .map_err(|_| crate::MprdError::ExecutionError("Circuit breaker lock poisoned".into()))?;
+        let mut gate = self.gate.lock().map_err(|_| {
+            crate::MprdError::ExecutionError("Circuit breaker lock poisoned".into())
+        })?;
         if success {
             gate.record_success()?;
         } else {

@@ -1,6 +1,6 @@
 //! Invariant checker for reverse_auction.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -12,37 +12,37 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // BidCountCap
-    if !((state.bid_count <= 10)) {
+    if !(state.bid_count <= 10) {
         return Err(Error::InvariantViolation("BidCountCap"));
     }
 
     // NoBidsSentinelBestBid
-    if !(((!(0 == state.bid_count)) || (1000 == state.best_bid))) {
+    if !((!(0 == state.bid_count)) || (1000 == state.best_bid)) {
         return Err(Error::InvariantViolation("NoBidsSentinelBestBid"));
     }
 
     // OpenImpliesNoWinner
-    if !(((!(Phase::Open == state.phase)) || (false == state.winner_set))) {
+    if !((!(Phase::Open == state.phase)) || (false == state.winner_set)) {
         return Err(Error::InvariantViolation("OpenImpliesNoWinner"));
     }
 
     // SealedImpliesNoWinner
-    if !(((!(Phase::Sealed == state.phase)) || (false == state.winner_set))) {
+    if !((!(Phase::Sealed == state.phase)) || (false == state.winner_set)) {
         return Err(Error::InvariantViolation("SealedImpliesNoWinner"));
     }
 
     // SettledImpliesWinnerSet
-    if !(((!(Phase::Settled == state.phase)) || (true == state.winner_set))) {
+    if !((!(Phase::Settled == state.phase)) || (true == state.winner_set)) {
         return Err(Error::InvariantViolation("SettledImpliesWinnerSet"));
     }
 
     // SettledRequiresBid
-    if !(((!(Phase::Settled == state.phase)) || (state.bid_count > 0))) {
+    if !((!(Phase::Settled == state.phase)) || (state.bid_count > 0)) {
         return Err(Error::InvariantViolation("SettledRequiresBid"));
     }
 
     // WinnerSetImpliesSettled
-    if !(((!state.winner_set) || (Phase::Settled == state.phase))) {
+    if !((!state.winner_set) || (Phase::Settled == state.phase)) {
         return Err(Error::InvariantViolation("WinnerSetImpliesSettled"));
     }
 

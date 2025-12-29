@@ -1,6 +1,6 @@
 //! Invariant checker for decision_token_anti_replay_race.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -9,22 +9,22 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // AExecutedImpliesSuccess
-    if !(((!(PhaseA::Executeda == state.phase_a)) || (1 == state.successes))) {
+    if !((!(PhaseA::Executeda == state.phase_a)) || (1 == state.successes)) {
         return Err(Error::InvariantViolation("AExecutedImpliesSuccess"));
     }
 
     // BExecutedImpliesSuccess
-    if !(((!(PhaseB::Executedb == state.phase_b)) || (1 == state.successes))) {
+    if !((!(PhaseB::Executedb == state.phase_b)) || (1 == state.successes)) {
         return Err(Error::InvariantViolation("BExecutedImpliesSuccess"));
     }
 
     // MutualExclusionOnExecuted
-    if !((!((PhaseA::Executeda == state.phase_a) && (PhaseB::Executedb == state.phase_b)))) {
+    if !(!((PhaseA::Executeda == state.phase_a) && (PhaseB::Executedb == state.phase_b))) {
         return Err(Error::InvariantViolation("MutualExclusionOnExecuted"));
     }
 
     // S4_AtMostOneSuccess
-    if !((state.successes <= 1)) {
+    if !(state.successes <= 1) {
         return Err(Error::InvariantViolation("S4_AtMostOneSuccess"));
     }
 

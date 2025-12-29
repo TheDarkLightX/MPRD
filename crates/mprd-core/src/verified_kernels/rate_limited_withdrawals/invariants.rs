@@ -1,6 +1,6 @@
 //! Invariant checker for rate_limited_withdrawals.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -18,17 +18,17 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // EmergencyHaltCooldown
-    if !(((!(Phase::Active == state.phase)) || (state.hours_since_halt < 24))) {
+    if !((!(Phase::Active == state.phase)) || (state.hours_since_halt < 24)) {
         return Err(Error::InvariantViolation("EmergencyHaltCooldown"));
     }
 
     // EpochWithdrawalCap
-    if !((state.epoch_withdrawn <= state.epoch_limit)) {
+    if !(state.epoch_withdrawn <= state.epoch_limit) {
         return Err(Error::InvariantViolation("EpochWithdrawalCap"));
     }
 
     // SolvencyInvariant
-    if !((state.available_balance >= 0)) {
+    if !(state.available_balance >= 0) {
         return Err(Error::InvariantViolation("SolvencyInvariant"));
     }
 

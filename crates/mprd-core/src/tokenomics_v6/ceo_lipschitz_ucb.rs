@@ -38,7 +38,9 @@ pub enum LipschitzUcbGate {
     None,
     /// Allow moves only when the Lipschitz LB/UB rails certify improvement:
     /// `LB(target) >= UB(baseline) + margin`.
-    SafeImprove { margin: i64 },
+    SafeImprove {
+        margin: i64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -193,7 +195,9 @@ impl LipschitzUcbCeo {
     /// Cold start (no observations): returns `NOOP` and keeps the current node.
     pub fn decide(&self, graph: &MenuGraph, cur_key: u32) -> Result<CeoDecision> {
         let cur_idx = graph.index_of(cur_key).ok_or_else(|| {
-            MprdError::InvalidInput(format!("LipschitzUcbCeo::decide: unknown cur_key={cur_key}"))
+            MprdError::InvalidInput(format!(
+                "LipschitzUcbCeo::decide: unknown cur_key={cur_key}"
+            ))
         })?;
         let cur_node = *graph.node(cur_idx).ok_or_else(|| {
             MprdError::ExecutionError(format!(
@@ -243,9 +247,7 @@ impl LipschitzUcbCeo {
             };
 
             let dist = dist_inf_keys_fast(cur_key, key);
-            let churn_penalty = self
-                .churn_penalty_per_step
-                .saturating_mul(dist as i64);
+            let churn_penalty = self.churn_penalty_per_step.saturating_mul(dist as i64);
             let score = ub.saturating_sub(churn_penalty);
 
             // Deterministic tie-breakers:

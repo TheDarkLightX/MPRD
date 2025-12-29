@@ -189,11 +189,11 @@ pub type Hash32 = [u8; 32];
 /// Implementations must be deterministic and domain-separated.
 pub trait CommitmentHasher: Send + Sync {
     /// Compute a commitment hash.
-    /// 
+    ///
     /// # Arguments
     /// * `domain` - Domain separator for collision resistance
     /// * `data` - Input data (must be bounded; implementations should check)
-    /// 
+    ///
     /// # Errors
     /// Returns `ErrorCode::InvalidHash` if data is malformed or too large.
     fn hash(&self, domain: HashDomain, data: &[u8]) -> Result<Hash32, ErrorCode>;
@@ -206,12 +206,12 @@ pub trait CommitmentHasher: Send + Sync {
 /// Used by Optimistic Relay and Proof Market for objective correctness.
 pub trait ObjectiveVerifier: Send + Sync {
     /// Verify that a proof is correct for the given job and result.
-    /// 
+    ///
     /// # Arguments
     /// * `job_hash` - Hash of the job inputs/circuit
     /// * `result_hash` - Hash of the claimed result
     /// * `proof` - The proof artifact (must be bounded)
-    /// 
+    ///
     /// # Returns
     /// * `Ok(true)` if proof is valid for (job, result)
     /// * `Ok(false)` if proof is invalid
@@ -245,24 +245,24 @@ impl CommitmentHasher for Sha256Hasher {
         if data.len() > self.max_input {
             return Err(ErrorCode::InvalidHash);
         }
-        
+
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         // TODO: Replace with actual SHA-256 when crypto crate is added
         // For now, use a placeholder that is deterministic
         let mut hasher = DefaultHasher::new();
         (domain as u8).hash(&mut hasher);
         data.hash(&mut hasher);
         let h1 = hasher.finish();
-        
+
         // Extend to 32 bytes (placeholder)
         let mut output = [0u8; 32];
         output[0..8].copy_from_slice(&h1.to_le_bytes());
         output[8..16].copy_from_slice(&h1.to_be_bytes());
         output[16..24].copy_from_slice(&(!h1).to_le_bytes());
         output[24..32].copy_from_slice(&(!h1).to_be_bytes());
-        
+
         Ok(output)
     }
 
@@ -288,7 +288,11 @@ pub struct ProofMarketEconomics {
 
 impl ProofMarketEconomics {
     /// Create with validated parameters.
-    pub fn new(min_deposit_bps: u32, slash_rate_bps: u32, protocol_fee_bps: u32) -> Result<Self, ErrorCode> {
+    pub fn new(
+        min_deposit_bps: u32,
+        slash_rate_bps: u32,
+        protocol_fee_bps: u32,
+    ) -> Result<Self, ErrorCode> {
         // Invariants: all rates must be ≤ 10000 bps (100%)
         if min_deposit_bps > 10_000 || slash_rate_bps > 10_000 || protocol_fee_bps > 10_000 {
             return Err(ErrorCode::InvalidConfig);
@@ -453,8 +457,11 @@ mod tests {
         let mut map: BoundedMap<u64, u64> = BoundedMap::new(2);
         assert!(map.insert(1, 100).is_ok());
         assert!(map.insert(2, 200).is_ok());
-        assert_eq!(map.insert(3, 300), Err(CapacityError::CapacityExceeded { capacity: 2 }));
-        
+        assert_eq!(
+            map.insert(3, 300),
+            Err(CapacityError::CapacityExceeded { capacity: 2 })
+        );
+
         // Updating existing key should work
         assert!(map.insert(1, 101).is_ok());
     }
@@ -462,13 +469,13 @@ mod tests {
     #[test]
     fn oracle_config_validates_deadlines() {
         assert!(OracleRoundConfig::new(100, 50, 2, 10).is_err()); // commit >= reveal
-        assert!(OracleRoundConfig::new(50, 100, 2, 10).is_ok());  // valid
-        assert!(OracleRoundConfig::new(50, 100, 5, 5).is_err());  // min_reporters <= 2*trim_k
+        assert!(OracleRoundConfig::new(50, 100, 2, 10).is_ok()); // valid
+        assert!(OracleRoundConfig::new(50, 100, 5, 5).is_err()); // min_reporters <= 2*trim_k
     }
 
     #[test]
     fn relay_economics_validates_percentages() {
-        assert!(RelayEconomics::new(100, 50, 5_000, 5_000).is_ok());  // 50% + 50% = 100%
+        assert!(RelayEconomics::new(100, 50, 5_000, 5_000).is_ok()); // 50% + 50% = 100%
         assert!(RelayEconomics::new(100, 50, 6_000, 5_000).is_err()); // 60% + 50% > 100%
     }
 
@@ -476,6 +483,8 @@ mod tests {
     fn sha256_hasher_respects_limit() {
         let hasher = Sha256Hasher::new(32);
         assert!(hasher.hash(HashDomain::ProofMarketSlot, &[0u8; 32]).is_ok());
-        assert!(hasher.hash(HashDomain::ProofMarketSlot, &[0u8; 33]).is_err());
+        assert!(hasher
+            .hash(HashDomain::ProofMarketSlot, &[0u8; 33])
+            .is_err());
     }
 }

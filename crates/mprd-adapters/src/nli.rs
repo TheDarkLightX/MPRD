@@ -135,7 +135,10 @@ fn noop_candidate(score: Score) -> CandidateAction {
     }
 }
 
-fn http_call_candidate(parsed: ParsedHttpCallV1, score: Score) -> std::result::Result<CandidateAction, ()> {
+fn http_call_candidate(
+    parsed: ParsedHttpCallV1,
+    score: Score,
+) -> std::result::Result<CandidateAction, ()> {
     let mut params: HashMap<String, Value> = HashMap::new();
     params.insert("http_method".into(), Value::String(parsed.method));
     params.insert("http_url".into(), Value::String(parsed.url));
@@ -239,8 +242,11 @@ mod http_call_grammar {
     }
 
     fn status(input: &str) -> IResult<&str, u16> {
-        let (rest, (a, b, c)) = tuple((one_of("12345"), one_of("0123456789"), one_of("0123456789")))(input)?;
-        let status = ((a as u16 - b'0' as u16) * 100) + ((b as u16 - b'0' as u16) * 10) + (c as u16 - b'0' as u16);
+        let (rest, (a, b, c)) =
+            tuple((one_of("12345"), one_of("0123456789"), one_of("0123456789")))(input)?;
+        let status = ((a as u16 - b'0' as u16) * 100)
+            + ((b as u16 - b'0' as u16) * 10)
+            + (c as u16 - b'0' as u16);
         Ok((rest, status))
     }
 
@@ -268,7 +274,13 @@ mod http_call_grammar {
                 |(_, _, body)| BodyClause::Body(body),
             ),
             map(
-                tuple((tag_no_case("with"), multispace1, tag_no_case("json"), multispace1, atom)),
+                tuple((
+                    tag_no_case("with"),
+                    multispace1,
+                    tag_no_case("json"),
+                    multispace1,
+                    atom,
+                )),
                 |(_, _, _, _, body)| BodyClause::WithJson(body),
             ),
         ))(input)
@@ -287,7 +299,10 @@ mod http_call_grammar {
     fn double_quoted(input: &str) -> IResult<&str, String> {
         let (rest, raw) = recognize_json_string(input)?;
         let parsed: String = serde_json::from_str(raw).map_err(|_| {
-            nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Escaped))
+            nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Escaped,
+            ))
         })?;
         if parsed.is_empty() {
             return Err(nom::Err::Error(nom::error::Error::new(
@@ -313,7 +328,10 @@ mod http_call_grammar {
                     tag("n"),
                     tag("r"),
                     tag("t"),
-                    nom::combinator::recognize(tuple((tag("u"), nom::bytes::complete::take(4usize)))),
+                    nom::combinator::recognize(tuple((
+                        tag("u"),
+                        nom::bytes::complete::take(4usize),
+                    ))),
                 )),
             )),
             tag("\""),
@@ -344,10 +362,9 @@ mod tests {
 
     #[test]
     fn parses_content_type() {
-        let parsed = parse_http_call_command_v1(
-            "POST https://example.com content-type application/json",
-        )
-        .expect("parse");
+        let parsed =
+            parse_http_call_command_v1("POST https://example.com content-type application/json")
+                .expect("parse");
         assert_eq!(parsed.content_type, Some("application/json".into()));
     }
 
@@ -367,9 +384,8 @@ mod tests {
 
     #[test]
     fn parses_with_json_alias_and_implies_content_type() {
-        let parsed =
-            parse_http_call_command_v1("POST https://example.com with JSON {\"a\":1}")
-                .expect("parse");
+        let parsed = parse_http_call_command_v1("POST https://example.com with JSON {\"a\":1}")
+            .expect("parse");
         assert_eq!(parsed.body_utf8, Some("{\"a\":1}".into()));
         assert!(parsed.implied_json_content_type);
         let c = http_call_candidate(parsed, Score(100)).expect("candidate");

@@ -1,6 +1,6 @@
 //! Invariant checker for mprd_proof_market_slot.
 
-use super::{types::*, state::State};
+use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.
 pub fn check_invariants(state: &State) -> Result<(), Error> {
@@ -30,37 +30,48 @@ pub fn check_invariants(state: &State) -> Result<(), Error> {
     }
 
     // I1_NoDoubleClaim
-    if !((state.claimer == state.claimer0)) {
+    if !(state.claimer == state.claimer0) {
         return Err(Error::InvariantViolation("I1_NoDoubleClaim"));
     }
 
     // I2_BudgetConservation
-    if !((state.total_payouts <= (state.protocol_subsidy.checked_add(state.total_deposits).ok_or(Error::Overflow)?))) {
+    if !(state.total_payouts
+        <= (state
+            .protocol_subsidy
+            .checked_add(state.total_deposits)
+            .ok_or(Error::Overflow)?))
+    {
         return Err(Error::InvariantViolation("I2_BudgetConservation"));
     }
 
     // I3_DeadlineMonotonicity
-    if !((state.deadline0 <= state.deadline)) {
+    if !(state.deadline0 <= state.deadline) {
         return Err(Error::InvariantViolation("I3_DeadlineMonotonicity"));
     }
 
     // I4_ObjectiveSlashing
-    if !(((!(Phase::Slashed == state.phase)) || ((state.deadline < state.now) && (false == state.proof_verified)))) {
+    if !((!(Phase::Slashed == state.phase))
+        || ((state.deadline < state.now) && (false == state.proof_verified)))
+    {
         return Err(Error::InvariantViolation("I4_ObjectiveSlashing"));
     }
 
     // I5_NoOverpayout
-    if !(((!(Phase::Settled == state.phase)) || (state.payout <= state.deposit))) {
+    if !((!(Phase::Settled == state.phase)) || (state.payout <= state.deposit)) {
         return Err(Error::InvariantViolation("I5_NoOverpayout"));
     }
 
     // I6_PayToClaimer
-    if !(((!(Phase::Settled == state.phase)) || ((0 == state.payout) || (state.claimer0 == state.payee)))) {
+    if !((!(Phase::Settled == state.phase))
+        || ((0 == state.payout) || (state.claimer0 == state.payee)))
+    {
         return Err(Error::InvariantViolation("I6_PayToClaimer"));
     }
 
     // I7_SoundnessBinding
-    if !(((!(Phase::Settled == state.phase)) || (state.job_hash_present && state.proof_binds_job && state.proof_verified))) {
+    if !((!(Phase::Settled == state.phase))
+        || (state.job_hash_present && state.proof_binds_job && state.proof_verified))
+    {
         return Err(Error::InvariantViolation("I7_SoundnessBinding"));
     }
 

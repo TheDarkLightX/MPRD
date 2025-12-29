@@ -79,9 +79,15 @@ impl Claim {
 
     pub fn bond_challenger(&self) -> Amount {
         match self.phase {
-            ClaimPhase::Challenged { bond_challenger, .. }
-            | ClaimPhase::Resolved { bond_challenger, .. }
-            | ClaimPhase::FinalizedResolved { bond_challenger, .. } => bond_challenger,
+            ClaimPhase::Challenged {
+                bond_challenger, ..
+            }
+            | ClaimPhase::Resolved {
+                bond_challenger, ..
+            }
+            | ClaimPhase::FinalizedResolved {
+                bond_challenger, ..
+            } => bond_challenger,
             ClaimPhase::Committed | ClaimPhase::FinalizedUnchallenged => 0,
         }
     }
@@ -104,9 +110,8 @@ impl Claim {
 
     pub fn verdict(&self) -> Option<bool> {
         match self.phase {
-            ClaimPhase::Resolved { verdict, .. } | ClaimPhase::FinalizedResolved { verdict, .. } => {
-                Some(verdict)
-            }
+            ClaimPhase::Resolved { verdict, .. }
+            | ClaimPhase::FinalizedResolved { verdict, .. } => Some(verdict),
             ClaimPhase::Committed
             | ClaimPhase::Challenged { .. }
             | ClaimPhase::FinalizedUnchallenged => None,
@@ -135,7 +140,10 @@ impl RelaySM {
     }
 
     pub fn new_checked(challenge_window: Time, max_rounds: u32) -> Result<Self, ErrorCode> {
-        Ok(Self::new(RelayClaimConfig::new(challenge_window, max_rounds)?))
+        Ok(Self::new(RelayClaimConfig::new(
+            challenge_window,
+            max_rounds,
+        )?))
     }
 
     pub fn now(&self) -> Time {
@@ -173,7 +181,11 @@ impl RelaySM {
                 job,
                 res,
             }),
-            Action::Challenge { cid, challenger, bond } => self.challenge(cid, challenger, bond),
+            Action::Challenge {
+                cid,
+                challenger,
+                bond,
+            } => self.challenge(cid, challenger, bond),
             Action::AdvanceRound { cid } => self.advance_round(cid),
             Action::Resolve { cid, verdict } => self.resolve(cid, verdict, correct),
             Action::Finalize { cid } => self.finalize(cid),
@@ -319,7 +331,10 @@ impl RelaySM {
     }
 
     pub fn tick(&mut self, dt: Time) -> Result<(), ErrorCode> {
-        self.now = self.now.checked_add(dt).ok_or(ErrorCode::ArithmeticOverflow)?;
+        self.now = self
+            .now
+            .checked_add(dt)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
         Ok(())
     }
 
@@ -449,7 +464,14 @@ mod tests {
         assert!(m.resolve(cid, false, &correct).is_ok());
         m.finalize(cid).expect("finalize");
         let cl = m.claim(cid).expect("claim");
-        assert_eq!(cl.phase(), ClaimPhase::FinalizedResolved { challenger: 9, bond_challenger: 50, verdict: false });
+        assert_eq!(
+            cl.phase(),
+            ClaimPhase::FinalizedResolved {
+                challenger: 9,
+                bond_challenger: 50,
+                verdict: false
+            }
+        );
         assert_eq!(cl.verdict(), Some(false));
         assert!(cl.relay_bond_slashed());
         m.validate_invariants().expect("invariants");
@@ -498,4 +520,3 @@ mod tests {
         }
     }
 }
-
