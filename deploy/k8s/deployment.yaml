@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mprd
+  namespace: mprd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mprd
+  template:
+    metadata:
+      labels:
+        app: mprd
+    spec:
+      containers:
+        - name: mprd
+          image: mprd:local
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - --bind
+            - 0.0.0.0:8080
+            - --policy-dir
+            - /data/policies
+            - --registry-state
+            - /registry/registry_state.json
+            - --registry-key
+            - $(MPRD_REGISTRY_KEY_HEX)
+            - --signing-key
+            - $(MPRD_TOKEN_SIGNING_KEY_HEX)
+            - --artifacts-dir
+            - /data/artifacts
+          env:
+            - name: MPRD_CONFIG
+              value: /config/config.json
+            - name: MPRD_OPERATOR_STORE_DIR
+              value: /data/operator
+            - name: MPRD_OPERATOR_REGISTRY_STATE_PATH
+              value: /registry/registry_state.json
+            - name: MPRD_REGISTRY_KEY_HEX
+              valueFrom:
+                secretKeyRef:
+                  name: mprd-secrets
+                  key: MPRD_REGISTRY_KEY_HEX
+            - name: MPRD_OPERATOR_REGISTRY_KEY_HEX
+              valueFrom:
+                secretKeyRef:
+                  name: mprd-secrets
+                  key: MPRD_REGISTRY_KEY_HEX
+            - name: MPRD_TOKEN_SIGNING_KEY_HEX
+              valueFrom:
+                secretKeyRef:
+                  name: mprd-secrets
+                  key: MPRD_TOKEN_SIGNING_KEY_HEX
+            - name: MPRD_OPERATOR_MANIFEST_KEY_HEX
+              valueFrom:
+                secretKeyRef:
+                  name: mprd-secrets
+                  key: MPRD_MANIFEST_KEY_HEX
+                  optional: true
+            - name: RUST_LOG
+              value: info
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            readOnlyRootFilesystem: false
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: registry
+              mountPath: /registry
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mprd-data
+        - name: config
+          configMap:
+            name: mprd-config
+        - name: registry
+          configMap:
+            name: mprd-registry

@@ -1,0 +1,9 @@
+.DS_Store
+.git/
+.gitignore
+*.swp
+*.swo
+*.tmp
+tmp/
+target/
+node_modules/

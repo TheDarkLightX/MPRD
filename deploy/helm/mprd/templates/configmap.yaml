@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mprd.fullname" . }}-config
+  labels:
+    {{- include "mprd.labels" . | nindent 4 }}
+data:
+  config.json: |
+{{ .Values.configJson | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mprd.fullname" . }}-registry
+  labels:
+    {{- include "mprd.labels" . | nindent 4 }}
+data:
+  registry_state.json: |
+{{ .Values.registryStateJson | indent 4 }}
