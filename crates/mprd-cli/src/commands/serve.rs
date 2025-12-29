@@ -107,10 +107,17 @@ async fn run_handler(
     State(state): State<AppState>,
     Json(req): Json<RunRequest>,
 ) -> Json<RunResponse> {
-    if !state.insecure_demo && !trust_anchors_configured_with(
-        state.config.registry_state_path.as_deref().map(|p| p.to_string_lossy()).as_deref(),
-        state.config.registry_verifying_key_hex.as_deref(),
-    ) {
+    if !state.insecure_demo
+        && !trust_anchors_configured_with(
+            state
+                .config
+                .registry_state_path
+                .as_deref()
+                .map(|p| p.to_string_lossy())
+                .as_deref(),
+            state.config.registry_verifying_key_hex.as_deref(),
+        )
+    {
         return Json(RunResponse {
             success: false,
             message: Some(
@@ -367,8 +374,42 @@ async fn run_handler(
                  .validate_production()
                  .map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
 
+             // Inner executor selection (side effects):
+             // - `noop` => logs only
+             // - `file` => append-only JSONL audit sink
+             // - `http` => POST to an external executor service (must be idempotent)
+             let executor_typ = config.execution.executor_type.trim().to_ascii_lowercase();
              let inner_executor: Box<dyn mprd_core::ExecutorAdapter + Send + Sync> =
-                 Box::new(LoggingExecutorAdapter::new());
+                 match executor_typ.as_str() {
+                     "noop" => Box::new(LoggingExecutorAdapter::new()),
+                     "file" => {
+                         let path = config.execution.audit_file.clone().ok_or_else(|| {
+                             mprd_core::MprdError::ConfigError(
+                                 "executor_type=file requires execution.audit_file".into(),
+                             )
+                         })?;
+                         Box::new(mprd_adapters::executors::FileExecutor::new(path)?)
+                     }
+                     "http" => {
+                         let url = config.execution.http_url.clone().ok_or_else(|| {
+                             mprd_core::MprdError::ConfigError(
+                                 "executor_type=http requires execution.http_url".into(),
+                             )
+                         })?;
+                         let api_key = env_opt("MPRD_EXECUTOR_API_KEY");
+                         let http_cfg = mprd_adapters::executors::HttpExecutorConfig {
+                             base_url: url,
+                             api_key,
+                             ..Default::default()
+                         };
+                         Box::new(mprd_adapters::executors::HttpExecutor::new(http_cfg)?)
+                     }
+                     other => {
+                         return Err(mprd_core::MprdError::ConfigError(format!(
+                             "unknown executor_type: {other} (expected noop|file|http)"
+                         )))
+                     }
+                 };
              let guarded_executor =
                  mprd_core::components::wrap_executor_with_guards(inner_executor, &core_config)?;
 
@@ -383,7 +424,7 @@ async fn run_handler(
              }
 
              let executor = BoxedExecutor(guarded_executor);
-             
+
              // Wrapper for Box<dyn ZkAttestor> to satisfy ZkAttestor trait bound
              struct BoxedZkAttestor(Box<dyn mprd_core::ZkAttestor>);
              impl mprd_core::ZkAttestor for BoxedZkAttestor {

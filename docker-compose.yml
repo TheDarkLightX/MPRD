@@ -50,6 +50,8 @@ services:
       MPRD_OPERATOR_REGISTRY_STATE_PATH: /data/registry_state.json
       MPRD_OPERATOR_REGISTRY_KEY_HEX: ${MPRD_REGISTRY_KEY_HEX:?set MPRD_REGISTRY_KEY_HEX}
       MPRD_OPERATOR_MANIFEST_KEY_HEX: ${MPRD_MANIFEST_KEY_HEX:-${MPRD_REGISTRY_KEY_HEX}}
+      # Optional (used only when execution.executor_type=http)
+      MPRD_EXECUTOR_API_KEY: ${MPRD_EXECUTOR_API_KEY:-}
       RUST_LOG: info
     volumes:
       - mprd-data:/data
