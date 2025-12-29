@@ -289,12 +289,9 @@ async fn run_handler(
 
              // 5. Setup Proposer & State (from Request)
             let state_provider = SimpleStateProvider::new(fields);
-             // TODO: Real proposer logic (e.g. from models market).
-            let proposer = SimpleProposer::single(
-                "PRODUCTION_ACTION",
-                HashMap::from([("amount".into(), Value::UInt(100))]),
-                500,
-            );
+            // Propose a schema-valid v1 action type so the executor boundary can enforce
+            // preimage/limits/schema binding (fail-closed).
+            let proposer = SimpleProposer::single("noop", HashMap::new(), 0);
 
             // 6. Setup Attestor (Real Risc0)
             // This is the heavy lifter. It proves (Policy(State, Candidate) -> Verdict)
@@ -352,8 +349,40 @@ async fn run_handler(
             // but in a distributed setting this would verify the receipt.
              let verifier = StubZkLocalVerifier::new();
 
-             // Executor
-             let executor = LoggingExecutorAdapter::new();
+             // Executor (wrapped with production guards).
+             //
+             // SECURITY: the executor is the side-effect chokepoint. Even in this single-process
+             // node, wrap with the same fail-closed guards that production deployments require.
+             let mut core_config = mprd_core::MprdConfig::default();
+             core_config.crypto.require_signatures = true;
+             core_config.crypto.signing_key_hex = Some(signing_key_hex.clone());
+             core_config.execution.circuit_breaker.enabled = true;
+             core_config.anti_replay.nonce_store_dir = config
+                 .anti_replay
+                 .as_ref()
+                 .and_then(|ar| ar.nonce_store_dir.as_ref())
+                 .map(|p| p.to_string_lossy().to_string());
+
+             core_config
+                 .validate_production()
+                 .map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
+
+             let inner_executor: Box<dyn mprd_core::ExecutorAdapter + Send + Sync> =
+                 Box::new(LoggingExecutorAdapter::new());
+             let guarded_executor =
+                 mprd_core::components::wrap_executor_with_guards(inner_executor, &core_config)?;
+
+             struct BoxedExecutor(Box<dyn mprd_core::ExecutorAdapter + Send + Sync>);
+             impl mprd_core::ExecutorAdapter for BoxedExecutor {
+                 fn execute(
+                     &self,
+                     verified: &mprd_core::VerifiedBundle<'_>,
+                 ) -> mprd_core::Result<mprd_core::ExecutionResult> {
+                     self.0.execute(verified)
+                 }
+             }
+
+             let executor = BoxedExecutor(guarded_executor);
              
              // Wrapper for Box<dyn ZkAttestor> to satisfy ZkAttestor trait bound
              struct BoxedZkAttestor(Box<dyn mprd_core::ZkAttestor>);
