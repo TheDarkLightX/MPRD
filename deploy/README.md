@@ -51,6 +51,14 @@ Key directories used by `mprd serve`:
 - `/data/anti_replay` (durable nonce store) via `MPRD_CONFIG` (`anti_replay.nonce_store_dir`)
 - `/data/artifacts` (policy artifacts) via `--artifacts-dir`
 
+### Executor configuration
+
+`mprd serve` uses `execution.executor_type` from `MPRD_CONFIG`:
+
+- `noop`: logs-only (no side effects)
+- `file`: append-only JSONL audit sink (`execution.audit_file`)
+- `http`: calls a remote executor (`execution.http_url`, optional `MPRD_EXECUTOR_API_KEY`)
+
 ## Risc0 build mode
 
 By default, the Dockerfile builds with placeholder Risc0 methods (`RISC0_SKIP_BUILD=1`) to keep
