@@ -230,6 +230,22 @@ enum Commands {
         #[arg(short, long, default_value = "127.0.0.1:8080")]
         bind: String,
 
+        /// Registry state file path (production mode)
+        #[arg(long)]
+        registry_state: Option<PathBuf>,
+
+        /// Registry verifying key hex (production mode)
+        #[arg(long)]
+        registry_key: Option<String>,
+
+        /// Token signing key hex (production mode)
+        #[arg(long)]
+        signing_key: Option<String>,
+
+        /// Policy artifacts directory (production mode)
+        #[arg(long)]
+        artifacts_dir: Option<PathBuf>,
+
         /// Policy storage directory
         #[arg(short, long)]
         policy_dir: Option<PathBuf>,
@@ -815,9 +831,28 @@ fn main() -> Result<()> {
         Commands::Doctor { verbose } => commands::doctor::run(cli.config, verbose),
         Commands::Serve {
             bind,
+            registry_state,
+            registry_key,
+            signing_key,
+            artifacts_dir,
             policy_dir,
             insecure_demo,
-        } => commands::serve::run(bind, policy_dir, insecure_demo, cli.config),
+        } => {
+            let mut config = commands::load_config(cli.config)?;
+            if let Some(p) = registry_state {
+                config.registry_state_path = Some(p);
+            }
+            if let Some(k) = registry_key {
+                config.registry_verifying_key_hex = Some(k);
+            }
+            if let Some(k) = signing_key {
+                config.token_signing_key_hex = Some(k);
+            }
+            if let Some(d) = artifacts_dir {
+                config.policy_artifacts_dir = Some(d);
+            }
+            commands::serve::run(bind, policy_dir, insecure_demo, Some(config))
+        }
         Commands::Panel {
             watch_ms,
             width,

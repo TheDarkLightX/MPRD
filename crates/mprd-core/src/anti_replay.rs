@@ -17,6 +17,7 @@
 //! 4. Replicate nonce state across nodes in distributed deployments
 
 use crate::{DecisionToken, MprdError, NonceHash, PolicyHash, Result};
+use crate::verified_kernels::nonce_manager_lifecycle;
 use rustls::{ClientConfig, RootCertStore};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -153,6 +154,153 @@ pub enum NonceClaim {
     NotClaimed,
     /// The nonce was claimed before execution; caller MUST NOT call `mark_used` again.
     Claimed,
+}
+
+// =============================================================================
+// Verified kernel: nonce lifecycle gate (rate/window discipline)
+// =============================================================================
+
+/// Wrapper around the verified `nonce_manager_lifecycle` kernel.
+///
+/// This gate is intentionally *not* the replay mechanism (the stores are).
+/// It provides a bounded, fail-closed lifecycle discipline: rate/window checks
+/// over successful *execution attempts*.
+#[derive(Debug)]
+struct NonceLifecycleGate {
+    /// Start of the current time epoch for mapping to the kernel's bounded time domain.
+    epoch_start_ms: Option<i64>,
+
+    /// Kernel time unit size in milliseconds.
+    time_unit_ms: u64,
+
+    /// Verified kernel state.
+    state: nonce_manager_lifecycle::State,
+}
+
+impl NonceLifecycleGate {
+    const MAX_TIME_UNITS: u64 = 10_000;
+    // Leave headroom for window advancement; window_size <= 100.
+    const REBASE_AT_TIME_UNITS: u64 = 9_900;
+
+    fn new(config: &AntiReplayConfig) -> Self {
+        // Use the token validity window as the lifecycle time unit.
+        // This yields a practical domain span (10000 * unit) while keeping window_size=1.
+        let time_unit_ms = u64::try_from(config.max_token_age_ms)
+            .unwrap_or(1_000)
+            .max(1_000);
+
+        let mut state = nonce_manager_lifecycle::State::init();
+        if state.window_size != 1 {
+            // Best-effort: this should never fail for new_size=1.
+            if let Ok((st, _)) = nonce_manager_lifecycle::step(
+                &state,
+                nonce_manager_lifecycle::Command::SetWindowSize { new_size: 1 },
+            ) {
+                state = st;
+            }
+        }
+
+        Self {
+            epoch_start_ms: None,
+            time_unit_ms,
+            state,
+        }
+    }
+
+    fn reset_epoch(&mut self, now_ms: i64) {
+        self.epoch_start_ms = Some(now_ms);
+
+        // Reset into a known-good kernel init state and re-apply our window size.
+        let mut state = nonce_manager_lifecycle::State::init();
+        if state.window_size != 1 {
+            if let Ok((st, _)) = nonce_manager_lifecycle::step(
+                &state,
+                nonce_manager_lifecycle::Command::SetWindowSize { new_size: 1 },
+            ) {
+                state = st;
+            }
+        }
+        self.state = state;
+    }
+
+    fn now_to_time_units(&self, epoch_start_ms: i64, now_ms: i64) -> Result<u64> {
+        let elapsed_ms = now_ms
+            .checked_sub(epoch_start_ms)
+            .ok_or_else(|| MprdError::ExecutionError("system clock moved backwards".into()))?;
+
+        let elapsed_ms_u64 = u64::try_from(elapsed_ms).unwrap_or(0);
+        Ok(elapsed_ms_u64 / self.time_unit_ms)
+    }
+
+    fn advance_time_and_windows(&mut self, now_time: u64) -> Result<()> {
+        match now_time.cmp(&self.state.current_time) {
+            std::cmp::Ordering::Less => {
+                return Err(MprdError::ExecutionError(
+                    "nonce lifecycle time mapping moved backwards".into(),
+                ));
+            }
+            std::cmp::Ordering::Equal => {}
+            std::cmp::Ordering::Greater => {
+                let (st, _) = nonce_manager_lifecycle::step(
+                    &self.state,
+                    nonce_manager_lifecycle::Command::TickTime { new_time: now_time },
+                )
+                .map_err(|e| {
+                    MprdError::BoundedValueExceeded(format!(
+                        "nonce_manager_lifecycle rejected TickTime: {e}"
+                    ))
+                })?;
+                self.state = st;
+            }
+        }
+
+        loop {
+            match nonce_manager_lifecycle::step(
+                &self.state,
+                nonce_manager_lifecycle::Command::AdvanceWindow,
+            ) {
+                Ok((st, _)) => self.state = st,
+                Err(nonce_manager_lifecycle::Error::PreconditionFailed(_)) => break,
+                Err(e) => {
+                    return Err(MprdError::BoundedValueExceeded(format!(
+                        "nonce_manager_lifecycle rejected AdvanceWindow: {e}"
+                    )))
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn consume_now(&mut self, now_ms: i64) -> Result<()> {
+        let epoch_start_ms = match self.epoch_start_ms {
+            Some(v) => v,
+            None => {
+                self.reset_epoch(now_ms);
+                now_ms
+            }
+        };
+
+        let mut now_time = self.now_to_time_units(epoch_start_ms, now_ms)?;
+        if now_time >= Self::REBASE_AT_TIME_UNITS || now_time > Self::MAX_TIME_UNITS {
+            self.reset_epoch(now_ms);
+            now_time = 0;
+        }
+
+        self.advance_time_and_windows(now_time)?;
+
+        let (st, _) = nonce_manager_lifecycle::step(
+            &self.state,
+            nonce_manager_lifecycle::Command::ConsumeNonce { nonce_time: now_time },
+        )
+        .map_err(|e| {
+            MprdError::BoundedValueExceeded(format!(
+                "nonce_manager_lifecycle rejected ConsumeNonce: {e}"
+            ))
+        })?;
+        self.state = st;
+        Ok(())
+    }
 }
 
 /// Trait for persistent nonce storage (single-node).
@@ -855,11 +1003,16 @@ impl DistributedNonceStore for RedisDistributedNonceStore {
 pub struct DistributedNonceTracker<S: DistributedNonceStore> {
     store: S,
     config: AntiReplayConfig,
+    lifecycle: Mutex<NonceLifecycleGate>,
 }
 
 impl<S: DistributedNonceStore> DistributedNonceTracker<S> {
     pub fn new(store: S, config: AntiReplayConfig) -> Self {
-        Self { store, config }
+        Self {
+            store,
+            lifecycle: Mutex::new(NonceLifecycleGate::new(&config)),
+            config,
+        }
     }
 }
 
@@ -922,6 +1075,13 @@ impl<S: DistributedNonceStore> NonceValidator for DistributedNonceTracker<S> {
                 -age_ms
             )));
         }
+
+        // CBC gate: enforce a bounded, fail-closed nonce lifecycle discipline.
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| MprdError::ExecutionError("Nonce lifecycle lock poisoned".into()))?;
+        lifecycle.consume_now(now_ms)?;
 
         // Atomic claim (first caller wins). This prevents a multi-node race from
         // executing the same token twice.
@@ -1163,12 +1323,17 @@ impl PersistentNonceStore for FileNonceStore {
 pub struct PersistentNonceTracker<S: PersistentNonceStore> {
     store: S,
     config: AntiReplayConfig,
+    lifecycle: Mutex<NonceLifecycleGate>,
 }
 
 impl<S: PersistentNonceStore> PersistentNonceTracker<S> {
     /// Create a new persistent tracker with the given store.
     pub fn new(store: S, config: AntiReplayConfig) -> Self {
-        Self { store, config }
+        Self {
+            store,
+            lifecycle: Mutex::new(NonceLifecycleGate::new(&config)),
+            config,
+        }
     }
 
     fn current_time_ms() -> Result<i64> {
@@ -1210,6 +1375,17 @@ impl<S: PersistentNonceStore> NonceValidator for PersistentNonceTracker<S> {
         }
 
         Ok(())
+    }
+
+    fn validate_and_claim(&self, token: &DecisionToken) -> Result<NonceClaim> {
+        self.validate(token)?;
+        let now_ms = Self::current_time_ms()?;
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| MprdError::ExecutionError("Nonce lifecycle lock poisoned".into()))?;
+        lifecycle.consume_now(now_ms)?;
+        Ok(NonceClaim::NotClaimed)
     }
 
     fn mark_used(&self, token: &DecisionToken) -> Result<()> {
@@ -1282,6 +1458,9 @@ pub struct InMemoryNonceTracker {
 
     /// Whether the production warning has been emitted.
     warned: std::sync::atomic::AtomicBool,
+
+    /// Verified lifecycle gate (bounded, fail-closed).
+    lifecycle: Mutex<NonceLifecycleGate>,
 }
 
 impl InMemoryNonceTracker {
@@ -1296,10 +1475,12 @@ impl InMemoryNonceTracker {
 
     /// Create a new tracker with custom configuration.
     pub fn with_config(config: AntiReplayConfig) -> Self {
+        let lifecycle = Mutex::new(NonceLifecycleGate::new(&config));
         Self {
             used: RwLock::new(HashMap::new()),
-            config,
             warned: std::sync::atomic::AtomicBool::new(false),
+            lifecycle,
+            config,
         }
     }
 
@@ -1370,6 +1551,17 @@ impl NonceValidator for InMemoryNonceTracker {
         }
 
         Ok(())
+    }
+
+    fn validate_and_claim(&self, token: &DecisionToken) -> Result<NonceClaim> {
+        self.validate(token)?;
+        let now_ms = Self::current_time_ms()?;
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| MprdError::ExecutionError("Nonce lifecycle lock poisoned".into()))?;
+        lifecycle.consume_now(now_ms)?;
+        Ok(NonceClaim::NotClaimed)
     }
 
     fn mark_used(&self, token: &DecisionToken) -> Result<()> {

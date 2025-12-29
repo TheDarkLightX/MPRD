@@ -26,9 +26,11 @@ pub mod tau;
 pub mod tau_net_output_attestation;
 pub mod tokenomics_v6;
 pub mod validation;
+pub mod verified_kernels;
 pub mod wire;
 
 pub use config::MprdConfig;
+
 pub use crypto::{TokenSigningKey, TokenVerifyingKey};
 
 /// 32-byte hash newtype used for commitments (policy, state, actions, etc.).

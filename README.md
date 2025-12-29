@@ -1,12 +1,19 @@
 # MPRD: Model Proposes, Rules Decide
 
+**MPRD is FCIS (Formal Correctness by Construction) applied to AI.**
+
+MPRD is a blueprint for turning raw intelligence into lawful power without ever needing to understand or trust the intelligence itself. It operates on a simple, invariant-preserving principle:
+
+*   **Models Propose**: An untrusted, imperative optimizer generates arbitrary candidate actions.
+*   **Rules Decide**: A trusted, pure, deterministic decision procedure accepts or rejects proposals based solely on formal policy and verifiable evidence.
+
 ## Harnessing Intelligence
 
 Steam is raw power. Uncontained, it dissipates uselessly into the air. But channel it through a piston, and it moves locomotives across continents. Wind is the same: formless and fleeting until caught by a sail, where it becomes the force that carried civilizations across oceans.
 
 **Intelligence is no different.**
 
-An AI model generates immense creative potential. Ideas, strategies, solutions. But without structure, that potential is either wasted or dangerous. MPRD is the engine that harnesses this force. The model proposes; the rules decide. Every action that executes has passed through a governor that enforces what is allowed. Not by hope, not by training, not by alignment theater. By *architecture*.
+An AI model generates immense creative potential—ideas, strategies, solutions. But without structure, that potential is either wasted or dangerous. MPRD is the engine that harnesses this force. Every action that executes has passed through a governor that enforces what is allowed. Not by hope, not by training, not by alignment theater. By *architecture*.
 
 The model cannot execute. The executor cannot act without a valid token. The token cannot be minted unless the rules allow it. This is the piston. This is the sail. This is how raw intelligence becomes useful work.
 

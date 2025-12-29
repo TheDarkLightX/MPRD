@@ -42,6 +42,18 @@ pub struct MprdConfigFile {
 
     /// Anti-replay configuration.
     pub anti_replay: Option<AntiReplayConfig>,
+
+    /// Registry state path.
+    pub registry_state_path: Option<PathBuf>,
+
+    /// Registry verifying key (hex).
+    pub registry_verifying_key_hex: Option<String>,
+
+    /// Token signing key (hex).
+    pub token_signing_key_hex: Option<String>,
+
+    /// Policy artifacts directory.
+    pub policy_artifacts_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -95,6 +107,10 @@ impl Default for MprdConfigFile {
             anti_replay: Some(AntiReplayConfig {
                 nonce_store_dir: Some(PathBuf::from(".mprd/anti_replay")),
             }),
+            registry_state_path: None,
+            registry_verifying_key_hex: None,
+            token_signing_key_hex: None,
+            policy_artifacts_dir: None,
         }
     }
 }
