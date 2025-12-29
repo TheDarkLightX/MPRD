@@ -2,8 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{state::State, command::Command, step::step, invariants::check_invariants};
+    use super::super::*;
     
     #[test]
     fn init_satisfies_invariants() {

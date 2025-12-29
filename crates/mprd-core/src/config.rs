@@ -622,6 +622,10 @@ pub struct ExecutionConfig {
 
     /// Retry backoff in milliseconds.
     pub retry_backoff_ms: u64,
+
+    /// Executor circuit breaker configuration.
+    #[serde(default)]
+    pub circuit_breaker: CircuitBreakerConfig,
 }
 
 impl Default for ExecutionConfig {
@@ -630,6 +634,36 @@ impl Default for ExecutionConfig {
             dry_run: false,
             max_retries: 3,
             retry_backoff_ms: 100,
+            circuit_breaker: CircuitBreakerConfig::default(),
+        }
+    }
+}
+
+/// Circuit breaker configuration for executor-side effects.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CircuitBreakerConfig {
+    /// Enable circuit breaker at the executor boundary.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Tick size in milliseconds (cooldown duration is expressed in ticks).
+    ///
+    /// The verified `executor_circuit_breaker` kernel uses a bounded tick counter for cooldown.
+    /// The default maps 30 ticks → ~30 seconds.
+    #[serde(default = "default_circuit_breaker_tick_ms")]
+    pub tick_ms: u64,
+}
+
+fn default_circuit_breaker_tick_ms() -> u64 {
+    1_000
+}
+
+impl Default for CircuitBreakerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            tick_ms: default_circuit_breaker_tick_ms(),
         }
     }
 }
@@ -744,6 +778,18 @@ impl MprdConfigBuilder {
     /// Enable dry-run mode.
     pub fn dry_run(mut self, dry_run: bool) -> Self {
         self.config.execution.dry_run = dry_run;
+        self
+    }
+
+    /// Enable executor circuit breaker.
+    pub fn enable_circuit_breaker(mut self, enabled: bool) -> Self {
+        self.config.execution.circuit_breaker.enabled = enabled;
+        self
+    }
+
+    /// Configure circuit breaker tick size (cooldown ticks are in this unit).
+    pub fn circuit_breaker_tick(mut self, duration: Duration) -> Self {
+        self.config.execution.circuit_breaker.tick_ms = duration.as_millis() as u64;
         self
     }
 

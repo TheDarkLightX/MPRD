@@ -9,6 +9,7 @@ use crate::anti_replay::{
     SharedFsDistributedNonceStore,
 };
 use crate::orchestrator::DecisionTokenFactory;
+use crate::verified_kernels::executor_circuit_breaker;
 use crate::{
     hash::candidate_hash_preimage,
     hash::{hash_candidate, hash_decision, hash_state},
@@ -17,7 +18,7 @@ use crate::{
     VerificationStatus, ZkAttestor, ZkLocalVerifier,
 };
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // =============================================================================
@@ -582,6 +583,204 @@ impl ExecutorAdapter for StateProvenanceBoxedExecutor {
     }
 }
 
+pub struct CircuitBreakerBoxedExecutor {
+    inner: Box<dyn ExecutorAdapter + Send + Sync>,
+    tick_ms: u64,
+    now_ms: Arc<dyn Fn() -> Result<i64> + Send + Sync>,
+    gate: Mutex<CircuitBreakerGate>,
+}
+
+#[derive(Debug)]
+struct CircuitBreakerGate {
+    last_observed_ms: Option<i64>,
+    state: executor_circuit_breaker::State,
+}
+
+impl CircuitBreakerGate {
+    fn new() -> Self {
+        Self {
+            last_observed_ms: None,
+            state: executor_circuit_breaker::State::init(),
+        }
+    }
+
+    fn observe_time(&mut self, tick_ms: u64, now_ms: i64) -> Result<()> {
+        let Some(prev) = self.last_observed_ms else {
+            self.last_observed_ms = Some(now_ms);
+            return Ok(());
+        };
+        if now_ms < prev {
+            return Err(crate::MprdError::ExecutionError(
+                "system clock moved backwards (circuit breaker)".into(),
+            ));
+        }
+        if tick_ms == 0 {
+            return Err(crate::MprdError::ConfigError(
+                "execution.circuit_breaker.tick_ms must be > 0".into(),
+            ));
+        }
+
+        let elapsed_ms = u64::try_from(now_ms - prev).unwrap_or(0);
+        let mut ticks = elapsed_ms / tick_ms;
+        while ticks > 0 && self.state.cooldown_remaining > 0 {
+            let (st, _) = executor_circuit_breaker::step(
+                &self.state,
+                executor_circuit_breaker::Command::Tick,
+            )
+            .map_err(|e| {
+                crate::MprdError::BoundedValueExceeded(format!(
+                    "executor_circuit_breaker rejected Tick: {e}"
+                ))
+            })?;
+            self.state = st;
+            ticks -= 1;
+        }
+
+        self.last_observed_ms = Some(now_ms);
+        Ok(())
+    }
+
+    fn try_half_open_if_ready(&mut self) -> Result<()> {
+        if self.state.state == executor_circuit_breaker::ExecutorCircuitBreakerState::Open
+            && self.state.cooldown_remaining == 0
+        {
+            let (st, _) = executor_circuit_breaker::step(
+                &self.state,
+                executor_circuit_breaker::Command::TryHalfOpen,
+            )
+            .map_err(|e| {
+                crate::MprdError::BoundedValueExceeded(format!(
+                    "executor_circuit_breaker rejected TryHalfOpen: {e}"
+                ))
+            })?;
+            self.state = st;
+        }
+        Ok(())
+    }
+
+    fn is_open(&self) -> bool {
+        self.state.state == executor_circuit_breaker::ExecutorCircuitBreakerState::Open
+    }
+
+    fn record_success(&mut self) -> Result<()> {
+        if self.state.state == executor_circuit_breaker::ExecutorCircuitBreakerState::Open {
+            return Ok(());
+        }
+        let (st, _) = executor_circuit_breaker::step(
+            &self.state,
+            executor_circuit_breaker::Command::RecordSuccess,
+        )
+        .map_err(|e| {
+            crate::MprdError::BoundedValueExceeded(format!(
+                "executor_circuit_breaker rejected RecordSuccess: {e}"
+            ))
+        })?;
+        self.state = st;
+        Ok(())
+    }
+
+    fn record_failure(&mut self) -> Result<()> {
+        if self.state.state == executor_circuit_breaker::ExecutorCircuitBreakerState::Open {
+            return Ok(());
+        }
+        let (st, _) = executor_circuit_breaker::step(
+            &self.state,
+            executor_circuit_breaker::Command::RecordFailure,
+        )
+        .map_err(|e| {
+            crate::MprdError::BoundedValueExceeded(format!(
+                "executor_circuit_breaker rejected RecordFailure: {e}"
+            ))
+        })?;
+        self.state = st;
+        Ok(())
+    }
+}
+
+impl CircuitBreakerBoxedExecutor {
+    pub fn new(
+        inner: Box<dyn ExecutorAdapter + Send + Sync>,
+        tick_ms: u64,
+    ) -> Box<dyn ExecutorAdapter + Send + Sync> {
+        Box::new(Self {
+            inner,
+            tick_ms,
+            now_ms: Arc::new(|| {
+                let ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|_| {
+                        crate::MprdError::ExecutionError("system clock error".into())
+                    })?
+                    .as_millis();
+                i64::try_from(ms).map_err(|_| {
+                    crate::MprdError::ExecutionError("system clock overflow".into())
+                })
+            }),
+            gate: Mutex::new(CircuitBreakerGate::new()),
+        })
+    }
+
+    #[cfg(test)]
+    fn new_with_clock(
+        inner: Box<dyn ExecutorAdapter + Send + Sync>,
+        tick_ms: u64,
+        now_ms: Arc<dyn Fn() -> Result<i64> + Send + Sync>,
+    ) -> Box<dyn ExecutorAdapter + Send + Sync> {
+        Box::new(Self {
+            inner,
+            tick_ms,
+            now_ms,
+            gate: Mutex::new(CircuitBreakerGate::new()),
+        })
+    }
+
+    fn observe_outcome_for_breaker(result: &Result<ExecutionResult>) -> Option<bool> {
+        match result {
+            Ok(r) => Some(r.success),
+            Err(crate::MprdError::ExecutionError(_)) => Some(false),
+            Err(_) => None,
+        }
+    }
+}
+
+impl ExecutorAdapter for CircuitBreakerBoxedExecutor {
+    fn execute(&self, verified: &crate::VerifiedBundle<'_>) -> Result<ExecutionResult> {
+        let now_ms = (self.now_ms)()?;
+
+        {
+            let mut gate = self
+                .gate
+                .lock()
+                .map_err(|_| crate::MprdError::ExecutionError("Circuit breaker lock poisoned".into()))?;
+            gate.observe_time(self.tick_ms, now_ms)?;
+            gate.try_half_open_if_ready()?;
+            if gate.is_open() {
+                return Err(crate::MprdError::ExecutionError(
+                    "circuit breaker is OPEN: executor unavailable".into(),
+                ));
+            }
+        }
+
+        let result = self.inner.execute(verified);
+
+        let Some(success) = Self::observe_outcome_for_breaker(&result) else {
+            return result;
+        };
+
+        let mut gate = self
+            .gate
+            .lock()
+            .map_err(|_| crate::MprdError::ExecutionError("Circuit breaker lock poisoned".into()))?;
+        if success {
+            gate.record_success()?;
+        } else {
+            gate.record_failure()?;
+        }
+
+        result
+    }
+}
+
 pub struct AntiReplayBoxedExecutor {
     inner: Box<dyn ExecutorAdapter + Send + Sync>,
     nonce_validator: Arc<dyn NonceValidator>,
@@ -785,10 +984,16 @@ pub fn wrap_executor_with_guards(
     //   unauthenticated traffic to probe nonce-tracker state.
     // - State provenance checks (when enabled) run before anti-replay; they are side-effect free
     //   and prevent accepting tokens bound to unknown/untrusted state sources.
+    // - Circuit breaker (when enabled) runs before anti-replay to fail fast during downstream
+    //   outages without touching nonce-tracker state.
     // - Anti-replay performs Checks-Effects-Interactions: validate -> execute -> mark_used.
     let nonce_validator = nonce_tracker_from_config(config)?;
     let mut executor: Box<dyn ExecutorAdapter + Send + Sync> =
         Box::new(AntiReplayBoxedExecutor::new(inner, nonce_validator));
+
+    if config.execution.circuit_breaker.enabled {
+        executor = CircuitBreakerBoxedExecutor::new(executor, config.execution.circuit_breaker.tick_ms);
+    }
 
     if config.state_provenance.require_provenance {
         let allowlisted = state_provenance_allowlist_from_config(&config.state_provenance)?;
@@ -1267,6 +1472,131 @@ mod tests {
         let second = guarded.execute(&verified);
         assert!(matches!(second, Err(crate::MprdError::NonceReplay { .. })));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    struct FailingExecutor {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl ExecutorAdapter for FailingExecutor {
+        fn execute(&self, _verified: &crate::VerifiedBundle<'_>) -> Result<ExecutionResult> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(crate::MprdError::ExecutionError("boom".into()))
+        }
+    }
+
+    #[test]
+    fn wrap_executor_with_guards_circuit_breaker_opens_and_fails_fast() {
+        let config = crate::MprdConfig::builder()
+            .require_signatures(false)
+            .enable_circuit_breaker(true)
+            .build()
+            .expect("config");
+
+        let token = DecisionToken {
+            policy_hash: dummy_hash(20),
+            policy_ref: dummy_policy_ref(),
+            state_hash: dummy_hash(21),
+            state_ref: crate::StateRef::unknown(),
+            chosen_action_hash: dummy_hash(22),
+            nonce_or_tx_hash: dummy_hash(23),
+            timestamp_ms: now_ms_for_tests(),
+            signature: vec![],
+        };
+
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash.clone(),
+            state_hash: token.state_hash.clone(),
+            candidate_set_hash: dummy_hash(24),
+            chosen_action_hash: token.chosen_action_hash.clone(),
+            limits_hash: dummy_hash(25),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
+            risc0_receipt: vec![1],
+            attestation_metadata: HashMap::new(),
+        };
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(FailingExecutor {
+            calls: calls.clone(),
+        });
+        let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
+
+        let verified = crate::VerifiedBundle::new(&token, &proof);
+
+        for _ in 0..5 {
+            let result = guarded.execute(&verified);
+            assert!(matches!(result, Err(crate::MprdError::ExecutionError(_))));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 5);
+
+        // 6th attempt fails fast without touching the inner executor.
+        let result = guarded.execute(&verified);
+        assert!(matches!(result, Err(crate::MprdError::ExecutionError(_))));
+        assert_eq!(calls.load(Ordering::SeqCst), 5);
+    }
+
+    #[test]
+    fn circuit_breaker_does_not_count_nonce_replay_as_failure() {
+        let config = crate::MprdConfig::builder()
+            .require_signatures(false)
+            .enable_circuit_breaker(true)
+            .build()
+            .expect("config");
+
+        let token1 = DecisionToken {
+            policy_hash: dummy_hash(30),
+            policy_ref: dummy_policy_ref(),
+            state_hash: dummy_hash(31),
+            state_ref: crate::StateRef::unknown(),
+            chosen_action_hash: dummy_hash(32),
+            nonce_or_tx_hash: dummy_hash(33),
+            timestamp_ms: now_ms_for_tests(),
+            signature: vec![],
+        };
+
+        let proof1 = ProofBundle {
+            policy_hash: token1.policy_hash.clone(),
+            state_hash: token1.state_hash.clone(),
+            candidate_set_hash: dummy_hash(34),
+            chosen_action_hash: token1.chosen_action_hash.clone(),
+            limits_hash: dummy_hash(35),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
+            risc0_receipt: vec![1],
+            attestation_metadata: HashMap::new(),
+        };
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(CountingExecutor {
+            calls: calls.clone(),
+        });
+        let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
+
+        let verified1 = crate::VerifiedBundle::new(&token1, &proof1);
+        assert!(guarded.execute(&verified1).is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // Replays are rejected, but should not trip the circuit breaker.
+        for _ in 0..10 {
+            let replay = guarded.execute(&verified1);
+            assert!(matches!(replay, Err(crate::MprdError::NonceReplay { .. })));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // A fresh token should still execute.
+        let token2 = DecisionToken {
+            nonce_or_tx_hash: dummy_hash(40),
+            timestamp_ms: now_ms_for_tests(),
+            ..token1
+        };
+        let proof2 = ProofBundle {
+            chosen_action_hash: token2.chosen_action_hash.clone(),
+            ..proof1
+        };
+        let verified2 = crate::VerifiedBundle::new(&token2, &proof2);
+        assert!(guarded.execute(&verified2).is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
