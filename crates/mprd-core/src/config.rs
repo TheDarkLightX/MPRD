@@ -298,6 +298,13 @@ impl MprdConfig {
             }
         }
 
+        // Validate execution circuit breaker.
+        if self.execution.circuit_breaker.enabled && self.execution.circuit_breaker.tick_ms == 0 {
+            return Err(MprdError::ConfigError(
+                "execution.circuit_breaker.tick_ms must be > 0 when enabled".into(),
+            ));
+        }
+
         // Validate policy
         if self.policy.max_candidates == 0 || self.policy.max_candidates > 1000 {
             return Err(MprdError::ConfigError(
