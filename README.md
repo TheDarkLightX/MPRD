@@ -47,6 +47,11 @@ This isn't a goal. It's a guarantee. The architecture enforces it:
 4. **Tokens only mint for allowed actions**: the governor controls the valve
 5. **ZK attestation**: third parties can verify without trusting the operator
 
+## Lean 4 proof buble
+
+Self-contained Lean 4 proof bundle (fast to build):
+- `LeanProofs/` (run `cd LeanProofs && lake build`)
+
 ### The Proof-Carrying “Codec”
 
 MPRD treats model output as untrusted and high-entropy: the model can propose anything, but cannot execute. A deterministic governance layer canonicalizes state/candidates, commits to them (hashes/IDs/epochs/nonces/limits), and produces a small, versioned proof-carrying transcript (token + receipt/journal) that can cross hostile networks. Verifiers then fail-closed check that transcript against allowlisted code (image IDs from a trusted registry/manifest) and that it matches the token commitments. The executor performs side effects only for the single committed action and only once (anti-replay), turning untrusted proposals into verifiable, permissioned execution.
