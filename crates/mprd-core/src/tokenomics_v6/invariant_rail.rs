@@ -162,9 +162,11 @@ pub fn minimize_counterexample_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ltlf;
     use crate::tokenomics_v6::types::Bps;
     use crate::tokenomics_v6::{Agrs, Bcr, EpochId, OperatorId, ServiceTx};
     use crate::Hash32;
+    use std::hash::{Hash, Hasher};
 
     fn params() -> ParamsV6 {
         ParamsV6::new(
@@ -245,5 +247,317 @@ mod tests {
 
         let ce = first_invariant_counterexample_v1(p, bounds, &actions).unwrap();
         assert!(ce.is_none());
+    }
+
+    #[test]
+    fn ltlf_tokenomics_v6_epoch_lifecycle_bmc() {
+        // This demonstrates how the public LTLf+BMC tooling can verify *temporal* tokenomics properties:
+        // ordering and phase constraints that span multiple actions.
+        //
+        // Reference framing: "environment choices" (attempting actions out-of-order) are modeled as
+        // nondeterminism; the property must hold for all traces within a bounded horizon.
+
+        fn v(name: &str) -> ltlf::Valuation {
+            let mut out = ltlf::Valuation::new();
+            out.insert(name.to_string());
+            out
+        }
+
+        // Seed an engine state so epoch close/settlements are reachable (not vacuously failing).
+        let p = params();
+        let bounds = RuntimeBoundsV6::default();
+        let a = oid(1);
+        let b = oid(2);
+
+        let mut eng = TokenomicsV6::new_with_bounds(p, bounds).expect("engine");
+        let gate = AllowAllGateV6;
+        eng.apply(&gate, ActionV6::AdmitOperator { operator: a })
+            .expect("admit a");
+        eng.apply(&gate, ActionV6::AdmitOperator { operator: b })
+            .expect("admit b");
+        eng.apply(
+            &gate,
+            ActionV6::CreditAgrs {
+                operator: a,
+                amt: Agrs::new(1_000_000),
+            },
+        )
+        .expect("credit");
+        eng.apply(
+            &gate,
+            ActionV6::ApplyServiceTx(ServiceTx {
+                payer: a,
+                servicer: b,
+                base_fee_agrs: Agrs::new(10_000),
+                tip_agrs: Agrs::new(100),
+                offset_request_bcr: Bcr::new(0),
+                work_units: 1_000,
+                nonce: Hash32([7; 32]),
+            }),
+        )
+        .expect("service tx");
+
+        #[derive(Clone)]
+        struct Tok {
+            eng: TokenomicsV6,
+            id: Hash32,
+        }
+
+        impl Tok {
+            fn new(eng: TokenomicsV6) -> Self {
+                let id = eng.state_hash_v1();
+                Self { eng, id }
+            }
+        }
+
+        impl PartialEq for Tok {
+            fn eq(&self, other: &Self) -> bool {
+                self.id == other.id
+            }
+        }
+        impl Eq for Tok {}
+        impl Hash for Tok {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                self.id.hash(state)
+            }
+        }
+
+        // Small action set: enough to cover the epoch lifecycle ordering.
+        // (Trying these out of order is our "environment adversary".)
+        let action_set: Vec<(ActionV6, &'static str)> = vec![
+            (ActionV6::SettleOpsPayroll, "ok_settle_payroll"),
+            (ActionV6::SettleAuction, "ok_settle_auction"),
+            (
+                ActionV6::AdvanceEpoch {
+                    next_epoch: EpochId(1),
+                },
+                "ok_advance",
+            ),
+        ];
+
+        // Temporal safety spec (within this bounded run where we end on the first successful advance):
+        // - advance cannot happen before both settlements (enforced via precedence)
+        // - no mutation on error
+        let spec = ltlf::Formula::and(vec![
+            ltlf::Formula::precedence("ok_settle_payroll", "ok_advance"),
+            ltlf::Formula::precedence("ok_settle_auction", "ok_advance"),
+            ltlf::Formula::always(ltlf::Formula::not_atom("mutated_on_err")),
+        ]);
+
+        let init = Tok::new(eng);
+
+        let ce = ltlf::bmc_find_violation(spec, init, 8, |s| {
+            let mut out: Vec<(ltlf::Valuation, Tok, bool)> = Vec::new();
+
+            // Allow early termination so we check all prefixes up to the bound.
+            out.push((ltlf::Valuation::new(), s.clone(), true));
+
+            for (a, ok_atom) in &action_set {
+                let mut eng2 = s.eng.clone();
+                let before = eng2.state_hash_v1();
+                let res = eng2.apply(&gate, a.clone());
+                match res {
+                    Ok(_) => {
+                        // Success atom, plus an attempt label for debugging.
+                        let mut val = v(ok_atom);
+                        val.extend(v("attempt"));
+                        let next = Tok::new(eng2);
+                        // Treat a successful epoch advance as an end-of-trace boundary for this check.
+                        let is_end = ok_atom == &"ok_advance";
+                        out.push((val, next, is_end));
+                    }
+                    Err(_) => {
+                        // On error, preserve the post-state (to catch mutation-on-error bugs) and emit a flag if mutated.
+                        let after = eng2.state_hash_v1();
+                        let mut val = v("err");
+                        if after != before {
+                            val.extend(v("mutated_on_err"));
+                        }
+                        out.push((val, Tok::new(eng2), false));
+                    }
+                }
+            }
+            out
+        });
+
+        assert!(
+            ce.is_none(),
+            "tokenomics_v6 lifecycle temporal spec violated; counterexample trace: {:?}",
+            ce.map(|x| x.trace)
+        );
+    }
+
+    #[test]
+    fn ltlf_tokenomics_v6_epoch_close_forbids_open_actions_bmc() {
+        // Strengthen tokenomics verification with *temporal* properties that invariants don't express cleanly:
+        // - Per-epoch "at most once" actions (drip)
+        // - After epoch close (budgets finalized via settlement), "epoch open" actions must never succeed
+        //
+        // This is checked via bounded nondeterministic exploration (explicit-state), returning a concrete
+        // counterexample trace if violated.
+
+        fn atom(name: &str) -> ltlf::Valuation {
+            let mut out = ltlf::Valuation::new();
+            out.insert(name.to_string());
+            out
+        }
+
+        let p = params();
+        let bounds = RuntimeBoundsV6::default();
+        let a = oid(1);
+        let b = oid(2);
+
+        let mut eng = TokenomicsV6::new_with_bounds(p, bounds).expect("engine");
+        let gate = AllowAllGateV6;
+        eng.apply(&gate, ActionV6::AdmitOperator { operator: a })
+            .expect("admit a");
+        eng.apply(&gate, ActionV6::AdmitOperator { operator: b })
+            .expect("admit b");
+        eng.apply(
+            &gate,
+            ActionV6::CreditAgrs {
+                operator: a,
+                amt: Agrs::new(1_000_000),
+            },
+        )
+        .expect("credit");
+        // Seed one stake so drip has a meaningful effect.
+        eng.apply(
+            &gate,
+            ActionV6::StakeStart {
+                operator: a,
+                stake_amount: Agrs::new(100_000),
+                lock_epochs: 30,
+                nonce: Hash32([42; 32]),
+            },
+        )
+        .expect("stake");
+
+        let tx = ServiceTx {
+            payer: a,
+            servicer: b,
+            base_fee_agrs: Agrs::new(10_000),
+            tip_agrs: Agrs::new(100),
+            offset_request_bcr: Bcr::new(0),
+            work_units: 1_000,
+            nonce: Hash32([7; 32]),
+        };
+
+        #[derive(Clone)]
+        struct Tok {
+            eng: TokenomicsV6,
+            id: Hash32,
+        }
+
+        impl Tok {
+            fn new(eng: TokenomicsV6) -> Self {
+                let id = eng.state_hash_v1();
+                Self { eng, id }
+            }
+        }
+
+        impl PartialEq for Tok {
+            fn eq(&self, other: &Self) -> bool {
+                self.id == other.id
+            }
+        }
+        impl Eq for Tok {}
+        impl Hash for Tok {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                self.id.hash(state)
+            }
+        }
+
+        // Action set includes:
+        // - epoch-open actions: drip, service tx
+        // - epoch-close actions: settlements, advance
+        let action_set: Vec<(ActionV6, &'static str)> = vec![
+            (ActionV6::AccrueBcrDrip, "ok_drip"),
+            (ActionV6::ApplyServiceTx(tx), "ok_service"),
+            (ActionV6::SettleOpsPayroll, "ok_settle_payroll"),
+            (ActionV6::SettleAuction, "ok_settle_auction"),
+            (
+                ActionV6::AdvanceEpoch {
+                    next_epoch: EpochId(1),
+                },
+                "ok_advance",
+            ),
+        ];
+
+        // Temporal spec:
+        // - advance requires both settlements (order only, not necessarily immediate)
+        // - drip is at-most-once per epoch (no second ok_drip before ok_advance)
+        // - after either settlement succeeds (epoch is closed), epoch-open actions must never succeed
+        // - no mutation on error
+        let spec = ltlf::Formula::and(vec![
+            ltlf::Formula::precedence("ok_settle_payroll", "ok_advance"),
+            ltlf::Formula::precedence("ok_settle_auction", "ok_advance"),
+            // Drip at most once per epoch: ok_drip -> Xw(ok_advance R !ok_drip)
+            ltlf::Formula::always(ltlf::Formula::or(vec![
+                ltlf::Formula::not_atom("ok_drip"),
+                ltlf::Formula::weak_next(ltlf::Formula::release(
+                    ltlf::Formula::atom("ok_advance"),
+                    ltlf::Formula::not_atom("ok_drip"),
+                )),
+            ])),
+            // Once payroll settlement succeeds, no more successful drip/service in that epoch.
+            ltlf::Formula::always(ltlf::Formula::or(vec![
+                ltlf::Formula::not_atom("ok_settle_payroll"),
+                ltlf::Formula::always(ltlf::Formula::not_atom("ok_drip")),
+            ])),
+            ltlf::Formula::always(ltlf::Formula::or(vec![
+                ltlf::Formula::not_atom("ok_settle_payroll"),
+                ltlf::Formula::always(ltlf::Formula::not_atom("ok_service")),
+            ])),
+            // Once auction settlement succeeds, no more successful drip/service in that epoch.
+            ltlf::Formula::always(ltlf::Formula::or(vec![
+                ltlf::Formula::not_atom("ok_settle_auction"),
+                ltlf::Formula::always(ltlf::Formula::not_atom("ok_drip")),
+            ])),
+            ltlf::Formula::always(ltlf::Formula::or(vec![
+                ltlf::Formula::not_atom("ok_settle_auction"),
+                ltlf::Formula::always(ltlf::Formula::not_atom("ok_service")),
+            ])),
+            ltlf::Formula::always(ltlf::Formula::not_atom("mutated_on_err")),
+        ]);
+
+        let init = Tok::new(eng);
+
+        let ce = ltlf::bmc_find_violation(spec, init, 10, |s| {
+            let mut out: Vec<(ltlf::Valuation, Tok, bool)> = Vec::new();
+
+            // Allow early termination to check all prefixes.
+            out.push((ltlf::Valuation::new(), s.clone(), true));
+
+            for (a, ok_atom) in &action_set {
+                let mut eng2 = s.eng.clone();
+                let before = eng2.state_hash_v1();
+                let res = eng2.apply(&gate, a.clone());
+                match res {
+                    Ok(_) => {
+                        let mut val = atom("attempt");
+                        val.extend(atom(ok_atom));
+                        let next = Tok::new(eng2);
+                        let is_end = ok_atom == &"ok_advance";
+                        out.push((val, next, is_end));
+                    }
+                    Err(_) => {
+                        let after = eng2.state_hash_v1();
+                        let mut val = atom("err");
+                        if after != before {
+                            val.extend(atom("mutated_on_err"));
+                        }
+                        out.push((val, Tok::new(eng2), false));
+                    }
+                }
+            }
+            out
+        });
+
+        assert!(
+            ce.is_none(),
+            "tokenomics_v6 epoch-close temporal spec violated; counterexample trace: {:?}",
+            ce.map(|x| x.trace)
+        );
     }
 }

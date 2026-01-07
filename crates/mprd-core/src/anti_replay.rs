@@ -1677,6 +1677,7 @@ where
 mod tests {
     use super::*;
     use crate::Hash32;
+    use crate::ltlf;
     use crate::{ExecutionResult, ExecutorAdapter, ProofBundle, VerifiedBundle};
     use proptest::prelude::*;
     use std::collections::{HashMap, HashSet};
@@ -1708,6 +1709,31 @@ mod tests {
             timestamp_ms,
             signature: vec![],
         }
+    }
+
+    type CallLog = Arc<Mutex<Vec<&'static str>>>;
+
+    fn new_call_log() -> CallLog {
+        Arc::new(Mutex::new(Vec::new()))
+    }
+
+    fn push_call(log: &CallLog, call: &'static str) {
+        log.lock().expect("call log").push(call);
+    }
+
+    fn call_log_snapshot(log: &CallLog) -> Vec<&'static str> {
+        log.lock().expect("call log").clone()
+    }
+
+    fn calls_to_trace(calls: &[&'static str]) -> Vec<ltlf::Valuation> {
+        calls
+            .iter()
+            .map(|c| {
+                let mut v = ltlf::Valuation::new();
+                v.insert((*c).to_string());
+                v
+            })
+            .collect()
     }
 
     #[test]
@@ -1988,6 +2014,161 @@ mod tests {
             risc0_receipt: vec![1],
             attestation_metadata: HashMap::new(),
         }
+    }
+
+    #[derive(Clone)]
+    struct LoggedNonceValidator {
+        log: CallLog,
+        claim: NonceClaim,
+    }
+
+    impl NonceValidator for LoggedNonceValidator {
+        fn validate(&self, _token: &DecisionToken) -> Result<()> {
+            push_call(&self.log, "validate");
+            Ok(())
+        }
+
+        fn validate_and_claim(&self, _token: &DecisionToken) -> Result<NonceClaim> {
+            push_call(&self.log, "validate_and_claim");
+            match self.claim {
+                NonceClaim::NotClaimed => push_call(&self.log, "not_claimed"),
+                NonceClaim::Claimed => push_call(&self.log, "claimed"),
+            }
+            Ok(self.claim)
+        }
+
+        fn mark_used(&self, _token: &DecisionToken) -> Result<()> {
+            push_call(&self.log, "mark_used");
+            Ok(())
+        }
+
+        fn cleanup(&self) {}
+    }
+
+    #[derive(Clone)]
+    struct LoggedOutcomeExecutor {
+        log: CallLog,
+        success: bool,
+    }
+
+    impl ExecutorAdapter for LoggedOutcomeExecutor {
+        fn execute(&self, _verified: &VerifiedBundle<'_>) -> Result<ExecutionResult> {
+            if self.success {
+                push_call(&self.log, "execute_ok");
+            } else {
+                push_call(&self.log, "execute_fail");
+            }
+            Ok(ExecutionResult {
+                success: self.success,
+                message: None,
+            })
+        }
+    }
+
+    #[test]
+    fn ltlf_anti_replay_not_claimed_marks_used_after_execute_success() {
+        let log = new_call_log();
+        let validator = LoggedNonceValidator {
+            log: log.clone(),
+            claim: NonceClaim::NotClaimed,
+        };
+        let inner = LoggedOutcomeExecutor {
+            log: log.clone(),
+            success: true,
+        };
+        let exec = AntiReplayExecutor::new(inner, validator);
+
+        let base = InMemoryNonceTracker::current_time_ms().expect("clock");
+        let token = dummy_token(7, base);
+        let proof = dummy_proof_for(&token);
+        let verified = VerifiedBundle::new(&token, &proof);
+
+        let result = exec.execute(&verified).expect("execute");
+        assert!(result.success);
+
+        let calls = call_log_snapshot(&log);
+        assert_eq!(
+            calls,
+            vec!["validate_and_claim", "not_claimed", "execute_ok", "mark_used"]
+        );
+
+        // Temporal security spec:
+        // - validate/claim happens before any execution attempt
+        // - on success (NotClaimed path), mark_used occurs and happens after execute_ok
+        let spec = ltlf::Formula::and(vec![
+            ltlf::Formula::precedence("validate_and_claim", "execute_ok"),
+            ltlf::Formula::precedence("execute_ok", "mark_used"),
+            ltlf::Formula::always(ltlf::Formula::or(vec![
+                ltlf::Formula::not_atom("execute_ok"),
+                ltlf::Formula::eventually(ltlf::Formula::atom("mark_used")),
+            ])),
+        ]);
+        let trace = calls_to_trace(&calls);
+        assert!(ltlf::eval_trace(spec, &trace));
+    }
+
+    #[test]
+    fn ltlf_anti_replay_not_claimed_does_not_mark_used_on_failure() {
+        let log = new_call_log();
+        let validator = LoggedNonceValidator {
+            log: log.clone(),
+            claim: NonceClaim::NotClaimed,
+        };
+        let inner = LoggedOutcomeExecutor {
+            log: log.clone(),
+            success: false,
+        };
+        let exec = AntiReplayExecutor::new(inner, validator);
+
+        let base = InMemoryNonceTracker::current_time_ms().expect("clock");
+        let token = dummy_token(7, base);
+        let proof = dummy_proof_for(&token);
+        let verified = VerifiedBundle::new(&token, &proof);
+
+        let result = exec.execute(&verified).expect("execute");
+        assert!(!result.success);
+
+        let calls = call_log_snapshot(&log);
+        assert_eq!(calls, vec!["validate_and_claim", "not_claimed", "execute_fail"]);
+
+        // If we never see execute_ok, mark_used must never occur.
+        let spec = ltlf::Formula::precedence("execute_ok", "mark_used");
+        let trace = calls_to_trace(&calls);
+        assert!(ltlf::eval_trace(spec, &trace));
+    }
+
+    #[test]
+    fn ltlf_anti_replay_claimed_does_not_mark_used_on_success() {
+        let log = new_call_log();
+        let validator = LoggedNonceValidator {
+            log: log.clone(),
+            claim: NonceClaim::Claimed,
+        };
+        let inner = LoggedOutcomeExecutor {
+            log: log.clone(),
+            success: true,
+        };
+        let exec = AntiReplayExecutor::new(inner, validator);
+
+        let base = InMemoryNonceTracker::current_time_ms().expect("clock");
+        let token = dummy_token(7, base);
+        let proof = dummy_proof_for(&token);
+        let verified = VerifiedBundle::new(&token, &proof);
+
+        let result = exec.execute(&verified).expect("execute");
+        assert!(result.success);
+
+        let calls = call_log_snapshot(&log);
+        assert_eq!(calls, vec!["validate_and_claim", "claimed", "execute_ok"]);
+
+        // Claimed path means the nonce is consumed pre-execution, so `mark_used` must not run.
+        let spec = ltlf::Formula::and(vec![
+            ltlf::Formula::precedence("validate_and_claim", "execute_ok"),
+            ltlf::Formula::precedence("claimed", "execute_ok"),
+            ltlf::Formula::always(ltlf::Formula::not_atom("mark_used")),
+        ]);
+        let trace = calls_to_trace(&calls);
+        assert!(ltlf::eval_trace(spec, &trace));
     }
 
     #[test]
