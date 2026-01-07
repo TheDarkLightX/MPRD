@@ -16,8 +16,8 @@
 //! The goal is not to be a full temporal logic ecosystem; it's to make key ordering guarantees
 //! machine-checkable and hard to regress.
 
-use std::collections::BTreeSet;
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 use std::collections::{HashSet, VecDeque};
 use std::hash::Hash;
 
@@ -30,13 +30,22 @@ pub type Valuation = BTreeSet<String>;
 pub enum Formula {
     Const(bool),
     /// Atomic proposition (NNF literal). `positive=false` represents `!name`.
-    Lit { name: String, positive: bool },
+    Lit {
+        name: String,
+        positive: bool,
+    },
     And(Vec<Formula>),
     Or(Vec<Formula>),
     Next(Box<Formula>),
     WeakNext(Box<Formula>),
-    Until { left: Box<Formula>, right: Box<Formula> },
-    Release { left: Box<Formula>, right: Box<Formula> },
+    Until {
+        left: Box<Formula>,
+        right: Box<Formula>,
+    },
+    Release {
+        left: Box<Formula>,
+        right: Box<Formula>,
+    },
 }
 
 impl Formula {
@@ -130,7 +139,16 @@ impl Ord for Formula {
             (Const(_), _) => Ordering::Less,
             (_, Const(_)) => Ordering::Greater,
 
-            (Lit { name: a, positive: ap }, Lit { name: b, positive: bp }) => (a, ap).cmp(&(b, bp)),
+            (
+                Lit {
+                    name: a,
+                    positive: ap,
+                },
+                Lit {
+                    name: b,
+                    positive: bp,
+                },
+            ) => (a, ap).cmp(&(b, bp)),
             (Lit { .. }, _) => Ordering::Less,
             (_, Lit { .. }) => Ordering::Greater,
 
@@ -142,11 +160,29 @@ impl Ord for Formula {
             (WeakNext(_), _) => Ordering::Less,
             (_, WeakNext(_)) => Ordering::Greater,
 
-            (Until { left: al, right: ar }, Until { left: bl, right: br }) => (al, ar).cmp(&(bl, br)),
+            (
+                Until {
+                    left: al,
+                    right: ar,
+                },
+                Until {
+                    left: bl,
+                    right: br,
+                },
+            ) => (al, ar).cmp(&(bl, br)),
             (Until { .. }, _) => Ordering::Less,
             (_, Until { .. }) => Ordering::Greater,
 
-            (Release { left: al, right: ar }, Release { left: bl, right: br }) => (al, ar).cmp(&(bl, br)),
+            (
+                Release {
+                    left: al,
+                    right: ar,
+                },
+                Release {
+                    left: bl,
+                    right: br,
+                },
+            ) => (al, ar).cmp(&(bl, br)),
             (Release { .. }, _) => Ordering::Less,
             (_, Release { .. }) => Ordering::Greater,
 
@@ -244,7 +280,10 @@ pub fn simplify(f: Formula) -> Formula {
             if items.iter().any(|x| matches!(x, Const(false))) {
                 return Const(false);
             }
-            let mut items: Vec<Formula> = items.into_iter().filter(|x| !matches!(x, Const(true))).collect();
+            let mut items: Vec<Formula> = items
+                .into_iter()
+                .filter(|x| !matches!(x, Const(true)))
+                .collect();
             if has_complementary_lits(&items) {
                 return Const(false);
             }
@@ -264,7 +303,10 @@ pub fn simplify(f: Formula) -> Formula {
             if items.iter().any(|x| matches!(x, Const(true))) {
                 return Const(true);
             }
-            let mut items: Vec<Formula> = items.into_iter().filter(|x| !matches!(x, Const(false))).collect();
+            let mut items: Vec<Formula> = items
+                .into_iter()
+                .filter(|x| !matches!(x, Const(false)))
+                .collect();
             if has_complementary_lits(&items) {
                 return Const(true);
             }
@@ -293,18 +335,21 @@ pub fn progress(f: &Formula, valuation: &Valuation) -> Formula {
             }
             Const(holds)
         }
-        And(items) => simplify(And(items.into_iter().map(|x| progress(&x, valuation)).collect())),
-        Or(items) => simplify(Or(items.into_iter().map(|x| progress(&x, valuation)).collect())),
+        And(items) => simplify(And(items
+            .into_iter()
+            .map(|x| progress(&x, valuation))
+            .collect())),
+        Or(items) => simplify(Or(items
+            .into_iter()
+            .map(|x| progress(&x, valuation))
+            .collect())),
         Next(inner) => simplify(*inner),
         WeakNext(inner) => simplify(*inner),
         Until { left, right } => {
             // δ(φ U ψ, σ) = δ(ψ, σ) ∨ (δ(φ, σ) ∧ (φ U ψ))
             let right_p = progress(&right, valuation);
             let left_p = progress(&left, valuation);
-            simplify(Or(vec![
-                right_p,
-                And(vec![left_p, Until { left, right }]),
-            ]))
+            simplify(Or(vec![right_p, And(vec![left_p, Until { left, right }])]))
         }
         Release { left, right } => {
             // δ(φ R ψ, σ) = δ(ψ, σ) ∧ (δ(φ, σ) ∨ (φ R ψ))
@@ -550,15 +595,10 @@ mod tests {
         let spec = Formula::precedence("a", "b");
 
         // Model: Start -> (emit b and end).
-        let ce = bmc_find_violation(
-            spec,
-            S::Start,
-            2,
-            |s| match s {
-                S::Start => vec![(v1("b"), S::Done, true)],
-                S::Done => vec![],
-            },
-        )
+        let ce = bmc_find_violation(spec, S::Start, 2, |s| match s {
+            S::Start => vec![(v1("b"), S::Done, true)],
+            S::Done => vec![],
+        })
         .expect("should find violation");
         assert_eq!(ce.trace.len(), 1);
         assert!(ce.trace[0].contains("b"));
@@ -622,5 +662,3 @@ mod tests {
         }
     }
 }
-
-

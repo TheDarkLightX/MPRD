@@ -443,8 +443,8 @@ fn enforce_selector_contract(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Hash32, RuleVerdict, Score, Value};
     use crate::ltlf;
+    use crate::{Hash32, RuleVerdict, Score, Value};
     use proptest::prelude::*;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -1502,7 +1502,13 @@ mod tests {
         assert_eq!(
             calls,
             vec![
-                "state", "propose", "evaluate", "select", "token", "attest", "verify",
+                "state",
+                "propose",
+                "evaluate",
+                "select",
+                "token",
+                "attest",
+                "verify",
                 "verify_fail"
             ]
         );
@@ -1575,9 +1581,17 @@ mod tests {
         assert_eq!(
             calls,
             vec![
-                "state", "propose", "evaluate", "select", "token", "attest", "verify", "verify_ok",
+                "state",
+                "propose",
+                "evaluate",
+                "select",
+                "token",
+                "attest",
+                "verify",
+                "verify_ok",
                 "audit",
-                "record", "execute"
+                "record",
+                "execute"
             ]
         );
         assert_pipeline_temporal_spec(&calls);
@@ -1833,12 +1847,72 @@ mod tests {
 
         fn step(m: &Model) -> Vec<(ltlf::Valuation, Model, bool)> {
             match m.stage {
-                Stage::State => vec![(v("state"), Model { stage: Stage::Propose, ..*m }, false), (v("state"), *m, true)],
-                Stage::Propose => vec![(v("propose"), Model { stage: Stage::Evaluate, ..*m }, false), (v("propose"), *m, true)],
-                Stage::Evaluate => vec![(v("evaluate"), Model { stage: Stage::Select, ..*m }, false), (v("evaluate"), *m, true)],
-                Stage::Select => vec![(v("select"), Model { stage: Stage::Token, ..*m }, false), (v("select"), *m, true)],
-                Stage::Token => vec![(v("token"), Model { stage: Stage::Attest, ..*m }, false), (v("token"), *m, true)],
-                Stage::Attest => vec![(v("attest"), Model { stage: Stage::Verify, ..*m }, false), (v("attest"), *m, true)],
+                Stage::State => vec![
+                    (
+                        v("state"),
+                        Model {
+                            stage: Stage::Propose,
+                            ..*m
+                        },
+                        false,
+                    ),
+                    (v("state"), *m, true),
+                ],
+                Stage::Propose => vec![
+                    (
+                        v("propose"),
+                        Model {
+                            stage: Stage::Evaluate,
+                            ..*m
+                        },
+                        false,
+                    ),
+                    (v("propose"), *m, true),
+                ],
+                Stage::Evaluate => vec![
+                    (
+                        v("evaluate"),
+                        Model {
+                            stage: Stage::Select,
+                            ..*m
+                        },
+                        false,
+                    ),
+                    (v("evaluate"), *m, true),
+                ],
+                Stage::Select => vec![
+                    (
+                        v("select"),
+                        Model {
+                            stage: Stage::Token,
+                            ..*m
+                        },
+                        false,
+                    ),
+                    (v("select"), *m, true),
+                ],
+                Stage::Token => vec![
+                    (
+                        v("token"),
+                        Model {
+                            stage: Stage::Attest,
+                            ..*m
+                        },
+                        false,
+                    ),
+                    (v("token"), *m, true),
+                ],
+                Stage::Attest => vec![
+                    (
+                        v("attest"),
+                        Model {
+                            stage: Stage::Verify,
+                            ..*m
+                        },
+                        false,
+                    ),
+                    (v("attest"), *m, true),
+                ],
                 Stage::Verify => {
                     let next = if m.with_audit {
                         Stage::Audit
@@ -1854,13 +1928,27 @@ mod tests {
                     ]
                 }
                 Stage::Audit => {
-                    let next = if m.with_recorder { Stage::Record } else { Stage::Execute };
+                    let next = if m.with_recorder {
+                        Stage::Record
+                    } else {
+                        Stage::Execute
+                    };
                     // Audit failures are best-effort; for ordering specs we don't distinguish ok/err.
                     vec![(v("audit"), Model { stage: next, ..*m }, false)]
                 }
                 Stage::Record => {
                     // Recorder failures abort before execute.
-                    vec![(v("record"), Model { stage: Stage::Execute, ..*m }, false), (v("record"), *m, true)]
+                    vec![
+                        (
+                            v("record"),
+                            Model {
+                                stage: Stage::Execute,
+                                ..*m
+                            },
+                            false,
+                        ),
+                        (v("record"), *m, true),
+                    ]
                 }
                 Stage::Execute => {
                     // Execution is always the last step in the trace (success or error).
