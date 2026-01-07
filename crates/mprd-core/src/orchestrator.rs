@@ -444,6 +444,7 @@ fn enforce_selector_contract(
 mod tests {
     use super::*;
     use crate::{Hash32, RuleVerdict, Score, Value};
+    use crate::ltlf;
     use proptest::prelude::*;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -465,6 +466,54 @@ mod tests {
 
     fn call_log_snapshot(log: &CallLog) -> Vec<&'static str> {
         log.lock().expect("call log").clone()
+    }
+
+    fn calls_to_trace(calls: &[&'static str]) -> Vec<ltlf::Valuation> {
+        calls
+            .iter()
+            .map(|c| {
+                let mut v = ltlf::Valuation::new();
+                v.insert((*c).to_string());
+                v
+            })
+            .collect()
+    }
+
+    /// Security-oriented temporal spec for the orchestrator pipeline ordering.
+    ///
+    /// This checks the *gap* that is usually only described in comments:
+    /// multi-step ordering invariants like "verify before execute" and "record (if present) before execute".
+    fn assert_pipeline_temporal_spec(calls: &[&'static str]) {
+        let spec = ltlf::Formula::and(vec![
+            // Core CBC pipeline boundary:
+            ltlf::Formula::precedence("token", "attest"),
+            ltlf::Formula::precedence("attest", "verify"),
+            ltlf::Formula::precedence("verify_ok", "execute"),
+            // Record is optional; if it happens, it must happen before execute.
+            ltlf::Formula::optional_precedence("record", "execute"),
+            // Audit is optional; if it happens, it must be after verify and before record/execute.
+            ltlf::Formula::precedence("verify_ok", "audit"),
+            ltlf::Formula::optional_precedence("audit", "record"),
+            ltlf::Formula::optional_precedence("audit", "execute"),
+            // Record (if present) is never allowed before verify.
+            ltlf::Formula::precedence("verify_ok", "record"),
+            // Safety: if verification fails, execute/record must never happen.
+            // G(verify_fail -> G(!execute))
+            ltlf::Formula::always(ltlf::Formula::or(vec![
+                ltlf::Formula::not_atom("verify_fail"),
+                ltlf::Formula::always(ltlf::Formula::not_atom("execute")),
+            ])),
+            // G(verify_fail -> G(!record))
+            ltlf::Formula::always(ltlf::Formula::or(vec![
+                ltlf::Formula::not_atom("verify_fail"),
+                ltlf::Formula::always(ltlf::Formula::not_atom("record")),
+            ])),
+        ]);
+        let trace = calls_to_trace(calls);
+        assert!(
+            ltlf::eval_trace(spec, &trace),
+            "temporal spec violated by call trace: {calls:?}"
+        );
     }
 
     fn failure_reason_count(metrics: &MprdMetrics, reason: &str) -> u64 {
@@ -632,6 +681,10 @@ mod tests {
     impl ZkLocalVerifier for LoggedVerifier {
         fn verify(&self, _token: &DecisionToken, _proof: &ProofBundle) -> VerificationStatus {
             push_call(&self.log, "verify");
+            match &self.status {
+                VerificationStatus::Success => push_call(&self.log, "verify_ok"),
+                VerificationStatus::Failure(_) => push_call(&self.log, "verify_fail"),
+            }
             self.status.clone()
         }
     }
@@ -1321,7 +1374,9 @@ mod tests {
         });
 
         assert!(matches!(result, Err(MprdError::BoundedValueExceeded(_))));
-        assert_eq!(call_log_snapshot(&log), vec!["state"]);
+        let calls = call_log_snapshot(&log);
+        assert_eq!(calls, vec!["state"]);
+        assert_pipeline_temporal_spec(&calls);
     }
 
     #[test]
@@ -1377,7 +1432,9 @@ mod tests {
         });
 
         assert!(matches!(result, Err(MprdError::InvalidInput(_))));
-        assert_eq!(call_log_snapshot(&log), vec!["state", "propose"]);
+        let calls = call_log_snapshot(&log);
+        assert_eq!(calls, vec!["state", "propose"]);
+        assert_pipeline_temporal_spec(&calls);
     }
 
     #[test]
@@ -1441,10 +1498,15 @@ mod tests {
         });
 
         assert!(matches!(result, Err(MprdError::ZkError(_))));
+        let calls = call_log_snapshot(&log);
         assert_eq!(
-            call_log_snapshot(&log),
-            vec!["state", "propose", "evaluate", "select", "token", "attest", "verify"]
+            calls,
+            vec![
+                "state", "propose", "evaluate", "select", "token", "attest", "verify",
+                "verify_fail"
+            ]
         );
+        assert_pipeline_temporal_spec(&calls);
     }
 
     #[test]
@@ -1509,13 +1571,320 @@ mod tests {
         .expect("success");
 
         assert!(result.success);
+        let calls = call_log_snapshot(&log);
         assert_eq!(
-            call_log_snapshot(&log),
+            calls,
             vec![
-                "state", "propose", "evaluate", "select", "token", "attest", "verify", "audit",
+                "state", "propose", "evaluate", "select", "token", "attest", "verify", "verify_ok",
+                "audit",
                 "record", "execute"
             ]
         );
+        assert_pipeline_temporal_spec(&calls);
+    }
+
+    #[test]
+    fn ltlf_orchestrator_temporal_spec_holds_under_adversarial_outcomes() {
+        // This test approximates the "environment vs controller" view from LTLf synthesis:
+        // external calls can fail (environment), but the pipeline must preserve ordering and fail-closed.
+
+        #[derive(Clone)]
+        struct ScenarioRecorder {
+            log: CallLog,
+            fail: bool,
+        }
+
+        impl DecisionRecorder for ScenarioRecorder {
+            fn record(&self, _token: &DecisionToken, _proof: &ProofBundle) -> Result<()> {
+                push_call(&self.log, "record");
+                if self.fail {
+                    return Err(MprdError::ExecutionError("recorder failed".into()));
+                }
+                Ok(())
+            }
+        }
+
+        #[derive(Clone)]
+        struct ScenarioExecutor {
+            log: CallLog,
+            fail: bool,
+        }
+
+        impl ExecutorAdapter for ScenarioExecutor {
+            fn execute(&self, _verified: &VerifiedBundle<'_>) -> Result<ExecutionResult> {
+                push_call(&self.log, "execute");
+                if self.fail {
+                    return Err(MprdError::ExecutionError("executor failed".into()));
+                }
+                Ok(ExecutionResult {
+                    success: true,
+                    message: Some("ok".into()),
+                })
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        struct Scenario {
+            name: &'static str,
+            verify_ok: bool,
+            with_audit: bool,
+            audit_fail: bool,
+            with_recorder: bool,
+            recorder_fail: bool,
+            executor_fail: bool,
+        }
+
+        let scenarios = [
+            Scenario {
+                name: "verify_fails_no_record_no_execute",
+                verify_ok: false,
+                with_audit: true,
+                audit_fail: false,
+                with_recorder: true,
+                recorder_fail: false,
+                executor_fail: false,
+            },
+            Scenario {
+                name: "verify_ok_no_audit_no_recorder_executes",
+                verify_ok: true,
+                with_audit: false,
+                audit_fail: false,
+                with_recorder: false,
+                recorder_fail: false,
+                executor_fail: false,
+            },
+            Scenario {
+                name: "verify_ok_audit_ok_recorder_ok_executes",
+                verify_ok: true,
+                with_audit: true,
+                audit_fail: false,
+                with_recorder: true,
+                recorder_fail: false,
+                executor_fail: false,
+            },
+            Scenario {
+                name: "verify_ok_audit_fails_best_effort_still_executes",
+                verify_ok: true,
+                with_audit: true,
+                audit_fail: true,
+                with_recorder: true,
+                recorder_fail: false,
+                executor_fail: false,
+            },
+            Scenario {
+                name: "verify_ok_recorder_fails_abort_before_execute",
+                verify_ok: true,
+                with_audit: true,
+                audit_fail: false,
+                with_recorder: true,
+                recorder_fail: true,
+                executor_fail: false,
+            },
+            Scenario {
+                name: "verify_ok_executor_fails_but_ordering_holds",
+                verify_ok: true,
+                with_audit: true,
+                audit_fail: false,
+                with_recorder: true,
+                recorder_fail: false,
+                executor_fail: true,
+            },
+        ];
+
+        for sc in scenarios {
+            let log = new_call_log();
+            let state_provider = LoggedStateProvider {
+                log: log.clone(),
+                state: StateSnapshot {
+                    fields: HashMap::new(),
+                    policy_inputs: HashMap::new(),
+                    state_hash: dummy_hash(1),
+                    state_ref: crate::StateRef::unknown(),
+                },
+            };
+            let proposer = LoggedProposer {
+                log: log.clone(),
+                candidates: vec![CandidateAction {
+                    action_type: "A".into(),
+                    params: HashMap::new(),
+                    score: Score(1),
+                    candidate_hash: dummy_hash(2),
+                }],
+            };
+            let policy_engine = LoggedPolicyEngine { log: log.clone() };
+            let selector = LoggedSelector { log: log.clone() };
+            let token_factory = LoggedTokenFactory { log: log.clone() };
+            let attestor = LoggedAttestor { log: log.clone() };
+            let verifier = LoggedVerifier {
+                log: log.clone(),
+                status: if sc.verify_ok {
+                    VerificationStatus::Success
+                } else {
+                    VerificationStatus::Failure("verify failed".into())
+                },
+            };
+            let executor = ScenarioExecutor {
+                log: log.clone(),
+                fail: sc.executor_fail,
+            };
+            let policy_hash = dummy_hash(9);
+            let policy_ref = PolicyRef {
+                policy_epoch: 1,
+                registry_root: dummy_hash(8),
+            };
+
+            let audit = LoggedAuditRecorder {
+                log: log.clone(),
+                fail: sc.audit_fail,
+            };
+            let audit_opt: Option<&dyn DecisionAuditRecorder> =
+                if sc.with_audit { Some(&audit) } else { None };
+
+            let inputs = RunOnceInputs {
+                state_provider: &state_provider,
+                proposer: &proposer,
+                policy_engine: &policy_engine,
+                selector: &selector,
+                token_factory: &token_factory,
+                attestor: &attestor,
+                verifier: &verifier,
+                executor: &executor,
+                policy_hash: &policy_hash,
+                policy_ref: policy_ref.clone(),
+                nonce_or_tx_hash: None,
+                metrics: None,
+                audit_recorder: audit_opt,
+            };
+
+            let outcome = if sc.with_recorder {
+                let recorder = ScenarioRecorder {
+                    log: log.clone(),
+                    fail: sc.recorder_fail,
+                };
+                run_once_with_recorder(RunOnceInputsWithRecorder {
+                    inputs,
+                    recorder: &recorder,
+                })
+            } else {
+                run_once(inputs)
+            };
+            // We don't care whether the scenario succeeds; we care that any executed trace respects the ordering spec.
+            let _ = outcome;
+
+            let calls = call_log_snapshot(&log);
+            assert_pipeline_temporal_spec(&calls);
+        }
+    }
+
+    #[test]
+    fn ltlf_orchestrator_bmc_no_violation_under_all_failure_branches() {
+        // Paper-aligned improvement: instead of hand-picking scenarios, explicitly explore the
+        // nondeterministic (environment) failure branches of the pipeline model and search for a
+        // counterexample trace that violates the temporal ordering spec.
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        enum Stage {
+            State,
+            Propose,
+            Evaluate,
+            Select,
+            Token,
+            Attest,
+            Verify,
+            Audit,
+            Record,
+            Execute,
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        struct Model {
+            stage: Stage,
+            with_audit: bool,
+            with_recorder: bool,
+        }
+
+        fn v(name: &'static str) -> ltlf::Valuation {
+            let mut out = ltlf::Valuation::new();
+            out.insert(name.to_string());
+            out
+        }
+
+        fn pipeline_spec() -> ltlf::Formula {
+            ltlf::Formula::and(vec![
+                ltlf::Formula::precedence("token", "attest"),
+                ltlf::Formula::precedence("attest", "verify"),
+                ltlf::Formula::precedence("verify_ok", "execute"),
+                ltlf::Formula::optional_precedence("record", "execute"),
+                ltlf::Formula::precedence("verify_ok", "audit"),
+                ltlf::Formula::optional_precedence("audit", "record"),
+                ltlf::Formula::optional_precedence("audit", "execute"),
+                ltlf::Formula::precedence("verify_ok", "record"),
+                // If verification fails, no execute/record may occur.
+                ltlf::Formula::always(ltlf::Formula::or(vec![
+                    ltlf::Formula::not_atom("verify_fail"),
+                    ltlf::Formula::always(ltlf::Formula::not_atom("execute")),
+                ])),
+                ltlf::Formula::always(ltlf::Formula::or(vec![
+                    ltlf::Formula::not_atom("verify_fail"),
+                    ltlf::Formula::always(ltlf::Formula::not_atom("record")),
+                ])),
+            ])
+        }
+
+        fn step(m: &Model) -> Vec<(ltlf::Valuation, Model, bool)> {
+            match m.stage {
+                Stage::State => vec![(v("state"), Model { stage: Stage::Propose, ..*m }, false), (v("state"), *m, true)],
+                Stage::Propose => vec![(v("propose"), Model { stage: Stage::Evaluate, ..*m }, false), (v("propose"), *m, true)],
+                Stage::Evaluate => vec![(v("evaluate"), Model { stage: Stage::Select, ..*m }, false), (v("evaluate"), *m, true)],
+                Stage::Select => vec![(v("select"), Model { stage: Stage::Token, ..*m }, false), (v("select"), *m, true)],
+                Stage::Token => vec![(v("token"), Model { stage: Stage::Attest, ..*m }, false), (v("token"), *m, true)],
+                Stage::Attest => vec![(v("attest"), Model { stage: Stage::Verify, ..*m }, false), (v("attest"), *m, true)],
+                Stage::Verify => {
+                    let next = if m.with_audit {
+                        Stage::Audit
+                    } else if m.with_recorder {
+                        Stage::Record
+                    } else {
+                        Stage::Execute
+                    };
+                    // Environment nondeterminism: verify can succeed or fail.
+                    vec![
+                        (v("verify_ok"), Model { stage: next, ..*m }, false),
+                        (v("verify_fail"), *m, true),
+                    ]
+                }
+                Stage::Audit => {
+                    let next = if m.with_recorder { Stage::Record } else { Stage::Execute };
+                    // Audit failures are best-effort; for ordering specs we don't distinguish ok/err.
+                    vec![(v("audit"), Model { stage: next, ..*m }, false)]
+                }
+                Stage::Record => {
+                    // Recorder failures abort before execute.
+                    vec![(v("record"), Model { stage: Stage::Execute, ..*m }, false), (v("record"), *m, true)]
+                }
+                Stage::Execute => {
+                    // Execution is always the last step in the trace (success or error).
+                    vec![(v("execute"), *m, true)]
+                }
+            }
+        }
+
+        for with_audit in [false, true] {
+            for with_recorder in [false, true] {
+                let init = Model {
+                    stage: Stage::State,
+                    with_audit,
+                    with_recorder,
+                };
+                let spec = pipeline_spec();
+                let ce = ltlf::bmc_find_violation(spec, init, 16, step);
+                assert!(
+                    ce.is_none(),
+                    "found temporal counterexample (with_audit={with_audit}, with_recorder={with_recorder}): {:?}",
+                    ce.map(|x| x.trace)
+                );
+            }
+        }
     }
 
     struct DenyAllPolicyEngine;
