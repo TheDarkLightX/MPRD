@@ -1676,8 +1676,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Hash32;
     use crate::ltlf;
+    use crate::Hash32;
     use crate::{ExecutionResult, ExecutorAdapter, ProofBundle, VerifiedBundle};
     use proptest::prelude::*;
     use std::collections::{HashMap, HashSet};
@@ -2089,7 +2089,12 @@ mod tests {
         let calls = call_log_snapshot(&log);
         assert_eq!(
             calls,
-            vec!["validate_and_claim", "not_claimed", "execute_ok", "mark_used"]
+            vec![
+                "validate_and_claim",
+                "not_claimed",
+                "execute_ok",
+                "mark_used"
+            ]
         );
 
         // Temporal security spec:
@@ -2129,7 +2134,10 @@ mod tests {
         assert!(!result.success);
 
         let calls = call_log_snapshot(&log);
-        assert_eq!(calls, vec!["validate_and_claim", "not_claimed", "execute_fail"]);
+        assert_eq!(
+            calls,
+            vec!["validate_and_claim", "not_claimed", "execute_fail"]
+        );
 
         // If we never see execute_ok, mark_used must never occur.
         let spec = ltlf::Formula::precedence("execute_ok", "mark_used");
