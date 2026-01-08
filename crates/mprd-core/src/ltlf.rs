@@ -26,6 +26,16 @@ use std::hash::Hash;
 /// We intentionally use `BTreeSet<String>` for deterministic behavior and stable debugging.
 pub type Valuation = BTreeSet<String>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BestEffort {
+    /// The agent has a strategy that satisfies the spec against **all** environment outcomes.
+    Guaranteed,
+    /// The spec is satisfiable for **some** environment outcomes, but not enforceable against all.
+    Possible,
+    /// The spec cannot be satisfied even with a cooperative environment (within the bound).
+    Impossible,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Formula {
     Const(bool),
@@ -481,6 +491,190 @@ where
     None
 }
 
+#[derive(Clone, Debug)]
+pub struct SynthResult<S, A> {
+    pub verdict: BestEffort,
+    /// A memoryless strategy over the product space (state, progressed_formula, steps_left).
+    ///
+    /// - For `Guaranteed`: a winning strategy (agent vs adversarial environment).
+    /// - For `Possible`: a cooperative witness strategy (agent + environment cooperate).
+    pub strategy: Option<std::collections::HashMap<(S, Formula, usize), A>>,
+}
+
+/// Bounded best-effort synthesis for LTLf over a small two-player turn-based game:
+/// agent chooses an action, then the environment chooses a nondeterministic outcome.
+///
+/// Returns:
+/// - `Guaranteed` if the agent can enforce the spec against all environment choices.
+/// - `Possible` if the spec is satisfiable along some path, but not enforceable.
+/// - `Impossible` if no satisfying path exists within the bound.
+///
+/// This intentionally stays small and dependency-free; it is a high-leverage building block for
+/// temporal verification of MPRD lifecycles and tokenomics.
+pub fn synthesize_bounded<S, A, StepFn>(
+    spec: Formula,
+    initial: S,
+    max_steps: usize,
+    actions: &[A],
+    step: StepFn,
+) -> SynthResult<S, A>
+where
+    S: Clone + Eq + Hash,
+    A: Clone,
+    StepFn: Fn(&S, &A) -> Vec<(Valuation, S, bool)>,
+{
+    if max_steps == 0 || actions.is_empty() {
+        return SynthResult {
+            verdict: BestEffort::Impossible,
+            strategy: None,
+        };
+    }
+
+    let spec0 = simplify(spec);
+
+    type Policy<S, A> = std::collections::HashMap<(S, Formula, usize), A>;
+
+    fn win<S, A, StepFn>(
+        s: &S,
+        f: &Formula,
+        k: usize,
+        actions: &[A],
+        step: &StepFn,
+        memo: &mut std::collections::HashMap<(S, Formula, usize), bool>,
+        policy: &mut Policy<S, A>,
+    ) -> bool
+    where
+        S: Clone + Eq + Hash,
+        A: Clone,
+        StepFn: Fn(&S, &A) -> Vec<(Valuation, S, bool)>,
+    {
+        debug_assert!(k >= 1);
+        let f = simplify(f.clone());
+        let key = (s.clone(), f.clone(), k);
+        if let Some(v) = memo.get(&key) {
+            return *v;
+        }
+
+        let mut ok = false;
+        'actions: for a in actions {
+            let outs = step(s, a);
+            if outs.is_empty() {
+                continue;
+            }
+
+            for (val, ns, is_end) in outs {
+                let step_is_last = is_end || k == 1;
+                let sat = if step_is_last {
+                    eval_last(&f, &val)
+                } else {
+                    let nf = progress(&f, &val);
+                    win(&ns, &nf, k - 1, actions, step, memo, policy)
+                };
+                if !sat {
+                    continue 'actions;
+                }
+            }
+
+            // Found an action whose all outcomes satisfy.
+            ok = true;
+            policy.insert((s.clone(), f.clone(), k), a.clone());
+            break;
+        }
+
+        memo.insert(key, ok);
+        ok
+    }
+
+    fn poss<S, A, StepFn>(
+        s: &S,
+        f: &Formula,
+        k: usize,
+        actions: &[A],
+        step: &StepFn,
+        memo: &mut std::collections::HashMap<(S, Formula, usize), bool>,
+        policy: &mut Policy<S, A>,
+    ) -> bool
+    where
+        S: Clone + Eq + Hash,
+        A: Clone,
+        StepFn: Fn(&S, &A) -> Vec<(Valuation, S, bool)>,
+    {
+        debug_assert!(k >= 1);
+        let f = simplify(f.clone());
+        let key = (s.clone(), f.clone(), k);
+        if let Some(v) = memo.get(&key) {
+            return *v;
+        }
+
+        let mut ok = false;
+        'actions: for a in actions {
+            let outs = step(s, a);
+            if outs.is_empty() {
+                continue;
+            }
+
+            for (val, ns, is_end) in outs {
+                let step_is_last = is_end || k == 1;
+                let sat = if step_is_last {
+                    eval_last(&f, &val)
+                } else {
+                    let nf = progress(&f, &val);
+                    poss(&ns, &nf, k - 1, actions, step, memo, policy)
+                };
+                if sat {
+                    ok = true;
+                    policy.insert((s.clone(), f.clone(), k), a.clone());
+                    break 'actions;
+                }
+            }
+        }
+
+        memo.insert(key, ok);
+        ok
+    }
+
+    let mut memo_win: std::collections::HashMap<(S, Formula, usize), bool> =
+        std::collections::HashMap::new();
+    let mut policy_win: Policy<S, A> = Policy::new();
+    if win(
+        &initial,
+        &spec0,
+        max_steps,
+        actions,
+        &step,
+        &mut memo_win,
+        &mut policy_win,
+    ) {
+        return SynthResult {
+            verdict: BestEffort::Guaranteed,
+            strategy: Some(policy_win),
+        };
+    }
+
+    let mut memo_poss: std::collections::HashMap<(S, Formula, usize), bool> =
+        std::collections::HashMap::new();
+    let mut policy_poss: Policy<S, A> = Policy::new();
+    if poss(
+        &initial,
+        &spec0,
+        max_steps,
+        actions,
+        &step,
+        &mut memo_poss,
+        &mut policy_poss,
+    ) {
+        return SynthResult {
+            verdict: BestEffort::Possible,
+            strategy: Some(policy_poss),
+        };
+    }
+
+    SynthResult {
+        verdict: BestEffort::Impossible,
+        strategy: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,5 +854,81 @@ mod tests {
             let want = sat_trace(&f, &trace);
             prop_assert_eq!(got, want);
         }
+    }
+
+    #[test]
+    fn best_effort_guaranteed_single_step() {
+        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        enum S {
+            Start,
+        }
+        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        enum A {
+            Safe,
+            Risky,
+        }
+
+        let spec = Formula::not_atom("bad");
+        let spec0 = simplify(spec.clone());
+        let actions = vec![A::Safe, A::Risky];
+
+        let r = synthesize_bounded(spec, S::Start, 1, &actions, |_s, a| match a {
+            A::Safe => vec![(Valuation::new(), S::Start, true)],
+            A::Risky => vec![
+                (v1("bad"), S::Start, true),
+                (Valuation::new(), S::Start, true),
+            ],
+        });
+
+        assert_eq!(r.verdict, BestEffort::Guaranteed);
+        let strat = r.strategy.expect("strategy");
+        assert_eq!(strat.get(&(S::Start, spec0, 1)), Some(&A::Safe));
+    }
+
+    #[test]
+    fn best_effort_possible_but_not_guaranteed_single_step() {
+        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        enum S {
+            Start,
+        }
+        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        enum A {
+            Try,
+        }
+
+        let spec = Formula::atom("good");
+        let actions = vec![A::Try];
+
+        let r = synthesize_bounded(spec, S::Start, 1, &actions, |_s, _a| {
+            vec![
+                (Valuation::new(), S::Start, true),
+                (v1("good"), S::Start, true),
+            ]
+        });
+
+        assert_eq!(r.verdict, BestEffort::Possible);
+        assert!(r.strategy.is_some());
+    }
+
+    #[test]
+    fn best_effort_impossible_single_step() {
+        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        enum S {
+            Start,
+        }
+        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        enum A {
+            Only,
+        }
+
+        let spec = Formula::atom("good");
+        let actions = vec![A::Only];
+
+        let r = synthesize_bounded(spec, S::Start, 1, &actions, |_s, _a| {
+            vec![(Valuation::new(), S::Start, true)]
+        });
+
+        assert_eq!(r.verdict, BestEffort::Impossible);
+        assert!(r.strategy.is_none());
     }
 }
