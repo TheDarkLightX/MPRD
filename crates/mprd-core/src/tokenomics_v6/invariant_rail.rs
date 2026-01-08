@@ -560,4 +560,139 @@ mod tests {
             ce.map(|x| x.trace)
         );
     }
+
+    #[test]
+    fn ltlf_tokenomics_v6_epoch_advance_best_effort_synthesis() {
+        // Demonstrate the difference between:
+        // - Guaranteed: there exists an agent strategy that succeeds against all environment outcomes
+        // - Possible: the goal is satisfiable on some paths, but the environment can block it
+        //
+        // We model "environment can fail an action" by adding a nondeterministic failure outcome
+        // that leaves state unchanged. This is a conservative adversary model for liveness goals.
+
+        fn atom(name: &str) -> ltlf::Valuation {
+            let mut out = ltlf::Valuation::new();
+            out.insert(name.to_string());
+            out
+        }
+
+        let p = params();
+        let bounds = RuntimeBoundsV6::default();
+        let a = oid(1);
+        let b = oid(2);
+
+        let mut eng = TokenomicsV6::new_with_bounds(p, bounds).expect("engine");
+        let gate = AllowAllGateV6;
+        eng.apply(&gate, ActionV6::AdmitOperator { operator: a })
+            .expect("admit a");
+        eng.apply(&gate, ActionV6::AdmitOperator { operator: b })
+            .expect("admit b");
+        eng.apply(
+            &gate,
+            ActionV6::CreditAgrs {
+                operator: a,
+                amt: Agrs::new(1_000_000),
+            },
+        )
+        .expect("credit");
+        eng.apply(
+            &gate,
+            ActionV6::ApplyServiceTx(ServiceTx {
+                payer: a,
+                servicer: b,
+                base_fee_agrs: Agrs::new(10_000),
+                tip_agrs: Agrs::new(100),
+                offset_request_bcr: Bcr::new(0),
+                work_units: 1_000,
+                nonce: Hash32([7; 32]),
+            }),
+        )
+        .expect("service tx");
+
+        #[derive(Clone)]
+        struct Tok {
+            eng: TokenomicsV6,
+            id: Hash32,
+        }
+
+        impl Tok {
+            fn new(eng: TokenomicsV6) -> Self {
+                let id = eng.state_hash_v1();
+                Self { eng, id }
+            }
+        }
+
+        impl PartialEq for Tok {
+            fn eq(&self, other: &Self) -> bool {
+                self.id == other.id
+            }
+        }
+        impl Eq for Tok {}
+        impl Hash for Tok {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                self.id.hash(state)
+            }
+        }
+
+        let init = Tok::new(eng);
+
+        // Goal: within 3 steps, reach an advance.
+        let goal = ltlf::Formula::eventually(ltlf::Formula::atom("ok_advance"));
+
+        let actions: Vec<ActionV6> = vec![
+            ActionV6::SettleOpsPayroll,
+            ActionV6::SettleAuction,
+            ActionV6::AdvanceEpoch {
+                next_epoch: EpochId(1),
+            },
+        ];
+
+        // Deterministic environment (engine semantics only): this should be Guaranteed.
+        let det = ltlf::synthesize_bounded(goal.clone(), init.clone(), 3, &actions, |s, a| {
+            let mut eng2 = s.eng.clone();
+            match eng2.apply(&gate, a.clone()) {
+                Ok(_) => {
+                    let ok_atom = match a {
+                        ActionV6::SettleOpsPayroll => "ok_settle_payroll",
+                        ActionV6::SettleAuction => "ok_settle_auction",
+                        ActionV6::AdvanceEpoch { .. } => "ok_advance",
+                        _ => "ok_other",
+                    };
+                    let mut v = atom(ok_atom);
+                    v.extend(atom("attempt"));
+                    let is_end = ok_atom == "ok_advance";
+                    vec![(v, Tok::new(eng2), is_end)]
+                }
+                Err(_) => vec![(atom("err"), Tok::new(eng2), false)],
+            }
+        });
+        assert_eq!(det.verdict, ltlf::BestEffort::Guaranteed);
+
+        // Adversarial environment: can choose to fail any action (even if it would succeed),
+        // leaving state unchanged. This blocks the liveness goal, so it's only Possible.
+        let adv = ltlf::synthesize_bounded(goal, init, 3, &actions, |s, a| {
+            let mut out: Vec<(ltlf::Valuation, Tok, bool)> = Vec::new();
+
+            // Failure branch: no state change, no end.
+            out.push((atom("env_fail"), s.clone(), false));
+
+            // Success branch (only if the real engine would accept it).
+            let mut eng2 = s.eng.clone();
+            if eng2.apply(&gate, a.clone()).is_ok() {
+                let ok_atom = match a {
+                    ActionV6::SettleOpsPayroll => "ok_settle_payroll",
+                    ActionV6::SettleAuction => "ok_settle_auction",
+                    ActionV6::AdvanceEpoch { .. } => "ok_advance",
+                    _ => "ok_other",
+                };
+                let mut v = atom(ok_atom);
+                v.extend(atom("attempt"));
+                let is_end = ok_atom == "ok_advance";
+                out.push((v, Tok::new(eng2), is_end));
+            }
+
+            out
+        });
+        assert_eq!(adv.verdict, ltlf::BestEffort::Possible);
+    }
 }
