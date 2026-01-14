@@ -1206,6 +1206,41 @@ theorem run_canonicalizeSwap_eq
   -- unfold one step
   simp [canonicalizeSwap] at *
 
+-- `canonicalizeSwap` preserves length (since each `canonStep` does).
+theorem length_canonicalizeSwap
+    {k : Nat} (caps : Caps k) (x0 : State k) :
+    ∀ xs : List (Action k),
+      (canonicalizeSwap (k := k) caps x0 xs).length = xs.length := by
+  classical
+  refine (measure_wf (fun xs : List (Action k) => encodeKeys (k := k) xs)).induction ?_
+  intro xs ih
+  -- unfold one step; split on fixed point vs recursion.
+  simp [canonicalizeSwap] at *
+  split
+  · simp
+  · -- recursive case: `ys := canonStep ... xs`
+    -- `canonStep` preserves length and IH applies to `ys`.
+    simpa [length_canonStep] using ih _ (by assumption)
+
+-- Bounded-horizon reachability completeness, using `canonicalizeSwap` as the canonical representative.
+theorem reachableWithin_via_canonicalizeSwap
+    {k : Nat} (caps : Caps k) (x0 : State k) (h : Nat) (x : State k) :
+    ReachableWithin (k := k) caps x0 h x ↔
+      ∃ xs : List (Action k),
+        xs.length ≤ h ∧ run caps (canonicalizeSwap (k := k) caps x0 xs) x0 = x := by
+  constructor
+  · intro hx
+    rcases hx with ⟨xs, hlen, hr⟩
+    refine ⟨xs, hlen, ?_⟩
+    simpa [hr] using (run_canonicalizeSwap_eq (caps := caps) (x0 := x0) xs)
+  · intro hx
+    rcases hx with ⟨xs, hlen, hr⟩
+    refine ⟨canonicalizeSwap (k := k) caps x0 xs, ?_, ?_⟩
+    · have hlen' : (canonicalizeSwap (k := k) caps x0 xs).length = xs.length :=
+        length_canonicalizeSwap (caps := caps) (x0 := x0) xs
+      simpa [hlen'] using hlen
+    · exact hr
+
 /-!
 ### Canonicalization stays within the swap-equivalence class
 

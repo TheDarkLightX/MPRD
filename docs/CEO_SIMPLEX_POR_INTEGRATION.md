@@ -148,6 +148,10 @@ If/when we adopt a k-way simplex split menu (Mode B), the core building block is
   - Modes:
     - `TracePor`: POR canonical trace dedup (uses `simplex_planner` + `stable_enabled_ineq` oracle cache)
     - `StateSymmetry`: symmetry-class state-key dedup (uses `simplex_symmetry_key`)
+    - `AmplePorDfsC2`: DFS ample-set POR with a cycle proviso (C2) and a **decision-safety visibility contract**
+      for linear objectives: if any enabled move would change the linear score (`w[src] != w[dst]`), the
+      planner expands all enabled actions at that state (no reduction). Reduction only occurs in
+      “objective-invisible” regions where enabled moves are score-neutral.
 
 This module is **not yet wired into** the production v6 `MenuGraph` CEO; it exists to make Mode B feasible
 without precomputing an exponential menu graph.
@@ -170,12 +174,12 @@ crossover summary via:
 
 The rail also enforces a strict crossover gate:
 
-- For the “expensive evaluation” regime (`eval_iters >= 200`), **POR must be a net win** on the sweep:
+- For the “expensive evaluation” regime (`eval_iters >= 200`), **symmetry quotienting must be a net win** on the sweep:
   - win_rate ≥ 0.75
   - median_ratio ≤ 1.0
 
 This gate is implemented by:
-- `tools/ceo/check_ceo_simplex_sweep_strict.py`
+- `tools/ceo/check_ceo_simplex_sweep_strict.py --gate sym`
 
 ### (T0) Symmetry quotient correctness (swap of interchangeable buckets)
 If two buckets are observationally indistinguishable (same caps and same role in objective/gates),

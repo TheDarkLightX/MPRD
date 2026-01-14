@@ -17,6 +17,7 @@ use crate::{MprdError, Result};
 
 use super::simplex_planner::{self, OracleCache};
 use super::simplex_por_oracle::{self, Transfer};
+use super::simplex_ample_set;
 use super::simplex_symmetry_key;
 
 /// Planning mode / dedup strategy.
@@ -26,6 +27,11 @@ pub enum SimplexCeoMode {
     TracePor,
     /// Deduplicate by symmetry-class state key (quotienting interchangeable buckets).
     StateSymmetry,
+    /// Experimental: DFS ample-set POR (C2 cycle proviso) with a decision-safety visibility contract.
+    ///
+    /// Currently supported only for `plan_best_linear` (linear objectives), and fail-closed if the
+    /// expansion budget is exceeded.
+    AmplePorDfsC2,
 }
 
 /// Configuration for simplex-mode planning.
@@ -314,6 +320,11 @@ pub fn plan_best(
                 }
             }
         }
+        SimplexCeoMode::AmplePorDfsC2 => {
+            return Err(MprdError::InvalidInput(
+                "simplex_ceo::plan_best: AmplePorDfsC2 is only supported for plan_best_linear".into(),
+            ));
+        }
     }
 
     let Some((score, depth, _fk, target, first_action, _)) = best else {
@@ -353,6 +364,56 @@ pub fn plan_best_linear(
             "simplex_ceo::plan_best_linear: weights length mismatch".into(),
         ));
     }
+    // Symmetry quotienting is only sound if the objective and all observables are permutation-invariant
+    // within each class. For the linear objective, a necessary condition is: if two buckets are grouped
+    // together by `weights_for_symmetry`, then their true linear weights `w[i]` must be identical.
+    //
+    // Fail-closed: if this check fails, we reject instead of silently applying symmetry dedup.
+    if mode == SimplexCeoMode::StateSymmetry {
+        let k = x0.len();
+        if weights_for_symmetry.len() != k {
+            return Err(MprdError::InvalidInput(
+                "simplex_ceo::plan_best_linear: weights_for_symmetry length mismatch".into(),
+            ));
+        }
+        for i in 0..k {
+            for j in (i + 1)..k {
+                let same_class =
+                    caps[i] == caps[j] && weights_for_symmetry[i] == weights_for_symmetry[j];
+                if same_class && w[i] != w[j] {
+                    return Err(MprdError::InvalidInput(format!(
+                        "simplex_ceo::plan_best_linear: unsound symmetry class: (i={i}, j={j}) have same (cap,role) but w differs ({} vs {})",
+                        w[i], w[j]
+                    )));
+                }
+            }
+        }
+    }
+
+    if mode == SimplexCeoMode::AmplePorDfsC2 {
+        // Decision-quality POR for linear objectives only.
+        let (target, score, depth, first_action) = simplex_ample_set::plan_best_linear_dfs_c2(
+            x0,
+            caps,
+            w,
+            horizon,
+            budget_expanded,
+            require_sum,
+        )?;
+        let mut next = x0.to_vec();
+        if let Some(a) = first_action {
+            // reuse local helper behavior: step-or-stay from x0 by the first action.
+            step_or_stay_inplace(x0, caps, a, &mut next);
+        }
+        return Ok(SimplexCeoDecision {
+            target,
+            score,
+            depth,
+            first_action,
+            next,
+        });
+    }
+
     plan_best(
         mode,
         x0,
@@ -446,7 +507,8 @@ mod tests {
         let x0 = vec![3, 1, 2];
         let caps = vec![6, 6, 6];
         let w = vec![10, 1, 2];
-        let w_sym = vec![7u32, 7u32, 1u32];
+        // Fail-closed symmetry contract: only group buckets with identical true objective weights.
+        let w_sym = vec![10u32, 1u32, 2u32];
         let h = 3;
 
         let (b_score, b_state, b_first) = brute_best_linear(&x0, &caps, &w, h);
@@ -480,13 +542,28 @@ mod tests {
         assert_eq!(sym.score, b_score);
         assert_eq!(sym.target, b_state);
         assert_eq!(sym.first_action, b_first);
+
+        let ample = plan_best_linear(
+            SimplexCeoMode::AmplePorDfsC2,
+            &x0,
+            &caps,
+            &w_sym,
+            &w,
+            h,
+            20000,
+            Some(6),
+        )
+        .unwrap();
+        assert_eq!(ample.score, b_score);
+        assert_eq!(ample.target, b_state);
+        assert_eq!(ample.first_action, b_first);
     }
 
     #[test]
     fn config_wrapper_matches_functions() {
         let x0 = vec![3, 1, 2];
         let caps = vec![6, 6, 6];
-        let w_sym = vec![7u32, 7u32, 1u32];
+        let w_sym = vec![10u32, 1u32, 2u32];
         let w = vec![10, 1, 2];
         let cfg = SimplexCeoConfig {
             mode: SimplexCeoMode::TracePor,
@@ -508,6 +585,27 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn symmetry_mode_rejects_inconsistent_linear_weights() {
+        // Buckets 0 and 1 are in the same symmetry class by (cap, role) but have different true weights.
+        // Symmetry quotienting would be unsound here, so we must reject.
+        let x0 = vec![2, 2, 2];
+        let caps = vec![6, 6, 6];
+        let w = vec![10, 11, 1];
+        let w_sym = vec![7u32, 7u32, 1u32];
+        let r = plan_best_linear(
+            SimplexCeoMode::StateSymmetry,
+            &x0,
+            &caps,
+            &w_sym,
+            &w,
+            3,
+            10_000,
+            Some(6),
+        );
+        assert!(r.is_err());
     }
 }
 
