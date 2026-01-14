@@ -24,6 +24,7 @@ pub mod registry;
 pub mod selectors;
 pub mod state_provenance;
 pub mod tau;
+pub mod tau_testnet;
 pub mod tau_net_output_attestation;
 pub mod tokenomics_v6;
 pub mod validation;
@@ -42,6 +43,14 @@ pub type PolicyHash = Hash32;
 pub type StateHash = Hash32;
 pub type CandidateHash = Hash32;
 pub type NonceHash = Hash32;
+
+/// Internal-only semantic hash for policy equivalence/dedup.
+///
+/// Security contract:
+/// - Do NOT use this as a protocol commitment or authorization handle.
+/// - Only use as a cache key for “policy meaning” under the current compiler restrictions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct PolicySemanticHash(pub Hash32);
 
 /// Reference to the policy authorization context.
 ///

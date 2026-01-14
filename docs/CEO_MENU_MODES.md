@@ -71,3 +71,14 @@ An action is a *unit transfer* `i→j`:
 
 To support toggles cleanly, treat “mode change” as a **policy-gated action** with cooldown (so it can’t be flapped).
 
+## Implementation status (current repo)
+
+- **Mode A**: implemented via `MenuGraph` and controllers in `crates/mprd-core/src/tokenomics_v6/{ceo.rs,ceo_lipschitz_ucb.rs}`.
+- **Mode B building blocks (simplex)**: implemented as research-backed, deterministic modules:
+  - Oracle: `crates/mprd-core/src/tokenomics_v6/simplex_por_oracle.rs`
+  - Canonicalization + cache: `crates/mprd-core/src/tokenomics_v6/simplex_planner.rs`
+  - Bounded-horizon planner: `crates/mprd-core/src/tokenomics_v6/simplex_ceo.rs`
+  - Symmetry quotient key: `crates/mprd-core/src/tokenomics_v6/simplex_symmetry_key.rs`
+
+For a one-command reproducibility gate (tests + sweep + summaries), see:
+- `bash tools/ceo/check_ceo_simplex_rail.sh`

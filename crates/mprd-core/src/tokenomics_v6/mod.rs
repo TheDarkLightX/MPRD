@@ -27,6 +27,10 @@ pub mod menu_graph;
 pub mod objective;
 pub mod pid;
 pub mod safety_controller;
+pub mod simplex_por_oracle;
+pub mod simplex_planner;
+pub mod simplex_symmetry_key;
+pub mod simplex_ceo;
 pub mod types;
 
 pub use actions::{ActionOutcomeV6, ActionV6};
@@ -38,6 +42,9 @@ pub use engine::{EpochBudgetsV6, OpsPayrollOutcome, ServiceTx, TokenomicsV6};
 pub use gate::{AllowAllGateV6, DenyAllGateV6, PolicyGateV6};
 pub use invariant_rail::{first_invariant_counterexample_v1, minimize_counterexample_v1};
 pub use invariants::{InvariantCounterexampleV6, InvariantIdV6, InvariantViolationV6};
+pub use simplex_ceo::{
+    plan_best, plan_best_linear, SimplexCeoConfig, SimplexCeoDecision, SimplexCeoMode,
+};
 pub use objective::{
     evaluate_hybrid, evaluate_opi_first, evaluate_profit_utility, ObjectiveConfig,
     ObjectiveConfigState, ObjectiveEvaluator, ObjectiveId, ObjectiveState,

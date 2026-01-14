@@ -13,7 +13,7 @@ Steam is raw power. Uncontained, it dissipates uselessly into the air. But chann
 
 **Intelligence is no different.**
 
-An AI model generates immense creative potential—ideas, strategies, solutions. But without structure, that potential is either wasted or dangerous. MPRD is the engine that harnesses this force. Every action that executes has passed through a governor that enforces what is allowed. Not by hope, not by training, not by alignment theater. By *architecture*.
+An AI model generates immense creative potential: ideas, strategies, solutions. But without structure, that potential is either wasted or dangerous. MPRD is the engine that harnesses this force. Every action that executes has passed through a governor that enforces what is allowed. Not by hope, not by training, not by alignment theater. By *architecture*.
 
 The model cannot execute. The executor cannot act without a valid token. The token cannot be minted unless the rules allow it. This is the piston. This is the sail. This is how raw intelligence becomes useful work.
 
@@ -155,6 +155,7 @@ cargo build --release
 | [**Security Hardening**](docs/SECURITY_HARDENING_CHECKLIST.md) | Security best practices |
 | [**Testing Guide**](docs/TESTING.md) | Testing strategies and commands |
 | [**CEO Menu Modes**](docs/CEO_MENU_MODES.md) | Algorithmic tokenomics controller |
+| [**CEO Simplex POR (Whitepaper PDF)**](public/whitepapers/CEO_Simplex_POR_Whitepaper.pdf) | Guarded simplex transfers, constant-time independence oracle, and certified commutation + trace swap + canonicalization invariance results |
 | [**ZK Production**](docs/PRODUCTION_ZK.md) | ZK proof deployment guide |
 
 ## Testing

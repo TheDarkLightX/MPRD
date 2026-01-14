@@ -1,0 +1,226 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+
+\lstdefinelanguage{lean}{
+  morekeywords={namespace,open,abbrev,def,structure,inductive,instance,theorem,axiom,by,fun,forall,Prop,Type,where,match,with,let,if,then,else,intro,exact,have,refine,simpa,unfold,simp,constructor},
+  sensitive=true,
+  morecomment=[l]{--},
+  morecomment=[s]{/-}{-/},
+  morestring=[b]"
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!60!black},
+  commentstyle=\color{gray!70!black},
+  stringstyle=\color{teal!60!black},
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{black!20},
+  columns=fullflexible,
+  % Allow common Lean unicode tokens inside listings when using pdflatex:
+  literate=
+    {→}{{$\to$}}1
+    {∧}{{$\wedge$}}1
+    {∨}{{$\vee$}}1
+    {≤}{{$\le$}}1
+    {≥}{{$\ge$}}1
+    {≠}{{$\neq$}}1
+    {∀}{{$\forall$}}1
+    {∃}{{$\exists$}}1
+    {↔}{{$\leftrightarrow$}}1
+}
+
+\title{Certified Partial-Order Reduction and Symmetry Quotienting for Guarded Simplex Transfer Menus}
+\author{Dana Edwards}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We formalize and implement a planning substrate for k-way allocation menus modeled as guarded unit transfers on the integer simplex.
+Na\"ive commutativity fails globally under guards; instead we use a \emph{state-dependent} POR independence predicate and prove:
+(i) two-step commutation under stable-enabledness, (ii) trace-level adjacent swap invariance, (iii) a swap-equivalence relation with run-invariance,
+(iv) deterministic trace canonicalization with run- and horizon-invariance, and (v) symmetry equivariance for bucket transpositions supporting quotienting.
+We provide a runtime oracle matching the formal predicate, a deterministic canonicalizer with a sound oracle cache, a bounded-horizon simplex CEO planner,
+and a decision-quality benchmark gate that enforces a measurable crossover regime where POR becomes a net runtime win.
+\end{abstract}
+
+\section{Artifacts, scope, and what is proved}
+\paragraph{Proof artifact (machine-checked).}
+All theorems cited in this document are mechanically checked in Lean 4 in:
+\begin{center}
+\texttt{LeanProofs/CEO\_SimplexPOR.lean}
+\end{center}
+The proof bundle builds with:
+\begin{center}
+\texttt{cd LeanProofs \&\& lake build}
+\end{center}
+
+\paragraph{Runtime artifact (Rust).}
+The executable counterparts are:
+\begin{itemize}[nosep]
+  \item oracle and semantics: \texttt{crates/mprd-core/src/tokenomics\_v6/simplex\_por\_oracle.rs}
+  \item canonicalization + oracle cache: \texttt{crates/mprd-core/src/tokenomics\_v6/simplex\_planner.rs}
+  \item symmetry key: \texttt{crates/mprd-core/src/tokenomics\_v6/simplex\_symmetry\_key.rs}
+  \item bounded-horizon simplex CEO planner: \texttt{crates/mprd-core/src/tokenomics\_v6/simplex\_ceo.rs}
+\end{itemize}
+
+\paragraph{One explicitly non-proved lemma (declared as an axiom).}
+The Lean file includes \emph{one} independence lemma for the static ``disjoint endpoints'' criterion as an \texttt{axiom}
+(\texttt{stepOrStay[]comm[]of[]disjoint[]enabled}). All other theorems cited below are \texttt{theorem}s in Lean.
+
+\section{Formal model}
+\subsection{State, caps, and actions}
+We model simplex menu states as functions over \(\mathrm{Fin}\ k\).
+The exact Lean definitions are:
+
+\begin{lstlisting}[language=lean,caption={Core types (Lean)}]
+abbrev State (k : Nat) := Fin k → Nat
+abbrev Caps (k : Nat) := Fin k → Nat
+
+structure Action (k : Nat) where
+  src : Fin k
+  dst : Fin k
+  hne : src ≠ dst
+\end{lstlisting}
+
+\subsection{Enabledness and guarded step (failure-as-no-op)}
+\paragraph{Enabledness.}
+
+\begin{lstlisting}[language=lean,caption={Enabled predicate (Lean)}]
+def enabled {k : Nat} (caps : Caps k) (x : State k) (a : Action k) : Prop :=
+  x a.src > 0 ∧ x a.dst < caps a.dst
+\end{lstlisting}
+
+\paragraph{Guarded step semantics.}
+We define a successful \texttt{step} (used under enabledness hypotheses), and the guarded \texttt{stepOrStay}:
+
+\begin{lstlisting}[language=lean,caption={Guarded stepOrStay (Lean)}]
+def step {k : Nat} (x : State k) (a : Action k) : State k :=
+  let x1 := update x a.src (x a.src - 1)
+  update x1 a.dst (x a.dst + 1)
+
+def stepOrStay {k : Nat} (caps : Caps k) (x : State k) (a : Action k) : State k :=
+  if enabled caps x a then
+    step x a
+  else
+    x
+\end{lstlisting}
+
+\section{POR independence predicate and closed-form sufficient oracle}
+\subsection{Stable-enabledness (dynamic POR independence)}
+We define the dynamic stable-enabledness predicate:
+
+\begin{lstlisting}[language=lean,caption={Stable-enabledness (Lean)}]
+def stableEnabled {k : Nat} (caps : Caps k) (x : State k) (a b : Action k) : Prop :=
+  enabled caps x a ∧ enabled caps x b ∧
+    enabled caps (stepOrStay caps x a) b ∧ enabled caps (stepOrStay caps x b) a
+\end{lstlisting}
+
+\subsection{Closed-form sufficient condition (stableEnabledIneq)}
+\begin{lstlisting}[language=lean,caption={Closed-form sufficient oracle (Lean)}]
+def stableEnabledIneq {k : Nat} (caps : Caps k) (x : State k) (a b : Action k) : Prop :=
+  enabled caps x a ∧
+  enabled caps x b ∧
+  (b.src = a.src → x a.src > 1) ∧
+  (b.dst = a.dst → x a.dst + 1 < caps a.dst) ∧
+  (a.src = b.src → x b.src > 1) ∧
+  (a.dst = b.dst → x b.dst + 1 < caps b.dst)
+\end{lstlisting}
+
+\begin{lstlisting}[language=lean,caption={Oracle implies stable-enabledness (Lean)}]
+theorem stableEnabled_of_stableEnabledIneq
+    {k : Nat} (caps : Caps k) (x : State k) (a b : Action k) :
+    stableEnabledIneq caps x a b → stableEnabled caps x a b := by
+  ...
+\end{lstlisting}
+
+\section{Two-step commutation and trace-level swap}
+\begin{lstlisting}[language=lean,caption={Two-step commutation (Lean)}]
+theorem stepOrStay_comm_of_stableEnabled
+    {k : Nat} (caps : Caps k) (x : State k) (a b : Action k) :
+    stableEnabled caps x a b →
+      stepOrStay caps (stepOrStay caps x a) b = stepOrStay caps (stepOrStay caps x b) a := by
+  ...
+\end{lstlisting}
+
+\begin{lstlisting}[language=lean,caption={Oracle implies commutation (Lean)}]
+theorem stepOrStay_comm_of_stableEnabledIneq
+    {k : Nat} (caps : Caps k) (x : State k) (a b : Action k) :
+    stableEnabledIneq caps x a b →
+      stepOrStay caps (stepOrStay caps x a) b = stepOrStay caps (stepOrStay caps x b) a := by
+  ...
+\end{lstlisting}
+
+\begin{lstlisting}[language=lean,caption={Trace run and adjacent-swap lemma (Lean)}]
+def run {k : Nat} (caps : Caps k) : List (Action k) → State k → State k
+  | [], x => x
+  | a :: as, x => run caps as (stepOrStay caps x a)
+
+theorem run_swap_adjacent_of_stableEnabledIneq
+    {k : Nat} (caps : Caps k) (pre suf : List (Action k)) (x : State k) (a b : Action k) :
+    stableEnabledIneq caps (run caps pre x) a b →
+      run caps (pre ++ (a :: b :: suf)) x = run caps (pre ++ (b :: a :: suf)) x := by
+  ...
+\end{lstlisting}
+
+\section{Swap-equivalence (SwapEq) and run invariance}
+\begin{lstlisting}[language=lean,caption={SwapEq and run invariance (Lean)}]
+inductive SwapEq {k : Nat} (caps : Caps k) (x0 : State k) : List (Action k) → List (Action k) → Prop where
+  | refl (xs : List (Action k)) : SwapEq caps x0 xs xs
+  | step {xs ys : List (Action k)} : SwapStep caps x0 xs ys → SwapEq caps x0 xs ys
+  | trans {xs ys zs : List (Action k)} : SwapEq caps x0 xs ys → SwapEq caps x0 ys zs → SwapEq caps x0 xs zs
+  | symm {xs ys : List (Action k)} : SwapEq caps x0 xs ys → SwapEq caps x0 ys xs
+
+theorem run_invariant_of_SwapEq
+    {k : Nat} (caps : Caps k) (x0 : State k) :
+    ∀ {xs ys : List (Action k)}, SwapEq (k := k) caps x0 xs ys → run caps xs x0 = run caps ys x0 := by
+  ...
+\end{lstlisting}
+
+\section{Canonicalization and bounded-horizon completeness}
+\begin{lstlisting}[language=lean,caption={Canonicalization preserves run and length (Lean)}]
+def canonicalize {k : Nat} (caps : Caps k) (x0 : State k) (xs : List (Action k)) : List (Action k) :=
+  canonIter (k := k) caps x0 (xs.length * xs.length) xs
+
+theorem run_canonicalize_eq
+    {k : Nat} (caps : Caps k) (x0 : State k) (xs : List (Action k)) :
+    run caps (canonicalize (k := k) caps x0 xs) x0 = run caps xs x0 := by
+  ...
+
+theorem length_canonicalize
+    {k : Nat} (caps : Caps k) (x0 : State k) (xs : List (Action k)) :
+    (canonicalize (k := k) caps x0 xs).length = xs.length := by
+  ...
+\end{lstlisting}
+
+\begin{lstlisting}[language=lean,caption={Reachability completeness under canonicalize (Lean)}]
+def ReachableWithin {k : Nat} (caps : Caps k) (x0 : State k) (h : Nat) (x : State k) : Prop :=
+  ∃ xs : List (Action k), xs.length ≤ h ∧ run caps xs x0 = x
+
+theorem reachableWithin_via_canonicalize
+    {k : Nat} (caps : Caps k) (x0 : State k) (h : Nat) (x : State k) :
+    ReachableWithin (k := k) caps x0 h x ↔
+      ∃ xs : List (Action k), xs.length ≤ h ∧ run caps (canonicalize (k := k) caps x0 xs) x0 = x := by
+  ...
+\end{lstlisting}
+
+\section{Benchmark gate}
+\begin{center}
+\texttt{bash tools/ceo/check\_ceo\_simplex\_rail.sh}
+\end{center}
+The rail blocks regressions by requiring, on sweep rows with \(\texttt{eval\_iters}\ge 200\),
+POR win-rate \(\ge 0.75\) and median runtime ratio \(\le 1.0\), implemented by
+\texttt{tools/ceo/check\_ceo\_simplex\_sweep\_strict.py}.
+
+\end{document}
+
