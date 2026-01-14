@@ -20,6 +20,7 @@ class Row:
     trace_por: dict[str, Any]
     state_base: dict[str, Any]
     state_sym: dict[str, Any]
+    ceo_linear: dict[str, Any] | None
 
 
 def _extract_last_obj_with_rows(raw: str) -> dict[str, Any]:
@@ -62,6 +63,7 @@ def _rows(doc: dict[str, Any]) -> list[Row]:
                 trace_por=r["trace_por"],
                 state_base=r["state_baseline"],
                 state_sym=r["state_symmetry"],
+                ceo_linear=r.get("ceo_linear"),
             )
         )
     return out
@@ -101,6 +103,37 @@ def main() -> int:
             f"trace {tb:5d} {tp:5d} {tr_ratio:6.3f} | "
             f"state {sb:5d} {ss:5d} {st_ratio:6.3f}"
         )
+
+    # Decision-quality: CEO linear objective agreement rates (if present).
+    have_ceo = any(r.ceo_linear is not None for r in rows)
+    if have_ceo:
+        def _agree(r: Row, key: str) -> bool:
+            if r.ceo_linear is None:
+                return True
+            v = r.ceo_linear.get(key, {})
+            # baseline has no agree field
+            if "ok" in v and not v.get("ok"):
+                return False
+            return bool(v.get("agree", True))
+
+        def _median_ratio(r: Row, key: str) -> float:
+            if r.ceo_linear is None:
+                return 1.0
+            b = float(r.ceo_linear["baseline"].get("seconds_total", 0.0))
+            x = float(r.ceo_linear.get(key, {}).get("seconds_total", 0.0))
+            return _ratio(x, b if b > 0 else 1e-12)
+
+        keys = ["trace_por", "state_symmetry", "ample_por"]
+        print()
+        print("=== CEO decision-quality (linear objective) ===")
+        for key in keys:
+            agrees = [1 if _agree(r, key) else 0 for r in rows if r.ceo_linear is not None]
+            if not agrees:
+                continue
+            agree_rate = sum(agrees) / len(agrees)
+            ratios = sorted(_median_ratio(r, key) for r in rows if r.ceo_linear is not None)
+            med = ratios[len(ratios) // 2] if ratios else 1.0
+            print(f"{key:13s}: agree_rate={agree_rate:.3f} median_time_ratio_vs_brute={med:.3f}")
 
     print()
     # Quick aggregate: geometric mean of reach ratios (more stable than mean for multiplicative effects)

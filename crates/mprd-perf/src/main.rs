@@ -321,6 +321,7 @@ fn main() {
 
 mod simplex_bench {
     use super::{Config, OutputMode};
+    use mprd_core::tokenomics_v6::simplex_ceo::{self, SimplexCeoMode};
     use mprd_core::tokenomics_v6::simplex_por_oracle::{self, Transfer};
     use mprd_core::tokenomics_v6::simplex_planner;
     use mprd_core::tokenomics_v6::simplex_symmetry_key;
@@ -331,6 +332,36 @@ mod simplex_bench {
 
     type State = Vec<u32>;
     type Action = Transfer;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct CeoDecisionLite {
+        score: i64,
+        depth: usize,
+        first_key: u64,
+        state: Vec<u32>,
+    }
+
+    fn better_ceo_decision(a: &CeoDecisionLite, b: &CeoDecisionLite) -> bool {
+        (a.score > b.score)
+            || (a.score == b.score && a.depth < b.depth)
+            || (a.score == b.score && a.depth == b.depth && a.first_key < b.first_key)
+            || (a.score == b.score
+                && a.depth == b.depth
+                && a.first_key == b.first_key
+                && a.state < b.state)
+    }
+
+    fn decision_lite_from_core(k: usize, d: &simplex_ceo::SimplexCeoDecision) -> CeoDecisionLite {
+        CeoDecisionLite {
+            score: d.score,
+            depth: d.depth,
+            first_key: d
+                .first_action
+                .map(|a| simplex_planner::action_key(k, a) as u64)
+                .unwrap_or(0),
+            state: d.target.clone(),
+        }
+    }
 
     fn all_actions(k: usize) -> Vec<Action> {
         let mut out = Vec::with_capacity(k.saturating_mul(k.saturating_sub(1)));
@@ -652,6 +683,135 @@ mod simplex_bench {
             weights[i] = (i as u32) + 1;
         }
 
+        // CEO decision-quality benchmark setup (linear objective).
+        // Use a deterministic weight pattern with a large symmetry class:
+        // - bucket 0: high weight
+        // - bucket 1: medium weight
+        // - buckets 2..: low equal weight (symmetry within this class is sound)
+        let mut w_lin: Vec<i64> = vec![1; k];
+        w_lin[0] = 5;
+        if k > 1 {
+            w_lin[1] = 2;
+        }
+        let w_sym: Vec<u32> = w_lin.iter().map(|&wi| wi as u32).collect();
+
+        fn brute_ceo_decision_linear(
+            k: usize,
+            h: usize,
+            x0: &[u32],
+            caps: &[u32],
+            w: &[i64],
+        ) -> CeoDecisionLite {
+            let acts = all_actions(k);
+            let mut acts_sorted = acts;
+            acts_sorted.sort_by_key(|&a| simplex_planner::action_key(k, a));
+
+            // state -> (best depth, best first_key at that depth)
+            let mut seen: BTreeMap<Vec<u32>, (usize, u64)> = BTreeMap::new();
+            seen.insert(x0.to_vec(), (0, 0));
+
+            let mut q: VecDeque<(Vec<u32>, usize, u64)> = VecDeque::new();
+            q.push_back((x0.to_vec(), 0, 0));
+
+            let mut best = CeoDecisionLite {
+                score: i64::MIN,
+                depth: usize::MAX,
+                first_key: u64::MAX,
+                state: Vec::new(),
+            };
+            let mut tmp = vec![0u32; k];
+
+            while let Some((x, d, fk)) = q.pop_front() {
+                // evaluate at each visited node (matches simplex_ceo semantics: best over depths <= h)
+                let mut s = 0i64;
+                for i in 0..k {
+                    s = s.saturating_add(w[i].saturating_mul(x[i] as i64));
+                }
+                let cand = CeoDecisionLite {
+                    score: s,
+                    depth: d,
+                    first_key: fk,
+                    state: x.clone(),
+                };
+                if best.state.is_empty() || better_ceo_decision(&cand, &best) {
+                    best = cand;
+                }
+
+                if d >= h {
+                    continue;
+                }
+                for &a in &acts_sorted {
+                    step_or_stay(&x, caps, a, &mut tmp);
+                    let x2 = tmp.clone();
+                    let d2 = d + 1;
+                    let fk2 = if fk != 0 {
+                        fk
+                    } else {
+                        simplex_planner::action_key(k, a) as u64
+                    };
+                    let push = match seen.get(&x2) {
+                        Some(&(d0, fk0)) => (d2 < d0) || (d2 == d0 && fk2 < fk0),
+                        None => true,
+                    };
+                    if push {
+                        seen.insert(x2.clone(), (d2, fk2));
+                        q.push_back((x2, d2, fk2));
+                    }
+                }
+            }
+            best
+        }
+
+        let start = Instant::now();
+        let ceo_base = brute_ceo_decision_linear(k, h, &x0, &caps, &w_lin);
+        let ceo_t0 = start.elapsed().as_secs_f64();
+
+        let start = Instant::now();
+        let ceo_trace = simplex_ceo::plan_best_linear(
+            SimplexCeoMode::TracePor,
+            &x0,
+            &caps,
+            &w_sym,
+            &w_lin,
+            h,
+            cfg.simplex_budget_expanded,
+            Some(t),
+        )
+        .expect("ceo_trace_por");
+        let ceo_t1 = start.elapsed().as_secs_f64();
+        let ceo_trace_lite = decision_lite_from_core(k, &ceo_trace);
+
+        let start = Instant::now();
+        let ceo_sym = simplex_ceo::plan_best_linear(
+            SimplexCeoMode::StateSymmetry,
+            &x0,
+            &caps,
+            &w_sym,
+            &w_lin,
+            h,
+            cfg.simplex_budget_expanded,
+            Some(t),
+        )
+        .expect("ceo_state_symmetry");
+        let ceo_t2 = start.elapsed().as_secs_f64();
+        let ceo_sym_lite = decision_lite_from_core(k, &ceo_sym);
+
+        let start = Instant::now();
+        // Ample POR is fail-closed on budget exhaustion; for perf/sweep runs we record failure
+        // instead of panicking.
+        let ceo_ample_res = simplex_ceo::plan_best_linear(
+            SimplexCeoMode::AmplePorDfsC2,
+            &x0,
+            &caps,
+            &w_sym,
+            &w_lin,
+            h,
+            cfg.simplex_budget_expanded,
+            Some(t),
+        );
+        let ceo_t3 = start.elapsed().as_secs_f64();
+        let ceo_ample_lite = ceo_ample_res.as_ref().ok().map(|d| decision_lite_from_core(k, d));
+
         let start = Instant::now();
         let (acc0, e0, g0, r0) = run_trace_enum(
             k,
@@ -719,6 +879,18 @@ mod simplex_bench {
             "eval_iters": eval_iters,
             "time_ms_budget": cfg.simplex_time_ms,
             "expanded_budget": cfg.simplex_budget_expanded,
+            "ceo_linear": {
+                "weights": w_lin,
+                "weights_sym": w_sym,
+                "baseline": { "seconds_total": ceo_t0, "score": ceo_base.score, "depth": ceo_base.depth, "first_key": ceo_base.first_key, "state": ceo_base.state },
+                "trace_por": { "seconds_total": ceo_t1, "score": ceo_trace_lite.score, "depth": ceo_trace_lite.depth, "first_key": ceo_trace_lite.first_key, "state": ceo_trace_lite.state, "agree": ceo_trace_lite == ceo_base },
+                "state_symmetry": { "seconds_total": ceo_t2, "score": ceo_sym_lite.score, "depth": ceo_sym_lite.depth, "first_key": ceo_sym_lite.first_key, "state": ceo_sym_lite.state, "agree": ceo_sym_lite == ceo_base },
+                "ample_por": if let Some(v) = ceo_ample_lite {
+                    json!({ "seconds_total": ceo_t3, "ok": true, "score": v.score, "depth": v.depth, "first_key": v.first_key, "state": v.state, "agree": v == ceo_base })
+                } else {
+                    json!({ "seconds_total": ceo_t3, "ok": false })
+                },
+            },
             "trace_baseline": { "seconds_total": t0, "expanded": e0, "generated": g0, "reached_states": r0, "acc": acc0 },
             "trace_por":      { "seconds_total": t1, "expanded": e1, "generated": g1, "reached_states": r1, "acc": acc1 },
             "state_baseline": { "seconds_total": t2, "expanded": e2, "generated": g2, "reached_states": r2, "acc": acc2 },
