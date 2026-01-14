@@ -3,6 +3,42 @@ use crate::{MprdError, Result};
 use super::ast::{PolicyExpr, PolicyLimits};
 use super::hash::{encode_policy_v1, policy_hash_v1};
 
+fn has_complement_pair(flat: &[PolicyExpr]) -> bool {
+    // O(n^2) but n is bounded (PolicyLimits.max_children).
+    for (i, a) in flat.iter().enumerate() {
+        for b in flat.iter().skip(i + 1) {
+            match (a, b) {
+                (PolicyExpr::Not(x), y) if **x == *y => return true,
+                (x, PolicyExpr::Not(y)) if **y == *x => return true,
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+fn absorb_in_any(mut flat: Vec<PolicyExpr>) -> Vec<PolicyExpr> {
+    // Absorption: x ∨ (x ∧ y) = x
+    // After canonicalize, nested All nodes are flattened, so we just need to drop any `All(...)`
+    // child that contains some other direct child `x` as a conjunct.
+    let snapshot = flat.clone();
+    flat.retain(|e| {
+        let PolicyExpr::All(conj) = e else { return true };
+        !conj.iter().any(|c| snapshot.contains(c))
+    });
+    flat
+}
+
+fn absorb_in_all(mut flat: Vec<PolicyExpr>) -> Vec<PolicyExpr> {
+    // Absorption: x ∧ (x ∨ y) = x
+    let snapshot = flat.clone();
+    flat.retain(|e| {
+        let PolicyExpr::Any(disj) = e else { return true };
+        !disj.iter().any(|c| snapshot.contains(c))
+    });
+    flat
+}
+
 /// A canonicalized policy with its stable hash commitment.
 #[derive(Clone, Debug)]
 pub struct CanonicalPolicy {
@@ -106,6 +142,14 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
             if !has_deny_if && flat.iter().any(|c| matches!(c, PolicyExpr::False)) {
                 return Ok(PolicyExpr::False);
             }
+            // Boolean contradiction elimination: x ∧ ¬x = False (safe only when no DenyIf is present anywhere).
+            if !has_deny_if && has_complement_pair(&flat) {
+                return Ok(PolicyExpr::False);
+            }
+            // Boolean absorption: x ∧ (x ∨ y) = x (safe only when no DenyIf is present anywhere).
+            if !has_deny_if {
+                flat = absorb_in_all(flat);
+            }
 
             if flat.is_empty() {
                 return Ok(PolicyExpr::True);
@@ -177,6 +221,14 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
             if !has_deny_if && flat.iter().any(|c| matches!(c, PolicyExpr::True)) {
                 return Ok(PolicyExpr::True);
             }
+            // Boolean tautology elimination: x ∨ ¬x = True (safe only when no DenyIf is present anywhere).
+            if !has_deny_if && has_complement_pair(&flat) {
+                return Ok(PolicyExpr::True);
+            }
+            // Boolean absorption: x ∨ (x ∧ y) = x (safe only when no DenyIf is present anywhere).
+            if !has_deny_if {
+                flat = absorb_in_any(flat);
+            }
 
             let mut keyed: Vec<CanonChild> = flat
                 .into_iter()
@@ -225,6 +277,21 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
             // Removing `False` is safe: it can never help satisfy the threshold.
             canon_children.retain(|c| !matches!(c, PolicyExpr::False));
 
+            // `True` always contributes 1 to the allow-count, so we can remove it and decrement k.
+            // This is semantics-preserving even with veto semantics, because `True` carries no `DenyIf`.
+            let mut k_usize = *k as usize;
+            if k_usize > 0 {
+                let mut kept: Vec<PolicyExpr> = Vec::with_capacity(canon_children.len());
+                for ch in canon_children.into_iter() {
+                    if matches!(ch, PolicyExpr::True) {
+                        k_usize = k_usize.saturating_sub(1);
+                    } else {
+                        kept.push(ch);
+                    }
+                }
+                canon_children = kept;
+            }
+
             let mut keyed: Vec<CanonChild> = canon_children
                 .into_iter()
                 .map(|c| CanonChild {
@@ -239,25 +306,50 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
                     .cmp(&b.deny_if_rank)
                     .then_with(|| a.bytes.cmp(&b.bytes))
             });
-            keyed.dedup_by(|a, b| a.bytes == b.bytes);
+            // IMPORTANT: do NOT deduplicate for `Threshold`.
+            //
+            // Unlike `All`/`Any`, `Threshold(k, children)` is sensitive to multiplicity:
+            // duplicates can change the allow-count. Deduplicating would change semantics
+            // (and can spuriously make `k` exceed the new child count).
 
-            let k_usize = *k as usize;
             if k_usize > keyed.len() {
                 return Err(MprdError::InvalidInput(format!(
-                    "PolicyExpr::Threshold invalid after canonicalization: k={k} exceeds deduped child count {}",
+                    "PolicyExpr::Threshold invalid after canonicalization: k={k} exceeds child count {}",
                     keyed.len()
                 )));
             }
+            let has_deny_if = keyed.iter().any(|c| c.expr.contains_deny_if());
+            if k_usize == 0 {
+                // Threshold(0, children) == True in the main semantics, but rewriting is only safe
+                // if it would not erase any DenyIf atoms (veto set). So require no DenyIf anywhere.
+                if !has_deny_if {
+                    return Ok(PolicyExpr::True);
+                }
+            }
             if keyed.is_empty() {
+                // With k>0 and no children, the threshold cannot be met.
                 return Ok(PolicyExpr::False);
             }
-            if *k == 0 {
-                // Threshold(0, children) allows as long as no veto triggers; we keep the structure
-                // (rather than rewriting) so evaluation traces remain explicit.
+            if k_usize == 1 {
+                // Threshold(1, xs) == Any(xs) only when no child can be Neutral; otherwise Neutral
+                // children contribute 0 to the count but do not deny-soft in `Any`, so the two differ.
+                // A sufficient condition is: no DenyIf appears anywhere under the children.
+                if !has_deny_if {
+                    let xs = keyed.into_iter().map(|k| k.expr).collect();
+                    return Ok(PolicyExpr::Any(xs));
+                }
+            }
+            if k_usize == keyed.len() {
+                // Threshold(n, xs) == All(xs) iff none of the children can be Neutral.
+                // A sufficient condition is: no DenyIf appears anywhere under the children.
+                if !has_deny_if {
+                    let xs = keyed.into_iter().map(|k| k.expr).collect();
+                    return Ok(PolicyExpr::All(xs));
+                }
             }
 
             Ok(PolicyExpr::Threshold {
-                k: *k,
+                k: u16::try_from(k_usize).unwrap_or(u16::MAX),
                 children: keyed.into_iter().map(|k| k.expr).collect(),
             })
         }

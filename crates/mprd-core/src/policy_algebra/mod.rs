@@ -22,7 +22,8 @@ mod trace;
 pub use ast::{PolicyAtom, PolicyExpr, PolicyKind, PolicyLimits, PolicyOutcome, PolicyOutcomeKind};
 pub use bdd::{
     compile_allow_robdd, policy_equiv_robdd, policy_equiv_robdd_policy_vs_tau_bits, BddEquivResult,
-    Robdd, POLICY_ROBDD_HASH_DOMAIN_V1,
+    policy_equiv_robdd_bool_fast, policy_semantic_hash_robdd_v1, Robdd, POLICY_ROBDD_HASH_DOMAIN_V1,
+    POLICY_ROBDD_SEM_HASH_DOMAIN_V1,
 };
 pub use canon::CanonicalPolicy;
 pub use eval::{evaluate, EvalContext, PolicyEvalResult};
@@ -69,6 +70,37 @@ mod tests {
 
     fn lim() -> PolicyLimits {
         PolicyLimits::DEFAULT
+    }
+
+    #[test]
+    fn threshold_multiplicity_is_preserved_by_canonicalization() {
+        let limits = lim();
+        let a = PolicyExpr::atom("a", limits).unwrap();
+
+        // Threshold is sensitive to multiplicity. This must remain valid and semantics-preserving.
+        let expr = PolicyExpr::threshold(2, vec![a.clone(), a.clone()], limits).unwrap();
+        let canon = CanonicalPolicy::new(expr.clone(), limits).unwrap();
+
+        // Evaluate original vs canonical under a=true/false.
+        #[derive(Default)]
+        struct Ctx {
+            v: Option<bool>,
+        }
+        impl EvalContext for Ctx {
+            fn signal(&self, atom: &PolicyAtom) -> Option<bool> {
+                if atom.as_str() == "a" { self.v } else { None }
+            }
+        }
+        let allow_ctx = Ctx { v: Some(true) };
+        let deny_ctx = Ctx { v: Some(false) };
+        assert_eq!(
+            evaluate(&expr, &allow_ctx, limits).unwrap().allowed(),
+            evaluate(canon.expr(), &allow_ctx, limits).unwrap().allowed()
+        );
+        assert_eq!(
+            evaluate(&expr, &deny_ctx, limits).unwrap().allowed(),
+            evaluate(canon.expr(), &deny_ctx, limits).unwrap().allowed()
+        );
     }
 
     #[test]

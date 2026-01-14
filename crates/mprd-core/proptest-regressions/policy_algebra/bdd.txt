@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4d968a0d8e76b515057ff957130a717f60ea07a73bee3e792857ad2f12449bee # shrinks to expr = Not(Threshold { k: 1, children: [Any([])] })
+cc b75729967c0a04bd1fa4834f528c3886435b5b29d012d0c89f2d0f75e3e54526 # shrinks to expr = Not(Threshold { k: 1, children: [All([False])] })
+cc 8e155112867d2d9109198b354a019ff64a4d0f6a9185cea0d80e7c32c16b79a6 # shrinks to expr = Not(Threshold { k: 1, children: [DenyIf(PolicyAtom("a"))] })
+cc fdbefc91b279d55c61e35fd80acb22603ce233946dd0f85291a7e0a47a8be114 # shrinks to expr = Any([Threshold { k: 0, children: [] }])
