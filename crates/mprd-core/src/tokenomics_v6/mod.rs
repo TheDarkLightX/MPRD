@@ -31,6 +31,7 @@ pub mod simplex_por_oracle;
 pub mod simplex_planner;
 pub mod simplex_symmetry_key;
 pub mod simplex_ceo;
+pub mod simplex_ample_set;
 pub mod types;
 
 pub use actions::{ActionOutcomeV6, ActionV6};

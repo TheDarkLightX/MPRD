@@ -10,9 +10,12 @@ eval_iters >= 200.
 
 Contract:
 - structural (deterministic) metrics are reported elsewhere; this gate focuses on the time crossover.
+- You must choose which optimization family to gate:
+  - `por`: compare `trace_por` vs `trace_baseline`
+  - `sym`: compare `state_symmetry` vs `state_baseline`
 - We require BOTH:
-  - POR win_rate >= MIN_WIN_RATE for eval_iters>=MIN_EVAL_ITERS
-  - POR median_ratio <= MAX_MEDIAN_RATIO for eval_iters>=MIN_EVAL_ITERS
+  - win_rate >= MIN_WIN_RATE for eval_iters>=MIN_EVAL_ITERS
+  - median_ratio <= MAX_MEDIAN_RATIO for eval_iters>=MIN_EVAL_ITERS
 
 Stdlib only.
 """
@@ -56,6 +59,7 @@ def _load(path: str) -> Dict[str, Any]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("path", help="Path to simplex sweep JSON")
+    ap.add_argument("--gate", choices=["por", "sym"], default="sym")
     ap.add_argument("--min-eval-iters", type=int, default=200)
     ap.add_argument("--min-win-rate", type=float, default=0.75)
     ap.add_argument("--max-median-ratio", type=float, default=1.0)
@@ -79,10 +83,14 @@ def main() -> int:
     ratios: List[float] = []
     wins = 0
     for r in filt:
-        base = float(r["trace_baseline"]["seconds_total"])
-        por = float(r["trace_por"]["seconds_total"])
+        if args.gate == "por":
+            base = float(r["trace_baseline"]["seconds_total"])
+            opt = float(r["trace_por"]["seconds_total"])
+        else:
+            base = float(r["state_baseline"]["seconds_total"])
+            opt = float(r["state_symmetry"]["seconds_total"])
         den = base if base > 0 else 1e-12
-        ratio = por / den
+        ratio = opt / den
         ratios.append(ratio)
         if ratio <= 1.0:
             wins += 1
@@ -98,7 +106,7 @@ def main() -> int:
 
     status = "PASS" if ok else "FAIL"
     print(
-        f"{status}: POR crossover gate on eval_iters>={args.min_eval_iters}: "
+        f"{status}: {args.gate} crossover gate on eval_iters>={args.min_eval_iters}: "
         f"rows={len(ratios)} win_rate={win_rate:.3f} median_ratio={med:.4f} "
         f"(thresholds: win_rate>={args.min_win_rate:.2f}, median_ratio<={args.max_median_ratio:.2f})"
     )

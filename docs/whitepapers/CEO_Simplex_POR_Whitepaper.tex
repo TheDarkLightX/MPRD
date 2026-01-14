@@ -214,13 +214,22 @@ theorem reachableWithin_via_canonicalize
   ...
 \end{lstlisting}
 
+\begin{lstlisting}[language=lean,caption={Reachability completeness under canonicalizeSwap (Lean)}]
+theorem reachableWithin_via_canonicalizeSwap
+    {k : Nat} (caps : Caps k) (x0 : State k) (h : Nat) (x : State k) :
+    ReachableWithin (k := k) caps x0 h x ↔
+      ∃ xs : List (Action k),
+        xs.length ≤ h ∧ run caps (canonicalizeSwap (k := k) caps x0 xs) x0 = x := by
+  ...
+\end{lstlisting}
+
 \section{Benchmark gate}
 \begin{center}
 \texttt{bash tools/ceo/check\_ceo\_simplex\_rail.sh}
 \end{center}
 The rail blocks regressions by requiring, on sweep rows with \(\texttt{eval\_iters}\ge 200\),
-POR win-rate \(\ge 0.75\) and median runtime ratio \(\le 1.0\), implemented by
-\texttt{tools/ceo/check\_ceo\_simplex\_sweep\_strict.py}.
+\textbf{symmetry quotienting} win-rate \(\ge 0.75\) and median runtime ratio \(\le 1.0\),
+implemented by \texttt{tools/ceo/check\_ceo\_simplex\_sweep\_strict.py --gate sym}.
 
 \end{document}
 
