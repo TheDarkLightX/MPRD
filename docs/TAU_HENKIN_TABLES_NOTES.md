@@ -144,3 +144,55 @@ where `select_val(v) = (v.hi, v.hi ∧ v.lo)`.
 We encoded “mismatch exists” and it is UNSAT:
 - `tools/logic/examples/table_select_set_refined_sound_unsat.json`
 
+### Logic formulas (what we actually proved / falsified)
+
+Let a table be a total function \(T : K \to V\).
+
+- **Set (overwrite)**:
+
+\[
+\mathrm{set}(T,k,v)(i) \;\triangleq\; \begin{cases}
+v & i = k\\
+T(i) & i \neq k
+\end{cases}
+\]
+
+- **Select (filter + canonicalize)**, for a predicate \(P:V\to\mathsf{Bool}\), a canonicalizer \(C:V\to V\), and a distinguished zero \(0\in V\):
+
+\[
+\mathrm{select}(T)(i) \;\triangleq\; \begin{cases}
+C(T(i)) & P(T(i))\\
+0 & \neg P(T(i))
+\end{cases}
+\]
+
+In our 2-bit demo: \(K=\{0,1\}\), \(V=\{0,1\}^2\) with \(v=(hi,lo)\), \(P(v)\equiv (hi=1)\),
+\(C(v)=(hi, hi\wedge lo)\), and \(0=(0,0)\).
+
+- **Naive rewrite (UNSOUND)**:
+
+\[
+\mathrm{select}(\mathrm{set}(T,k,v)) \stackrel{?}{=} \mathrm{set}(\mathrm{select}(T),k,v)
+\]
+
+This is falsified by the (Morph-mined) witness \(T\equiv 0\), \(k=0\), \(v=(0,1)\), \(i=0\).
+See the Morph evidence bundle:
+- `tools/logic/morph_evidence/table_select_set_naive/bundle/packet.json`
+
+- **Refined rewrite (SOUND)**:
+
+\[
+\mathrm{select}(\mathrm{set}(T,k,v)) \;=\; \mathrm{set}(\mathrm{select}(T),k,\mathrm{selectVal}(v))
+\]
+
+This is proved in Lean (for all tables \(T: \mathsf{Bool}\to ( \mathsf{Bool}\times\mathsf{Bool})\)):
+- `LeanProofs/TauTables_SelectSet.lean` (`select_set_refined`)
+
+and the naive counterexample is also proved:
+- `LeanProofs/TauTables_SelectSet.lean` (`select_set_naive_counterexample`)
+
+### Why this “scales”
+
+The key point is that the refined law is a **parametric** identity: it is pointwise in the table index \(i\),
+and it only requires that the inserted value be transformed by the *same* selection/canonicalization rule.
+In practice, this is how you safely push selection past update without quantifying an entire post-state table.
