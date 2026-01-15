@@ -1,0 +1,17 @@
+{
+  "constraints": [
+    "SOLVED means witness demonstrates select(select(T)) != select(T).",
+    "Fail-closed if no witness found (do not promote)."
+  ],
+  "examples": [
+    "For variant=bad, T(i)=(1,0) witnesses non-idempotence."
+  ],
+  "givens": [
+    "select(T)(i) = if hi(T(i)) then selectVal(T(i)) else 0",
+    "selectVal_good(hi,lo) = (hi, hi&lo)",
+    "selectVal_bad(hi,lo) = (hi, not lo)"
+  ],
+  "goal": "Find a counterexample to select(select(T)) == select(T)",
+  "obligations": [],
+  "representation": "Key=Bool, Val=(hi,lo) in {0,1}^2, variant=bad"
+}

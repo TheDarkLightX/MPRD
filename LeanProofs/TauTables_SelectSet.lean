@@ -66,6 +66,26 @@ theorem map_setTable {K : Type u} [DecidableEq K] {V : Type v} {W : Type w}
   · simp [mapTable, setTable, h]
   · simp [mapTable, setTable, h]
 
+theorem map_idempotent {K : Type u} {V : Type v} (f : V → V) (T : K → V)
+    (hf : ∀ x, f (f x) = f x) :
+    mapTable f (mapTable f T) = mapTable f T := by
+  funext i
+  simp [mapTable, hf]
+
+theorem selectVal_idempotent (v : Val) :
+    selectVal (selectVal v) = selectVal v := by
+  cases v with
+  | mk a b =>
+      cases a <;> cases b <;> simp [selectVal, hi, lo]
+
+theorem select_idempotent (T : Table) :
+    select (select T) = select T := by
+  funext i
+  -- Exhaustively split the finite Bool×Bool value at `T i`, then compute.
+  cases h : T i with
+  | mk a b =>
+      cases a <;> cases b <;> simp [select, selectVal, hi, lo, zeroVal, h]
+
 theorem select_set_refined (T : Table) (k : Bool) (v : Val) :
     select (set T k v) = set (select T) k (selectVal v) := by
   funext i

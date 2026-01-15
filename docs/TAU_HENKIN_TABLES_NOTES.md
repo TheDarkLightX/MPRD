@@ -196,3 +196,7 @@ and the naive counterexample is also proved:
 The key point is that the refined law is a **parametric** identity: it is pointwise in the table index \(i\),
 and it only requires that the inserted value be transformed by the *same* selection/canonicalization rule.
 In practice, this is how you safely push selection past update without quantifying an entire post-state table.
+
+## 9) Next law: `select` is idempotent (and the exact precondition)
+
+Once you represent `select` as a pointwise value-transformer \(g:V\to V\) (filter+canonicalize into a distinguished zero),

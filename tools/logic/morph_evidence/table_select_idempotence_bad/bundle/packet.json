@@ -1,0 +1,83 @@
+{
+  "certificates": [
+    {
+      "cert_type": "primitive",
+      "payload": "TryAccept"
+    }
+  ],
+  "certificates_hash": "6a37a02464bbb48f9eacd94828deb07664ba6e508cf1ed1ac44cabfcf241c232",
+  "check_records": [
+    {
+      "checker": "Check",
+      "result": "PASS"
+    },
+    {
+      "checker": "Check2",
+      "result": "PASS"
+    }
+  ],
+  "check_records_hash": "fa91967d33f914c1791c8dd930519054f863af22dd3d97979341f075058e7a6b",
+  "domain_id": "MprdTableSelectIdempotenceDomain",
+  "feature_schema_version": "v1.0",
+  "features": {
+    "canonicality_metrics": {
+      "normalized": 1.0
+    },
+    "cumulative_cost": 0.0,
+    "obligation_metrics": {
+      "open": 0.0,
+      "total": 0.0
+    },
+    "portal_scores": {
+      "Algebra": 0.0,
+      "Graph": 0.0,
+      "NoObligations": 1.0,
+      "Probabilities": 0.0
+    },
+    "search_depth": 1,
+    "size_metrics": {
+      "constraints": 2.0,
+      "examples": 1.0,
+      "givens": 3.0,
+      "rep_len": 45.0
+    },
+    "tag_histogram": {
+      "~": 0,
+      "\u21a6": 0,
+      "\u2245": 1,
+      "\u2291": 0,
+      "\u2292": 0
+    }
+  },
+  "learning_metadata": {},
+  "morph_version": "1.0",
+  "nv_report": {
+    "ok": true,
+    "reason": "ok"
+  },
+  "outcome": "SOLVED",
+  "packet_hash": "35b035b7e3582d3f3214bca9f0d5ece71fd34418d9f7b4cdf1fd2d9baf6133f4",
+  "replay_instructions": "replay: seed=0 strategy=TryAccept path=('TryAccept',)",
+  "root_witness": "{\"T\":[[0,0],[1,0]],\"law\":\"select_idempotence\",\"schema\":\"mprd/table-select-idempotence/witness/v1\",\"select_T\":[[0,0],[1,1]],\"select_select_T\":[[0,0],[1,0]],\"variant\":\"bad\"}",
+  "root_witness_hash": "e7b5e5a651e9094a3d407f83e9d511751d96848f1dc729a2f096f622b0986335",
+  "seed": 0,
+  "sigma0_hash": "cffb9ab305c0f28481535301d7078958ca7d1097230434476b5884043d4504ed",
+  "toolchain_hashes": {
+    "tactics": "1b93450c928f09bab016a821c76bfca9e27693f11b14a804b1e846abc66a4d46",
+    "toolchain": "a82ebb07e51324e201392bad97b0d4c75c35f5ddd715862780c635f9c92cc393"
+  },
+  "trace": [
+    {
+      "cert": {
+        "cert_type": "primitive",
+        "payload": "TryAccept"
+      },
+      "child_hash": "cffb9ab305c0f28481535301d7078958ca7d1097230434476b5884043d4504ed",
+      "move_name": "TryAccept",
+      "parent_hash": "cffb9ab305c0f28481535301d7078958ca7d1097230434476b5884043d4504ed",
+      "tag": "\u2245",
+      "verify": "PASS"
+    }
+  ],
+  "trace_hash": "4b5fb1257e1ef89db7b50f8714cd4eb084d9985f324615948fd46c9871ef26e3"
+}
