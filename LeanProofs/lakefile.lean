@@ -7,5 +7,10 @@ package «MPRDLeanProofs» where
 
 @[default_target]
 lean_lib MPRDLeanProofs where
-  roots := #[`MPRDLeanProofs, `MPRD_Theorem, `MPRD_Alignment_Combined]
+  roots := #[
+    `MPRDLeanProofs,
+    `MPRD_Theorem,
+    `MPRD_Alignment_Combined,
+    `TauTables_SelectSet
+  ]
 

@@ -1,0 +1,16 @@
+{
+  "constraints": [
+    "SOLVED means witness is a valid counterexample (lhs != rhs at some idx).",
+    "Deterministic enumeration; fail-closed if no witness found (no promotion)."
+  ],
+  "examples": [
+    "Counterexample exists when v=(0,1) is inserted under selection that zeros low bit."
+  ],
+  "givens": [
+    "select(T)(i) = if hi(T(i)) then (hi(T(i)), hi(T(i)) & lo(T(i))) else 0",
+    "set(T,k,v)(i) = if i=k then v else T(i)"
+  ],
+  "goal": "Find a counterexample to naive select(set) table rewrite",
+  "obligations": [],
+  "representation": "Key=Bool, Val=(hi,lo) Bool\u00d7Bool, Table=Bool\u2192Val"
+}
