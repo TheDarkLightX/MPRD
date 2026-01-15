@@ -200,3 +200,69 @@ In practice, this is how you safely push selection past update without quantifyi
 ## 9) Next law: `select` is idempotent (and the exact precondition)
 
 Once you represent `select` as a pointwise value-transformer \(g:V\to V\) (filter+canonicalize into a distinguished zero),
+the table-level idempotence law:
+
+\[
+\mathrm{select}(\mathrm{select}(T)) = \mathrm{select}(T)
+\]
+
+reduces to the *value-level* precondition:
+
+\[
+\forall v,\; g(g(v)) = g(v).
+\]
+
+We proved this for the concrete 2-bit demo `selectVal(hi,lo)=(hi,hi∧lo)`:
+- Lean: `LeanProofs/TauTables_SelectSet.lean` (`selectVal_idempotent`, `select_idempotent`)
+
+And we used Morph to mine a precise falsifier when you violate this precondition (swap in a non-idempotent canonicalizer `selectVal_bad(hi,lo)=(hi,¬lo)`):
+- Morph evidence (strict, SOLVED): `tools/logic/morph_evidence/table_select_idempotence_bad/bundle/packet.json`
+
+This is a reusable pattern for “scaled rewrites”: prove the parametric law in Lean, and keep a Morph falsifier domain that pins what assumption is necessary by producing counterexamples when it is violated.
+
+## 10) A “pointwise table algebra” (what rewrites scale, and what does not)
+
+The safe fragment is: **table operators that are pointwise maps**.
+
+Define \(f^\*(T)(i)\triangleq f(T(i))\). In Lean this is `mapTable f T`.
+
+### Core laws (all key sizes \(K\), no enumeration)
+
+- **Map distributes over set (the pushthrough law)**:
+
+\[
+f^\*(\mathrm{set}(T,k,v))=\mathrm{set}(f^\*(T),k,f(v)).
+\]
+
+Lean: `LeanProofs/TauTables_SelectSet.lean` (`map_setTable`).
+
+- **Idempotence lifts pointwise**:
+
+If \(\forall v,\; f(f(v))=f(v)\) then \(\forall T,\; f^\*(f^\*(T))=f^\*(T)\).
+
+Lean: `LeanProofs/TauTables_SelectSet.lean` (`map_idempotent`).
+
+### Why our `select` rewrites are *exactly* these laws
+
+In the 2-bit demo, the predicate check in `select` is redundant because:
+
+\[
+\mathrm{selectVal}(hi,lo)=(hi,hi\wedge lo)
+\]
+
+already maps non-selected values (\(hi=0\)) to the distinguished zero \((0,0)\). Formally:
+
+\[
+\big(\, \text{if } hi(v)\text{ then }\mathrm{selectVal}(v)\text{ else }0 \,\big)=\mathrm{selectVal}(v).
+\]
+
+Lean: `LeanProofs/TauTables_SelectSet.lean` (`selectVal_eq_if`, `select_eq_mapTable_selectVal`).
+
+Therefore:
+- `select ∘ set` refined rewrite is a direct corollary of `map_setTable`.
+- `select` idempotence is a direct corollary of `map_idempotent` + `selectVal_idempotent`.
+
+### What does *not* scale: non-pointwise operators
+
+Anything that depends on **multiple cells at once** (e.g., a Merkle root/hash of the whole table, a global sum, “exists key with property”) is *not* a pointwise `mapTable`.
+For such operators, pushing `set` past the operator generally requires *extra information* (e.g., the old value at `k`, or an auxiliary proof/certificate), and naive rewrites will be falsifiable.

@@ -78,35 +78,28 @@ theorem selectVal_idempotent (v : Val) :
   | mk a b =>
       cases a <;> cases b <;> simp [selectVal, hi, lo]
 
+theorem selectVal_eq_if (v : Val) :
+    (if hi v then selectVal v else zeroVal) = selectVal v := by
+  cases v with
+  | mk a b =>
+      cases a <;> cases b <;> simp [selectVal, hi, lo, zeroVal]
+
+theorem select_eq_mapTable_selectVal (T : Table) :
+    select T = mapTable selectVal T := by
+  funext i
+  simp [select, mapTable, selectVal_eq_if]
+
 theorem select_idempotent (T : Table) :
     select (select T) = select T := by
-  funext i
-  -- Exhaustively split the finite Bool×Bool value at `T i`, then compute.
-  cases h : T i with
-  | mk a b =>
-      cases a <;> cases b <;> simp [select, selectVal, hi, lo, zeroVal, h]
+  -- Derive from `map_idempotent` using `select = mapTable selectVal`.
+  simpa [select_eq_mapTable_selectVal] using
+    (map_idempotent (K := Bool) (V := Val) (f := selectVal) (T := T) (hf := fun x => selectVal_idempotent x))
 
 theorem select_set_refined (T : Table) (k : Bool) (v : Val) :
     select (set T k v) = set (select T) k (selectVal v) := by
-  funext i
-  by_cases h : i = k
-  · -- At the updated key, `select` sees exactly `v`.
-    -- Compute both sides at index `i` using `i=k`, then reduce to a Bool case split.
-    have hL : select (set T k v) i = (if hi v then selectVal v else zeroVal) := by
-      -- `set T k v i = v` under `i=k`
-      simp [select, set, h, hi]
-    have hR : set (select T) k (selectVal v) i = selectVal v := by
-      simp [set, h]
-    -- Rewrite the goal with hL/hR and split on `hi v`.
-    rw [hL]
-    -- rewrite the RHS to `selectVal v`
-    rw [hR]
-    -- Now the goal depends only on the concrete 2-bit value `v`.
-    cases v with
-    | mk a b =>
-        cases a <;> cases b <;> simp [hi, lo, selectVal, zeroVal]
-  · -- At other keys, both sides reduce to selecting the old value `T i`.
-    simp [set, select, h, selectVal, hi, lo, zeroVal]
+  -- Derive directly from `map_setTable` using `select = mapTable selectVal`.
+  simpa [select_eq_mapTable_selectVal, setTable, set, mapTable] using
+    (map_setTable (K := Bool) (V := Val) (W := Val) (f := selectVal) (T := T) (k := k) (val := v))
 
 theorem select_set_naive_counterexample :
     ∃ (T : Table) (k : Bool) (v : Val),
