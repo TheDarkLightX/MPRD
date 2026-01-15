@@ -72,3 +72,31 @@ Practical: use a bounded brute-force checker for very small instances (k ≤ 6, 
 See `tools/logic/dqbf_bruteforce.py` for a deterministic, bounded brute-force solver for a small DQBF/Henkin fragment.
 It is designed as a falsifier oracle for proposed “table rewrite” laws and dependency restrictions.
 
+## 7) Blockchain-motivated toy shapes (what to learn)
+
+These are tiny but capture the core semantics:
+
+### (A) `set` as a conservative extension (always satisfiable)
+Model:
+- `idx` is universal (the table lookup key).
+- `k` and `v` are existential constants (the update key/value).
+- `T0(idx)` and `T1(idx)` are existential tables.
+- Constraint: for all `idx`, `T1(idx) = if idx==k then v else T0(idx)`.
+
+Example file: `tools/logic/examples/table_set_conservative.json`.
+
+### (B) Spending from a 1-bit ledger table under universal prior state
+Model:
+- Universals: `idx`, and a 2-entry prior-state table encoded as bits `Bal0`, `Bal1`.
+  We define `Bal(idx) = (¬idx ∧ Bal0) ∨ (idx ∧ Bal1)`.
+- Existentials:
+  - choose spend key `k(Bal0,Bal1)` (Henkin dependency: depends on state, not on idx),
+  - output updated table `BalAfter(idx,Bal0,Bal1)`.
+- Update semantics: `BalAfter(k)=0` and other entries unchanged.
+
+Two variants:
+- `ledger_spend_forall_states_unsat.json`: requires picking `k` such that `Bal(k)=1` for **all** states (UNSAT).
+- `ledger_spend_with_guard_sat.json`: guarded: only requires spending when `(Bal0 ∨ Bal1)` is true (SAT).
+
+These teach the key lesson: Henkin dependencies let you express “pick a witness key based on state,” and satisfiability hinges on whether the property must hold in *all* states or only under a guard.
+
