@@ -4,6 +4,15 @@ This note captures how “quantification over Boolean functions” appears in Ta
 
 Primary reference: Ohad Asor, *Theories and Applications of Boolean Algebras* (draft v0.25, 2024-08-10) ([PDF](file:///home/trevormoc/Downloads/MPRD/external/tau-lang/docs/Theories-and-Applications-of-Boolean-Algebras-0.25.pdf)).
 
+## Scope / epistemic status (important)
+
+This document contains two kinds of claims:
+
+- **Proved (Lean) + falsified (Morph), but for a simplified model**: we formalize *toy* table semantics as total functions \(T:K\to V\) with functional update `set` and pointwise operators like `mapTable`. Those theorems are 100% rigorous **for that model**.
+- **Tau-language applicability**: whether these laws apply *as-is* to Tau depends on whether Tau’s actual `Table`/`set`/`select` semantics match the model. **We do not yet have a refinement proof** connecting Tau’s semantics/implementation to the Lean model, so treat “applies to Tau” as *unproven* until such a proof exists.
+
+What we can safely take today: these results clarify the **structure** of “table-like” operators in Boolean-algebraic settings (what scales if an operator is pointwise, what breaks if it is global).
+
 ## 1) What “Tables” are (as logic)
 
 In TABA §8.2, a table is a function \(T:2^n \to B\) where \(B\) is a Boolean algebra supported in Tau (including product algebras).
@@ -266,3 +275,13 @@ Therefore:
 
 Anything that depends on **multiple cells at once** (e.g., a Merkle root/hash of the whole table, a global sum, “exists key with property”) is *not* a pointwise `mapTable`.
 For such operators, pushing `set` past the operator generally requires *extra information* (e.g., the old value at `k`, or an auxiliary proof/certificate), and naive rewrites will be falsifiable.
+
+### What would count as “strong proof this applies to Tau”
+
+To claim a rewrite law like `select ∘ set` is valid for Tau (not just for our Lean toy model), we would need evidence at the following level:
+
+- **Formal semantic bridge**: a Lean definition of Tau `Table` and its operations (from the Tau/TABA specification), plus a theorem that Tau’s `set`/`select` are extensionally equal to the functions we assume (`setTable`, `mapTable`/value-transformer form).
+- **Implementation refinement (optional but ideal)**: connect Tau’s evaluator/compiler behavior to the semantic bridge (e.g., show evaluation produces the same function as the semantic model).
+- **Side-condition audit**: confirm the same zero element, equality notion, and any non-Boolean-algebra effects (partiality, “unknown”, effects, evaluation order) are either absent or accounted for.
+
+Until then, the Lean proofs should be read as “this law is correct for the abstract table-as-function model”, and the Morph bundles should be read as “this is exactly how naive laws fail when the needed precondition is missing”.
