@@ -276,6 +276,39 @@ Therefore:
 Anything that depends on **multiple cells at once** (e.g., a Merkle root/hash of the whole table, a global sum, “exists key with property”) is *not* a pointwise `mapTable`.
 For such operators, pushing `set` past the operator generally requires *extra information* (e.g., the old value at `k`, or an auxiliary proof/certificate), and naive rewrites will be falsifiable.
 
+## 11) Non-pointwise example: “root XOR” shows why you need the old cell (or a certificate)
+
+To make the failure mode concrete, define a *global* summary for Bool-key Bool-valued tables:
+
+\[
+\mathrm{rootXor}(T)\triangleq T(0)\oplus T(1)
+\]
+
+This operator depends on **multiple cells**, so it is not representable as `mapTable f`.
+
+### Naive rewrite (UNSOUND)
+
+\[
+\mathrm{rootXor}(\mathrm{set}(T,k,v)) \stackrel{?}{=} \mathrm{rootXor}(T)\oplus v
+\]
+
+Morph mined a strict counterexample witness (replayable evidence bundle):
+- `tools/logic/morph_evidence/table_root_xor_naive/bundle/packet.json`
+
+### Correct rewrite (needs the old cell)
+
+For XOR, the correct update is:
+
+\[
+\mathrm{rootXor}(\mathrm{set}(T,k,v)) = \mathrm{rootXor}(T)\oplus T(k)\oplus v
+\]
+
+Lean proof (for the Bool-key Bool-valued toy model):
+- `LeanProofs/TauTables_SelectSet.lean` (`rootXor_set`)
+
+This is the general pattern for “global” operators: to push `set` through them, you either need
+the old cell value `T(k)` or an auxiliary certificate that lets you recover it.
+
 ### What would count as “strong proof this applies to Tau”
 
 To claim a rewrite law like `select ∘ set` is valid for Tau (not just for our Lean toy model), we would need evidence at the following level:

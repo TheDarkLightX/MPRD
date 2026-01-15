@@ -1,0 +1,16 @@
+{
+  "constraints": [
+    "SOLVED means witness shows root(set(T,k,v)) != root(T) XOR v.",
+    "Fail-closed if no witness found."
+  ],
+  "examples": [
+    "Counterexample: T=[1,0], k=0, v=1 gives lhs=1 rhs=0."
+  ],
+  "givens": [
+    "set(T,k,v)(i)=if i=k then v else T(i)",
+    "root(T)=XOR over all keys"
+  ],
+  "goal": "Find a counterexample to naive rootXor(set) rewrite",
+  "obligations": [],
+  "representation": "Key=Bool, Val=Bool, root(T)=T(0) XOR T(1)"
+}

@@ -1,0 +1,83 @@
+{
+  "certificates": [
+    {
+      "cert_type": "primitive",
+      "payload": "TryAccept"
+    }
+  ],
+  "certificates_hash": "6a37a02464bbb48f9eacd94828deb07664ba6e508cf1ed1ac44cabfcf241c232",
+  "check_records": [
+    {
+      "checker": "Check",
+      "result": "PASS"
+    },
+    {
+      "checker": "Check2",
+      "result": "PASS"
+    }
+  ],
+  "check_records_hash": "fa91967d33f914c1791c8dd930519054f863af22dd3d97979341f075058e7a6b",
+  "domain_id": "MprdTableRootXorDomain",
+  "feature_schema_version": "v1.0",
+  "features": {
+    "canonicality_metrics": {
+      "normalized": 1.0
+    },
+    "cumulative_cost": 0.0,
+    "obligation_metrics": {
+      "open": 0.0,
+      "total": 0.0
+    },
+    "portal_scores": {
+      "Algebra": 0.0,
+      "Graph": 0.0,
+      "NoObligations": 1.0,
+      "Probabilities": 0.0
+    },
+    "search_depth": 1,
+    "size_metrics": {
+      "constraints": 2.0,
+      "examples": 1.0,
+      "givens": 2.0,
+      "rep_len": 41.0
+    },
+    "tag_histogram": {
+      "~": 0,
+      "\u21a6": 0,
+      "\u2245": 1,
+      "\u2291": 0,
+      "\u2292": 0
+    }
+  },
+  "learning_metadata": {},
+  "morph_version": "1.0",
+  "nv_report": {
+    "ok": true,
+    "reason": "ok"
+  },
+  "outcome": "SOLVED",
+  "packet_hash": "1063386f04c697408d3dbcf84d3429607d97f5a9909b42853b2d8599333fdff3",
+  "replay_instructions": "replay: seed=0 strategy=TryAccept path=('TryAccept',)",
+  "root_witness": "{\"T\":[0,1],\"k\":1,\"law\":\"root_xor_set_naive\",\"lhs\":0,\"rhs\":1,\"schema\":\"mprd/table-root-xor/witness/v1\",\"v\":0}",
+  "root_witness_hash": "b8884bf56b7553b03a334cfaabf21f416ba0f46f3ce306abc93b54494f3571d8",
+  "seed": 0,
+  "sigma0_hash": "1c3ae5a527018025df3ecb77e8906e01e65e8370a6ff15d5708ee33cc43ce951",
+  "toolchain_hashes": {
+    "tactics": "1b93450c928f09bab016a821c76bfca9e27693f11b14a804b1e846abc66a4d46",
+    "toolchain": "a82ebb07e51324e201392bad97b0d4c75c35f5ddd715862780c635f9c92cc393"
+  },
+  "trace": [
+    {
+      "cert": {
+        "cert_type": "primitive",
+        "payload": "TryAccept"
+      },
+      "child_hash": "1c3ae5a527018025df3ecb77e8906e01e65e8370a6ff15d5708ee33cc43ce951",
+      "move_name": "TryAccept",
+      "parent_hash": "1c3ae5a527018025df3ecb77e8906e01e65e8370a6ff15d5708ee33cc43ce951",
+      "tag": "\u2245",
+      "verify": "PASS"
+    }
+  ],
+  "trace_hash": "6ff96c323f89b54b98c564a4848c0b587a416e7fd0d1651941c4de819c477841"
+}
