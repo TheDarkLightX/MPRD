@@ -100,3 +100,15 @@ Two variants:
 
 These teach the key lesson: Henkin dependencies let you express “pick a witness key based on state,” and satisfiability hinges on whether the property must hold in *all* states or only under a guard.
 
+### (C) Add a “commitment bit” (toy root) to bind tables to an on-chain claim
+Even in a 1-bit-key table, you can model a commitment relationship:
+- Universals include a claimed root bit `R`.
+- Constrain `R = Bal0 XOR Bal1`.
+
+This binds the table’s contents to an external “commitment” value (toy Merkle root).
+Then you can add guarded spend semantics under Henkin witness `k(Bal0,Bal1)`.
+
+Example file: `tools/logic/examples/ledger_spend_with_commitments_sat.json`.
+
+Scaling note: once you make the “root” a real hash of a larger table, brute-force truth-table enumeration explodes and you must switch to a compact representation (BDD/circuit) + CEGIS/solver checks.
+
