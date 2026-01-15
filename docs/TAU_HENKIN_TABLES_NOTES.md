@@ -112,3 +112,15 @@ Example file: `tools/logic/examples/ledger_spend_with_commitments_sat.json`.
 
 Scaling note: once you make the “root” a real hash of a larger table, brute-force truth-table enumeration explodes and you must switch to a compact representation (BDD/circuit) + CEGIS/solver checks.
 
+### (D) 2-bit key table without blow-up: “unique UTXO” toy
+To get a **2-bit key** (4-entry table) while staying brute-force friendly, restrict the state shape:
+- Universal bits: `E` (empty), `p0,p1` (position of the unique 1).
+- Semantics: if `E=1` table is all-zero; else exactly one cell is 1 at index `p`.
+
+Then the Henkin witness is straightforward:
+- spend key `k(p) = p` (depends only on `p0,p1`)
+- post-commitment `RootAfter = 0`
+
+This demonstrates the full “pick key based on state” Henkin pattern without exploding.
+Example file: `tools/logic/examples/ledger_2bit_unique_utxo_sat.json`.
+
