@@ -38,6 +38,8 @@ Expr = Union[
 
 def _eval_expr(expr: Expr, x: Sequence[int], y_vals: Sequence[int]) -> int:
     """Evaluate expr to 0/1 under current universal assignment and current y outputs."""
+    if isinstance(expr, (int, bool)):
+        return int(expr) & 1
     if isinstance(expr, (list, tuple)) and len(expr) == 2 and expr[0] in ("x", "y"):
         kind, idx = expr
         if kind == "x":
