@@ -89,6 +89,31 @@ theorem select_eq_mapTable_selectVal (T : Table) :
   funext i
   simp [select, mapTable, selectVal_eq_if]
 
+/-!
+### Generalization: when `select` is pointwise (and scales)
+
+Given a predicate `P` and canonicalizer `C`, define a "selection transformer"
+`g(v) = if P v then C v else zero`.
+
+If `C` already maps all non-selected values to `zero`, then `g = C` and the table-level select
+is literally a pointwise map `mapTable C`.
+-/
+
+def selectOp {V : Type v} (P : V → Bool) (C : V → V) (zero : V) (x : V) : V :=
+  if P x then C x else zero
+
+theorem selectOp_eq_C_of_C_maps_nonP_to_zero {V : Type v} (P : V → Bool) (C : V → V) (zero : V)
+    (hC : ∀ x, P x = false → C x = zero) :
+    ∀ x, selectOp (V := V) P C zero x = C x := by
+  intro x
+  cases hx : P x with
+  | false =>
+      have hz : C x = zero := hC x hx
+      -- selectOp chooses `zero` when P x = false; rewrite with hz.
+      simp [selectOp, hx, hz]
+  | true =>
+      simp [selectOp, hx]
+
 theorem select_idempotent (T : Table) :
     select (select T) = select T := by
   -- Derive from `map_idempotent` using `select = mapTable selectVal`.
@@ -100,6 +125,37 @@ theorem select_set_refined (T : Table) (k : Bool) (v : Val) :
   -- Derive directly from `map_setTable` using `select = mapTable selectVal`.
   simpa [select_eq_mapTable_selectVal, setTable, set, mapTable] using
     (map_setTable (K := Bool) (V := Val) (W := Val) (f := selectVal) (T := T) (k := k) (val := v))
+
+/-!
+### A non-pointwise example (global operator): XOR-root update needs the old cell
+
+If you define a global table summary like `root(T) = XOR over all keys`, then pushing `set`
+through it is not pointwise: the correct update needs the old value at the updated key.
+
+We prove, for Bool-key tables with Bool values:
+  rootXor(set(T,k,v)) = rootXor(T) XOR T(k) XOR v
+
+and we show a naive rewrite that omits `T(k)` is false.
+-/
+
+def rootXor (T : Bool → Bool) : Bool :=
+  xor (T false) (T true)
+
+theorem rootXor_set (T : Bool → Bool) (k : Bool) (v : Bool) :
+    rootXor (setTable (K := Bool) (V := Bool) T k v) = xor (xor (rootXor T) (T k)) v := by
+  -- Prove by finite case split on k and the two table entries.
+  cases k <;> cases h0 : T false <;> cases h1 : T true <;> cases v <;>
+    simp [rootXor, setTable, h0, h1]
+
+theorem rootXor_set_naive_counterexample :
+    ∃ (T : Bool → Bool) (k : Bool) (v : Bool),
+      rootXor (setTable (K := Bool) (V := Bool) T k v) ≠ xor (rootXor T) v := by
+  let T : Bool → Bool := fun i => if i = false then true else false
+  let k : Bool := false
+  let v : Bool := true
+  refine ⟨T, k, v, ?_⟩
+  -- Evaluate both sides.
+  simp [T, k, v, rootXor, setTable]
 
 theorem select_set_naive_counterexample :
     ∃ (T : Table) (k : Bool) (v : Val),
