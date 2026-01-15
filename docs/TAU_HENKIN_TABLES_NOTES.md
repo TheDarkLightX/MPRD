@@ -124,3 +124,23 @@ Then the Henkin witness is straightforward:
 This demonstrates the full “pick key based on state” Henkin pattern without exploding.
 Example file: `tools/logic/examples/ledger_2bit_unique_utxo_sat.json`.
 
+## 8) Popper-mined table rewrite insight: `select ∘ set`
+
+For a 1-bit key table with a 2-bit value `(hi,lo)`, consider:
+- `select(T)` keeps rows where `hi==1`, returning `(hi, hi∧lo)` (so low bit is zeroed unless hi is set).
+- `set(T,k,v)` overwrites key `k` with value `v`.
+
+Naive rewrite (UNSOUND):
+`select(set(T,k,v))  ==  set(select(T),k,v)`
+
+Counterexample exists when `v.hi=0` and `v.lo=1`: the LHS selection will zero-out `lo`, but the RHS inserts `lo` unchanged.
+We encoded this as a satisfiable “mismatch exists” instance:
+- `tools/logic/examples/table_select_set_naive_unsound_sat.json`
+
+Refined rewrite (SOUND in this bounded model):
+`select(set(T,k,v))  ==  set(select(T),k, select_val(v))`
+where `select_val(v) = (v.hi, v.hi ∧ v.lo)`.
+
+We encoded “mismatch exists” and it is UNSAT:
+- `tools/logic/examples/table_select_set_refined_sound_unsat.json`
+
