@@ -91,11 +91,6 @@ MPRD/
 └── docs/                 # Documentation
 ```
 
-## ESSO Evolver (CDGP-inspired)
-
-MPRD includes an Evolutionary State Space Optimizer (ESSO) in `internal/tools/evolver/`, inspired by Counterexample-Driven Genetic Programming (CDGP): https://github.com/kkrawiec/CDGP.
-ESSO adapts the CDGP loop to optimizing finite-domain transition systems (state machines), using a growing counterexample regression suite plus a Z3 “hard gate” for inductiveness and observational equivalence.
-
 ## Key Features
 
 ### Governance Profiles
