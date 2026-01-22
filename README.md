@@ -47,10 +47,9 @@ This isn't a goal. It's a guarantee. The architecture enforces it:
 4. **Tokens only mint for allowed actions**: the governor controls the valve
 5. **ZK attestation**: third parties can verify without trusting the operator
 
-## Lean 4 proof buble
+## Proof artifacts
 
-Self-contained Lean 4 proof bundle (fast to build):
-- `LeanProofs/` (run `cd LeanProofs && lake build`)
+- Lean 4 proof bundle (fast to build): `proofs/lean/` (run `cd proofs/lean && lake build`)
 
 ### The Proof-Carrying “Codec”
 
@@ -88,6 +87,7 @@ MPRD/
 ├── policies/             # Tau governance specifications
 │   └── governance/
 │       └── canonical/    # Production-ready governance specs
+├── proofs/               # Proof artifacts (Lean / verification scripts)
 └── docs/                 # Documentation
 ```
 

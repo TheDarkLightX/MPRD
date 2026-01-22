@@ -2,7 +2,7 @@
 //!
 //! This module is NOT wired into the production v6 menu (which is currently a small lattice graph),
 //! but provides a concrete, executable counterpart to the Lean artifact:
-//! `LeanProofs/CEO_SimplexPOR.lean`.
+//! `proofs/lean/CEO_SimplexPOR.lean`.
 //!
 //! Semantics:
 //! - A transfer (src→dst) is enabled iff x[src] > 0 and x[dst] < cap[dst]
@@ -129,4 +129,3 @@ mod tests {
         assert_eq!(ba, vec![1, 0, 1, 8]);
     }
 }
-

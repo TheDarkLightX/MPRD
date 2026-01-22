@@ -195,10 +195,10 @@ See the Morph evidence bundle:
 \]
 
 This is proved in Lean (for all tables \(T: \mathsf{Bool}\to ( \mathsf{Bool}\times\mathsf{Bool})\)):
-- `LeanProofs/TauTables_SelectSet.lean` (`select_set_refined`)
+- `proofs/lean/TauTables_SelectSet.lean` (`select_set_refined`)
 
 and the naive counterexample is also proved:
-- `LeanProofs/TauTables_SelectSet.lean` (`select_set_naive_counterexample`)
+- `proofs/lean/TauTables_SelectSet.lean` (`select_set_naive_counterexample`)
 
 ### Why this “scales”
 
@@ -222,7 +222,7 @@ reduces to the *value-level* precondition:
 \]
 
 We proved this for the concrete 2-bit demo `selectVal(hi,lo)=(hi,hi∧lo)`:
-- Lean: `LeanProofs/TauTables_SelectSet.lean` (`selectVal_idempotent`, `select_idempotent`)
+- Lean: `proofs/lean/TauTables_SelectSet.lean` (`selectVal_idempotent`, `select_idempotent`)
 
 And we used Morph to mine a precise falsifier when you violate this precondition (swap in a non-idempotent canonicalizer `selectVal_bad(hi,lo)=(hi,¬lo)`):
 - Morph evidence (strict, SOLVED): `tools/logic/morph_evidence/table_select_idempotence_bad/bundle/packet.json`
@@ -243,13 +243,13 @@ Define \(f^\*(T)(i)\triangleq f(T(i))\). In Lean this is `mapTable f T`.
 f^\*(\mathrm{set}(T,k,v))=\mathrm{set}(f^\*(T),k,f(v)).
 \]
 
-Lean: `LeanProofs/TauTables_SelectSet.lean` (`map_setTable`).
+Lean: `proofs/lean/TauTables_SelectSet.lean` (`map_setTable`).
 
 - **Idempotence lifts pointwise**:
 
 If \(\forall v,\; f(f(v))=f(v)\) then \(\forall T,\; f^\*(f^\*(T))=f^\*(T)\).
 
-Lean: `LeanProofs/TauTables_SelectSet.lean` (`map_idempotent`).
+Lean: `proofs/lean/TauTables_SelectSet.lean` (`map_idempotent`).
 
 ### Why our `select` rewrites are *exactly* these laws
 
@@ -265,7 +265,7 @@ already maps non-selected values (\(hi=0\)) to the distinguished zero \((0,0)\).
 \big(\, \text{if } hi(v)\text{ then }\mathrm{selectVal}(v)\text{ else }0 \,\big)=\mathrm{selectVal}(v).
 \]
 
-Lean: `LeanProofs/TauTables_SelectSet.lean` (`selectVal_eq_if`, `select_eq_mapTable_selectVal`).
+Lean: `proofs/lean/TauTables_SelectSet.lean` (`selectVal_eq_if`, `select_eq_mapTable_selectVal`).
 
 Therefore:
 - `select ∘ set` refined rewrite is a direct corollary of `map_setTable`.
@@ -304,7 +304,7 @@ For XOR, the correct update is:
 \]
 
 Lean proof (for the Bool-key Bool-valued toy model):
-- `LeanProofs/TauTables_SelectSet.lean` (`rootXor_set`)
+- `proofs/lean/TauTables_SelectSet.lean` (`rootXor_set`)
 
 This is the general pattern for “global” operators: to push `set` through them, you either need
 the old cell value `T(k)` or an auxiliary certificate that lets you recover it.

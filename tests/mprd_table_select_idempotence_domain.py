@@ -11,7 +11,7 @@ We run this in two variants:
 - variant="bad":  selectVal(v) = (hi, not lo)   (NOT idempotent) -> falsifier exists.
 
 We use Morph only for falsifier mining. Positive truth for the "good" variant is proved
-in Lean (see `LeanProofs/TauTables_SelectSet.lean`).
+in Lean (see `proofs/lean/TauTables_SelectSet.lean`).
 """
 
 import json
@@ -160,4 +160,3 @@ def build_runtime_factory(**kwargs: Any) -> MorphRuntime:
 
     rt.primitives["TryAccept"] = try_accept
     return rt
-

@@ -9,7 +9,7 @@ Purpose:
 
     select(set(T,k,v)) == set(select(T), k, v)
 
-- The refined law is proved in Lean (`LeanProofs/TauTables_SelectSet.lean`), but we keep
+- The refined law is proved in Lean (`proofs/lean/TauTables_SelectSet.lean`), but we keep
   this domain focused on falsifier mining and replayable evidence bundles.
 
 Model:
@@ -177,4 +177,3 @@ def build_runtime_factory(**kwargs: Any) -> MorphRuntime:
 
     rt.primitives["TryAccept"] = try_accept
     return rt
-

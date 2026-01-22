@@ -58,11 +58,11 @@ and a decision-quality benchmark gate that enforces a measurable crossover regim
 \paragraph{Proof artifact (machine-checked).}
 All theorems cited in this document are mechanically checked in Lean 4 in:
 \begin{center}
-\texttt{LeanProofs/CEO\_SimplexPOR.lean}
+\texttt{proofs/lean/CEO\_SimplexPOR.lean}
 \end{center}
 The proof bundle builds with:
 \begin{center}
-\texttt{cd LeanProofs \&\& lake build}
+\texttt{cd proofs/lean \&\& lake build}
 \end{center}
 
 \paragraph{Runtime artifact (Rust).}
@@ -232,4 +232,3 @@ The rail blocks regressions by requiring, on sweep rows with \(\texttt{eval\_ite
 implemented by \texttt{tools/ceo/check\_ceo\_simplex\_sweep\_strict.py --gate sym}.
 
 \end{document}
-

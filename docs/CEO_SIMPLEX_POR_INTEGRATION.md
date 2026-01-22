@@ -2,7 +2,7 @@
 
 This note bridges the **certified simplex POR artifacts** into the Algorithmic CEO planning stack.
 
-**Formal artifact**: `LeanProofs/CEO_SimplexPOR.lean`  
+**Formal artifact**: `proofs/lean/CEO_SimplexPOR.lean`  
 **Runtime oracle**: `crates/mprd-core/src/tokenomics_v6/simplex_por_oracle.rs`
 
 ---
@@ -185,7 +185,7 @@ This gate is implemented by:
 If two buckets are observationally indistinguishable (same caps and same role in objective/gates),
 then swapping them is a bisimulation/equivariance of the transition system.
 
-- **Certified (Lean)**: `LeanProofs/CEO_SimplexPOR.lean` now contains swap-01 equivariance lemmas:
+- **Certified (Lean)**: `proofs/lean/CEO_SimplexPOR.lean` now contains swap-01 equivariance lemmas:
   - enabledness equivariance (`enabled_swap01_iff`)
   - guarded-step equivariance (`stepOrStay_swap01`)
 
@@ -227,4 +227,3 @@ permuting them is a bisimulation.
 
 - **Statement sketch**:
   - `run xs s` and `run (permute xs) (permute s)` correspond, and canonical representative selection is well-defined.
-

@@ -14,14 +14,14 @@ assumption.
 From the repo root:
 
 ```bash
-cd LeanProofs
+cd proofs/lean
 lake build
 ```
 
 Or typecheck individual files:
 
 ```bash
-cd LeanProofs
+cd proofs/lean
 lake env lean MPRD_Theorem.lean
 lake env lean MPRD_Alignment_Combined.lean
 ```
@@ -32,4 +32,3 @@ lake env lean MPRD_Alignment_Combined.lean
 - The economics → “ethical policy selection” step is intentionally modeled as an
   **explicit axiom** in `MPRD_Alignment_Combined.lean`; this file is a *bridge*
   lemma, not a full economic development.
-
