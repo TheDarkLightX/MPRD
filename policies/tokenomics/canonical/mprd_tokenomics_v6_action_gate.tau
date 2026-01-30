@@ -89,13 +89,16 @@ r (
             |
             # ADMIN actions (controller-only). CreditAgrs also requires replay protection.
             (
-                ((i_is_admit_operator[t] | i_is_set_opi[t] | i_is_set_bounds[t]) & i_control_auth_ok[t])
-                |
-                (i_is_credit_agrs[t] & i_control_auth_ok[t] & i_credit_agrs_replay_ok[t])
+                i_control_auth_ok[t]
+                & (
+                    i_is_admit_operator[t] |
+                    i_is_set_opi[t] |
+                    i_is_set_bounds[t] |
+                    (i_is_credit_agrs[t] & i_credit_agrs_replay_ok[t])
+                )
             )
         )
     )
 )
 n
 q
-

@@ -75,9 +75,13 @@ r (
     ) &&
 
     (o_admin_ok[t] =
-        ((i_is_admit_operator[t] | i_is_set_opi[t] | i_is_set_bounds[t]) & i_control_auth_ok[t])
-        |
-        (i_is_credit_agrs[t] & i_control_auth_ok[t] & i_credit_agrs_replay_ok[t])
+        i_control_auth_ok[t]
+        & (
+            i_is_admit_operator[t] |
+            i_is_set_opi[t] |
+            i_is_set_bounds[t] |
+            (i_is_credit_agrs[t] & i_credit_agrs_replay_ok[t])
+        )
     ) &&
 
     (o_allow[t] =
@@ -91,4 +95,3 @@ r (
 )
 n
 q
-
