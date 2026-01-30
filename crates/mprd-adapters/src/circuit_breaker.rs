@@ -1,23 +1,23 @@
-//! Circuit Breaker Executor Wrapper (ESSO-Verified)
+//! Circuit Breaker Executor Wrapper (Verified Kernel)
 //!
 //! This module provides a circuit breaker pattern for any ExecutorAdapter,
-//! backed by an ESSO-verified state machine that enforces:
+//! backed by a machine-checked state machine that enforces:
 //!
 //! - FailureThresholdOpens: 5+ failures → Open
 //! - HalfOpenRequiresCooldown: HalfOpen → cooldown = 0
 //! - ClosedMeansRecovered: Closed → failures < 5
 //!
-//! @see internal/tools/evolver/examples/mprd/executor_circuit_breaker.yaml
+//! Model/spec and verification artifacts are maintained internally.
 
 use mprd_core::{ExecutionResult, ExecutorAdapter, MprdError, Result, VerifiedBundle};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 // =============================================================================
-// Circuit Breaker State (ESSO-Verified Kernel)
+// Circuit Breaker State (Verified Kernel)
 // =============================================================================
 
-/// State enum matching the verified ESSO-IR model.
+/// State enum matching the verified model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CircuitState {
     Closed,
@@ -25,7 +25,7 @@ pub enum CircuitState {
     HalfOpen,
 }
 
-/// Verified circuit breaker state matching `executor_circuit_breaker.yaml`.
+/// Verified circuit breaker state.
 #[derive(Debug)]
 pub struct CircuitBreakerState {
     pub state: CircuitState,
@@ -46,14 +46,14 @@ impl Default for CircuitBreakerState {
 }
 
 // =============================================================================
-// Invariant Checks (From ESSO-IR)
+// Invariant Checks (From model)
 // =============================================================================
 
 const FAILURE_THRESHOLD: u32 = 5;
 const SUCCESS_THRESHOLD_TO_CLOSE: u32 = 3;
 const COOLDOWN_DURATION: Duration = Duration::from_secs(30);
 
-/// Check invariants from verified model.
+/// Check invariants from the verified model.
 fn check_invariants(st: &CircuitBreakerState) -> Result<()> {
     // FailureThresholdOpens: 5+ failures → not Closed
     if st.consecutive_failures >= FAILURE_THRESHOLD && st.state == CircuitState::Closed {
@@ -84,7 +84,7 @@ fn check_invariants(st: &CircuitBreakerState) -> Result<()> {
 }
 
 // =============================================================================
-// State Transitions (From ESSO-IR Actions)
+// State Transitions (From model actions)
 // =============================================================================
 
 impl CircuitBreakerState {

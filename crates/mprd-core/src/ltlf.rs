@@ -3,7 +3,7 @@
 //! Why this exists in MPRD:
 //! - Many security properties are **temporal** (multi-step): "X must happen before Y", "if Z ever
 //!   happens then …", etc.
-//! - We want these properties **checked in public tests** without relying on private ESSO tooling.
+//! - We want these properties **checked in public tests** without relying on private internal tooling.
 //!
 //! This module implements:
 //! - A small LTLf fragment in Negation Normal Form (NNF): negation only appears on atoms.

@@ -50,6 +50,7 @@ This isn't a goal. It's a guarantee. The architecture enforces it:
 ## Proof artifacts
 
 - Lean 4 proof bundle (fast to build): `proofs/lean/` (run `cd proofs/lean && lake build`)
+- Policy Algebra (ROBDD certification rail): semantic hashes/diffs + Tau-gate equivalence checks (see `docs/POLICY_CERTIFICATION.md`).
 
 ### The Proof-Carrying “Codec”
 

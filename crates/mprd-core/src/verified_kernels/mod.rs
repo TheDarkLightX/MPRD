@@ -1,13 +1,13 @@
-//! Verified kernels - formally verified state machines from ESSO models.
+//! Verified kernels - formally specified, machine-checked state machines.
 //!
-//! Each kernel is generated from an ESSO-IR model using CGS v3.0 codegen.
+//! Each kernel is generated from an internal model/specification using an internal codegen pipeline.
 //! These kernels enforce CBC (Correct-By-Construction) properties:
 //! - Invalid states are unrepresentable
 //! - All transitions check pre/post invariants
 //! - Fail-closed on any domain violation
 //!
-//! Synthesis-as-Spec: For models with holes, synth.json defines the grammar
-//! and CGS synthesizes verified solutions.
+//! Synthesis-as-Spec: For models with holes, a grammar/config defines the search space and the
+//! toolchain synthesizes a solution that still passes the same verification gates.
 
 #[cfg(kani)]
 pub mod kani_harnesses;

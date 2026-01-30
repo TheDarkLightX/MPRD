@@ -1,6 +1,6 @@
 //! Experimental (research-backed) simplex planner utilities.
 //!
-//! This module is the "production-adjacent" bridge from the Lean/Morph simplex POR work into
+//! This module is the "production-adjacent" bridge from the simplex POR formalization work into
 //! reusable Rust code. It is IO-free and deterministic.
 //!
 //! Scope:
@@ -353,4 +353,3 @@ pub fn enumerate_reachable(
         reached_states: reached.len(),
     })
 }
-

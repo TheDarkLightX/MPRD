@@ -37,7 +37,6 @@ __pycache__/
 # Test artifacts
 *.log
 /tmp/
-.esso/
 .tmp/
 /$TMP/
 /$TMP
