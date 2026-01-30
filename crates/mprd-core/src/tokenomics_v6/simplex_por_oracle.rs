@@ -76,9 +76,80 @@ mod tests {
         step_or_stay(&y, caps, second)
     }
 
+    fn all_transfers(k: usize) -> Vec<Transfer> {
+        let mut out = Vec::with_capacity(k.saturating_mul(k.saturating_sub(1)));
+        for src in 0..k {
+            for dst in 0..k {
+                if src != dst {
+                    out.push(Transfer::new(src, dst));
+                }
+            }
+        }
+        out
+    }
+
+    fn stable_enabled_dynamic(x: &[u32; 4], caps: &[u32; 4], a: Transfer, b: Transfer) -> bool {
+        if !enabled(x, caps, a) || !enabled(x, caps, b) {
+            return false;
+        }
+        let mut xa = *x;
+        if enabled(&xa, caps, a) {
+            xa[a.src] = xa[a.src].saturating_sub(1);
+            xa[a.dst] = xa[a.dst].saturating_add(1);
+        }
+        let mut xb = *x;
+        if enabled(&xb, caps, b) {
+            xb[b.src] = xb[b.src].saturating_sub(1);
+            xb[b.dst] = xb[b.dst].saturating_add(1);
+        }
+        enabled(&xa, caps, b) && enabled(&xb, caps, a)
+    }
+
+    #[test]
+    fn stable_enabled_ineq_matches_dynamic_stable_enabledness_exhaustive_small_domain() {
+        // Exhaustively verify the closed-form oracle against the definition:
+        // enabled(a,x) ∧ enabled(b,x) ∧ enabled(b, a(x)) ∧ enabled(a, b(x))
+        //
+        // We enumerate a small cartesian-product domain for caps and x. This is enough to cover
+        // all boundary interactions (0/1/2 units; 0/1 slack), and is deterministic/fast.
+        let k = 4usize;
+        let acts = all_transfers(k);
+
+        for c0 in 0u32..=3 {
+            for c1 in 0u32..=3 {
+                for c2 in 0u32..=3 {
+                    for c3 in 0u32..=3 {
+                        let caps = [c0, c1, c2, c3];
+                        for x0 in 0u32..=caps[0] {
+                            for x1 in 0u32..=caps[1] {
+                                for x2 in 0u32..=caps[2] {
+                                    for x3 in 0u32..=caps[3] {
+                                        let x = [x0, x1, x2, x3];
+                                        for &a in &acts {
+                                            for &b in &acts {
+                                                let oracle = stable_enabled_ineq(&x, &caps, a, b);
+                                                let dynamic =
+                                                    stable_enabled_dynamic(&x, &caps, a, b);
+                                                assert_eq!(
+                                                    oracle, dynamic,
+                                                    "mismatch: caps={caps:?} x={x:?} a={a:?} b={b:?}"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn shared_source_minimal_counterexample_matches_research() {
-        // Witness from Morph/README: x=(1,0,0,9), a=(0->2), b=(0->3)
+        // Minimal counterexample (shared source):
+        // x=(1,0,0,9), a=(0->2), b=(0->3)
         let x = [1, 0, 0, 9];
         let caps = [10, 10, 10, 10];
         let a = Transfer::new(0, 2);
@@ -112,7 +183,8 @@ mod tests {
 
     #[test]
     fn shared_destination_tight_cap_counterexample_matches_research() {
-        // Witness from Morph/README: x=(1,1,0,8), caps[2]=1, a=(0->2), b=(1->2)
+        // Minimal counterexample (shared destination + tight cap):
+        // x=(1,1,0,8), caps[2]=1, a=(0->2), b=(1->2)
         let x = [1, 1, 0, 8];
         let caps = [10, 10, 1, 10];
         let a = Transfer::new(0, 2);
