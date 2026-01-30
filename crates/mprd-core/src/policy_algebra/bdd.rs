@@ -283,7 +283,11 @@ fn compile_main_allow_neutral(
     }
 }
 
-fn compile_allow_root(b: &mut BddBuilder, expr: &PolicyExpr, limits: PolicyLimits) -> Result<BddId> {
+fn compile_allow_root(
+    b: &mut BddBuilder,
+    expr: &PolicyExpr,
+    limits: PolicyLimits,
+) -> Result<BddId> {
     let (main_allow, _) = compile_main_allow_neutral(b, expr, limits)?;
     let mut root = main_allow;
     for a in expr.deny_if_atoms() {
@@ -562,7 +566,11 @@ pub fn policy_equiv_robdd(
 /// - If semantic hashes differ, the boolean functions differ (sound `false`).
 /// - If semantic hashes match, we fall back to `policy_equiv_robdd` to avoid relying on hash
 ///   collision resistance for the `true` direction.
-pub fn policy_equiv_robdd_bool_fast(a: &PolicyExpr, b: &PolicyExpr, limits: PolicyLimits) -> Result<bool> {
+pub fn policy_equiv_robdd_bool_fast(
+    a: &PolicyExpr,
+    b: &PolicyExpr,
+    limits: PolicyLimits,
+) -> Result<bool> {
     let ha = policy_semantic_hash_robdd_v1(a, limits)?;
     let hb = policy_semantic_hash_robdd_v1(b, limits)?;
     if ha != hb {
@@ -994,9 +1002,18 @@ mod tests {
     fn semantic_hash_collapses_tautology_even_when_structural_hash_differs() {
         let limits = lim();
         let a = PolicyExpr::atom("a", limits).unwrap();
-        let taut = PolicyExpr::any(vec![a.clone(), PolicyExpr::not(a.clone())], limits).unwrap();
+        let b = PolicyExpr::atom("b", limits).unwrap();
+        // Boolean tautology that canonicalization does not prove (requires distributivity):
+        //   (a ∧ b) ∨ (a ∧ ¬b) ∨ ¬a  ==  True
+        let a_and_b = PolicyExpr::all(vec![a.clone(), b.clone()], limits).unwrap();
+        let a_and_not_b = PolicyExpr::all(vec![a.clone(), PolicyExpr::not(b)], limits).unwrap();
+        let taut = PolicyExpr::any(
+            vec![a_and_b, a_and_not_b, PolicyExpr::not(a.clone())],
+            limits,
+        )
+        .unwrap();
 
-        // Structural hash differs because canonicalization does not prove tautologies.
+        // Structural hash differs because canonicalization does not prove *all* tautologies.
         let canon_true = CanonicalPolicy::new(PolicyExpr::True, limits).unwrap();
         let canon_taut = CanonicalPolicy::new(taut, limits).unwrap();
         assert_ne!(canon_true.bytes_v1(), canon_taut.bytes_v1());
@@ -1050,13 +1067,21 @@ mod tests {
     }
 
     #[test]
-    fn canonicalize_threshold_1_does_not_become_any_when_denyif_present() {
+    fn canonicalize_any_single_denyif_is_not_collapsed() {
         let limits = lim();
         let ban = PolicyExpr::deny_if("a", limits).unwrap();
-        let th = PolicyExpr::threshold(1, vec![ban], limits).unwrap();
+        let any = PolicyExpr::any(vec![ban.clone()], limits).unwrap();
+        let canon = CanonicalPolicy::new(any, limits).unwrap();
+        assert_eq!(*canon.expr(), PolicyExpr::Any(vec![ban]));
+    }
+
+    #[test]
+    fn canonicalize_threshold_1_becomes_any_even_with_denyif_present() {
+        let limits = lim();
+        let ban = PolicyExpr::deny_if("a", limits).unwrap();
+        let th = PolicyExpr::threshold(1, vec![ban.clone()], limits).unwrap();
         let canon = CanonicalPolicy::new(th, limits).unwrap();
-        // Must not rewrite to Any([DenyIf(a)]) which would be DenySoft in main semantics.
-        assert!(matches!(canon.expr(), PolicyExpr::Threshold { k: 1, .. }));
+        assert_eq!(*canon.expr(), PolicyExpr::Any(vec![ban]));
     }
 
     #[test]
@@ -1107,7 +1132,9 @@ mod tests {
         let canon = CanonicalPolicy::new(th, limits).unwrap();
         let bdd = compile_allow_robdd(canon.expr(), limits).unwrap();
 
-        fn ctx_from_tri<'a>(tri: &'a [(&'a str, Option<bool>)]) -> impl super::super::EvalContext + 'a {
+        fn ctx_from_tri<'a>(
+            tri: &'a [(&'a str, Option<bool>)],
+        ) -> impl super::super::EvalContext + 'a {
             struct Ctx(BTreeMap<String, Option<bool>>);
             impl super::super::EvalContext for Ctx {
                 fn signal(&self, atom: &PolicyAtom) -> Option<bool> {
@@ -1123,10 +1150,22 @@ mod tests {
 
         // 2-of-3: allow iff at least two are Some(true). Missing counts as deny.
         let cases: &[([(&str, Option<bool>); 3], bool)] = &[
-            ([("a", Some(true)), ("b", Some(true)), ("c", Some(false))], true),
-            ([("a", Some(true)), ("b", Some(false)), ("c", Some(true))], true),
-            ([("a", Some(false)), ("b", Some(true)), ("c", Some(true))], true),
-            ([("a", Some(true)), ("b", Some(false)), ("c", Some(false))], false),
+            (
+                [("a", Some(true)), ("b", Some(true)), ("c", Some(false))],
+                true,
+            ),
+            (
+                [("a", Some(true)), ("b", Some(false)), ("c", Some(true))],
+                true,
+            ),
+            (
+                [("a", Some(false)), ("b", Some(true)), ("c", Some(true))],
+                true,
+            ),
+            (
+                [("a", Some(true)), ("b", Some(false)), ("c", Some(false))],
+                false,
+            ),
             // Missing counts as deny-soft, but 2-of-3 still passes when the other two are true.
             ([("a", None), ("b", Some(true)), ("c", Some(true))], true),
         ];
@@ -1342,9 +1381,8 @@ mod tests {
                     // Those are rejected by CanonicalPolicy and skipped by the tests.
                     let n = v.len();
                     let k_max = n as u16;
-                    (Just(v), 0u16..=k_max).prop_map(move |(kids, k)| {
-                        PolicyExpr::threshold(k, kids, limits).unwrap()
-                    })
+                    (Just(v), 0u16..=k_max)
+                        .prop_map(move |(kids, k)| PolicyExpr::threshold(k, kids, limits).unwrap())
                 }),
             ]
         })
@@ -1371,9 +1409,8 @@ mod tests {
                 proptest::collection::vec(inner.clone(), 0..=4).prop_flat_map(move |v| {
                     let n = v.len();
                     let k_max = n as u16;
-                    (Just(v), 0u16..=k_max).prop_map(move |(kids, k)| {
-                        PolicyExpr::threshold(k, kids, limits).unwrap()
-                    })
+                    (Just(v), 0u16..=k_max)
+                        .prop_map(move |(kids, k)| PolicyExpr::threshold(k, kids, limits).unwrap())
                 }),
             ]
         })

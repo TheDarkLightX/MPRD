@@ -15,19 +15,23 @@ mod bdd;
 mod canon;
 mod eval;
 mod hash;
+mod menu;
 mod tau_emit;
 mod tau_sbf_parse;
 mod trace;
 
 pub use ast::{PolicyAtom, PolicyExpr, PolicyKind, PolicyLimits, PolicyOutcome, PolicyOutcomeKind};
 pub use bdd::{
-    compile_allow_robdd, policy_equiv_robdd, policy_equiv_robdd_policy_vs_tau_bits, BddEquivResult,
-    policy_equiv_robdd_bool_fast, policy_semantic_hash_robdd_v1, Robdd, POLICY_ROBDD_HASH_DOMAIN_V1,
-    POLICY_ROBDD_SEM_HASH_DOMAIN_V1,
+    compile_allow_robdd, policy_equiv_robdd, policy_equiv_robdd_bool_fast,
+    policy_equiv_robdd_policy_vs_tau_bits, policy_semantic_hash_robdd_v1, BddEquivResult, Robdd,
+    POLICY_ROBDD_HASH_DOMAIN_V1, POLICY_ROBDD_SEM_HASH_DOMAIN_V1,
 };
 pub use canon::CanonicalPolicy;
 pub use eval::{evaluate, EvalContext, PolicyEvalResult};
 pub use hash::{decode_policy_v1, policy_hash_v1, POLICY_ALGEBRA_HASH_DOMAIN_V1};
+pub use menu::{
+    policy_menu_canonical_v1, policy_menu_entries_v1, policy_menu_entry_v1, PolicyMenuEntry,
+};
 pub use tau_emit::emit_tau_gate_v1;
 pub use tau_emit::emit_tau_gate_v2;
 pub use tau_sbf_parse::{parse_emitted_tau_gate_allow_expr_v1, parse_tau_sbf_expr_v1};
@@ -88,14 +92,20 @@ mod tests {
         }
         impl EvalContext for Ctx {
             fn signal(&self, atom: &PolicyAtom) -> Option<bool> {
-                if atom.as_str() == "a" { self.v } else { None }
+                if atom.as_str() == "a" {
+                    self.v
+                } else {
+                    None
+                }
             }
         }
         let allow_ctx = Ctx { v: Some(true) };
         let deny_ctx = Ctx { v: Some(false) };
         assert_eq!(
             evaluate(&expr, &allow_ctx, limits).unwrap().allowed(),
-            evaluate(canon.expr(), &allow_ctx, limits).unwrap().allowed()
+            evaluate(canon.expr(), &allow_ctx, limits)
+                .unwrap()
+                .allowed()
         );
         assert_eq!(
             evaluate(&expr, &deny_ctx, limits).unwrap().allowed(),

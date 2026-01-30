@@ -50,6 +50,27 @@ This prevents "short-circuit allow" from bypassing a veto.
 
 ---
 
+## Why “Boolean algebra” laws can fail
+
+Policy Algebra is **not** plain 2-valued Boolean logic once `DenyIf` exists.
+
+- Inputs are **3-valued** (`missing|false|true`), and the evaluator has **4 outcomes**
+  (`Allow|DenySoft|DenyVeto|Neutral`).
+- `DenyIf(a)` is special: it contributes to a **global veto phase** and otherwise evaluates as `Neutral`.
+
+That means many familiar Boolean identities can fail. For example, let `x = DenyIf(a)`:
+
+- If `a=false`, then `x = Neutral` but `Any(x, x) = DenySoft` → idempotence fails (`x ∨ x ≠ x`).
+- If `a=false`, then `Any(x, Not(x)) = DenySoft` → excluded middle can fail (`x ∨ ¬x ≠ True`).
+- If `a=false`, then `All(x, Not(x)) = Allow` → non-contradiction can fail (`x ∧ ¬x ≠ False`).
+
+**Implication:** don’t apply ad-hoc boolean rewrites to policies. Use:
+- canonicalization + hashing (syntax stability),
+- the ROBDD rail for the **booleanizable subset** (`docs/POLICY_CERTIFICATION.md`),
+- counterexample mining to discover which laws hold only under explicit preconditions.
+
+---
+
 ## Use Cases by Role
 
 ### Tau Net Policy Author / Reviewer
@@ -141,6 +162,40 @@ let multisig = PolicyExpr::threshold(2, vec![
 - **Tokenomics v6:** The state machine is pure (`TokenomicsV6::apply`) and gated via `PolicyGateV6`. Tau specs in `policies/tokenomics/canonical/` are the production `Allowed_op` artifacts.
 
 - **Main MPRD pipeline:** The `PolicyEngine` trait evaluates candidate actions under an authorized `policy_hash`.
+
+---
+
+## Policy Menu (templates → Tau)
+
+MPRD ships a small curated **Policy Algebra menu**: templates intended to be **suggestions** you can audit, emit to Tau,
+and then certify like any other gate.
+
+List available entries:
+
+```bash
+mprd policy algebra-menu-list
+```
+
+Machine-friendly output (includes required `atoms` / `deny_if_atoms`):
+
+```bash
+mprd policy algebra-menu-list --format json
+```
+
+Emit a canonical Tau gate (v2, presence bits) for a menu entry:
+
+```bash
+mprd policy algebra-menu-emit-tau --id tokenomics_v6_action_gate_fast --out ./gate.tau
+```
+
+Write canonical Policy Algebra v1 bytes for a menu entry (for hashing/certification workflows):
+
+```bash
+mprd policy algebra-menu-write --id tokenomics_v6_action_gate_fast --out ./policy.bin
+```
+
+Note: menu entries are intentionally built to be fail-closed and Tau-emittable (avoid `Not(DenyIf(..))` and other
+hard-to-audit constructs).
 
 ---
 

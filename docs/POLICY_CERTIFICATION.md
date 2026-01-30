@@ -74,8 +74,8 @@ If not equivalent, it prints a concrete counterexample assignment over the polic
 `mprd_core::policy_algebra` exports:
 - `compile_allow_robdd(expr, limits) -> Robdd`
 - `policy_equiv_robdd(a, b, limits) -> BddEquivResult`
- - `parse_emitted_tau_gate_allow_expr_v1(tau_source, output_name, limits) -> PolicyExpr`
- - `policy_equiv_robdd_policy_vs_tau_bits(policy, tau_bits, limits) -> BddEquivResult`
+- `parse_emitted_tau_gate_allow_expr_v1(tau_source, output_name, limits) -> PolicyExpr`
+- `policy_equiv_robdd_policy_vs_tau_bits(policy, tau_bits, limits) -> BddEquivResult`
 
 ## Next steps (if we want stronger certification)
 
@@ -83,15 +83,12 @@ The current rail is “semantic hashing + counterexample diff”. If we want *pr
 - emit SAT proofs (e.g., DRAT) for equivalence checks and verify them with a small checker, or
 - run compilation inside a zkVM and bind the artifact to a receipt.
 
-## Machine-checked semantics artifact (Lean)
+## Machine-checked artifacts (Lean)
 
-We also maintain a mathlib-backed Lean formalization of the **veto-first** semantics and the
-core booleanization lemma (“veto passes and main-allow holds iff evaluation returns Allow”):
+Public Lean proof artifacts are in `proofs/lean/` (run `cd proofs/lean && lake build`).
 
-- `internal/MPRD_PolicyAlgebra.lean`
-
-This is currently an internal proof artifact that is useful for auditing and for keeping the
-compiler and evaluator semantics aligned over time.
+A full Lean formalization of Policy Algebra semantics + the booleanization lemma is currently
+an internal artifact (not shipped here).
 
 ## Decision-quality benchmark (eval vs ROBDD)
 

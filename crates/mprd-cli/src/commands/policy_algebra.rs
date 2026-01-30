@@ -6,10 +6,123 @@ use std::path::PathBuf;
 
 use mprd_core::policy_algebra::{
     compile_allow_robdd, decode_policy_v1, emit_tau_gate_v2, parse_emitted_tau_gate_allow_expr_v1,
-    policy_equiv_robdd, policy_equiv_robdd_policy_vs_tau_bits, PolicyLimits,
+    policy_equiv_robdd, policy_equiv_robdd_policy_vs_tau_bits, policy_menu_canonical_v1,
+    policy_menu_entries_v1, policy_semantic_hash_robdd_v1, PolicyLimits,
 };
 
 const MAX_POLICY_ALGEBRA_BYTES: usize = 1 * 1024 * 1024;
+
+pub fn menu_list(format: String) -> Result<()> {
+    let limits = PolicyLimits::DEFAULT;
+
+    if format == "json" {
+        #[derive(serde::Serialize)]
+        struct Row<'a> {
+            id: &'a str,
+            category: &'a str,
+            title: &'a str,
+            description: &'a str,
+            suggested_output_name: &'a str,
+            policy_hash_v1: String,
+            robdd_sem_hash_v1: String,
+            nodes: usize,
+            atoms: Vec<String>,
+            deny_if_atoms: Vec<String>,
+        }
+
+        let mut rows = Vec::new();
+        for e in policy_menu_entries_v1() {
+            let canon = e
+                .canonical(limits)
+                .context("Failed to build canonical menu policy")?;
+            let sem = policy_semantic_hash_robdd_v1(canon.expr(), limits)
+                .context("Failed to ROBDD-hash")?;
+            let atoms = canon
+                .expr()
+                .atoms()
+                .into_iter()
+                .map(|a| a.as_str().to_string())
+                .collect::<Vec<_>>();
+            let deny_if_atoms = canon
+                .expr()
+                .deny_if_atoms()
+                .into_iter()
+                .map(|a| a.as_str().to_string())
+                .collect::<Vec<_>>();
+            rows.push(Row {
+                id: e.id,
+                category: e.category,
+                title: e.title,
+                description: e.description,
+                suggested_output_name: e.suggested_output_name,
+                policy_hash_v1: hex::encode(canon.hash_v1().0),
+                robdd_sem_hash_v1: hex::encode(sem.0 .0),
+                nodes: canon.expr().node_count(),
+                atoms,
+                deny_if_atoms,
+            });
+        }
+
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+
+    // Default: simple tabular output, deterministic order.
+    println!("id\tcategory\tpolicy_hash_v1\trobdd_sem_hash_v1\tnodes\tsuggested_output\ttitle");
+    for e in policy_menu_entries_v1() {
+        let canon = e
+            .canonical(limits)
+            .context("Failed to build canonical menu policy")?;
+        let sem =
+            policy_semantic_hash_robdd_v1(canon.expr(), limits).context("Failed to ROBDD-hash")?;
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            e.id,
+            e.category,
+            hex::encode(canon.hash_v1().0),
+            hex::encode(sem.0 .0),
+            canon.expr().node_count(),
+            e.suggested_output_name,
+            e.title
+        );
+    }
+    Ok(())
+}
+
+pub fn menu_emit_tau(id: String, output_name: Option<String>, out: Option<PathBuf>) -> Result<()> {
+    let limits = PolicyLimits::DEFAULT;
+    let canon = policy_menu_canonical_v1(&id, limits).context("Failed to build menu policy")?;
+    let output_name = output_name.unwrap_or_else(|| {
+        policy_menu_entries_v1()
+            .iter()
+            .find(|e| e.id == id)
+            .map(|e| e.suggested_output_name.to_string())
+            .unwrap_or_else(|| "allow".to_string())
+    });
+    let tau =
+        emit_tau_gate_v2(canon.expr(), &output_name, limits).context("Failed to emit Tau gate")?;
+
+    match out {
+        Some(path) => {
+            fs::write(&path, tau.as_bytes())
+                .with_context(|| format!("Failed to write Tau gate: {}", path.display()))?;
+            println!("Wrote Tau gate to {}", path.display());
+        }
+        None => {
+            print!("{tau}");
+        }
+    }
+    Ok(())
+}
+
+pub fn menu_write_policy(id: String, out: PathBuf) -> Result<()> {
+    let limits = PolicyLimits::DEFAULT;
+    let canon = policy_menu_canonical_v1(&id, limits).context("Failed to build menu policy")?;
+    fs::write(&out, canon.bytes_v1())
+        .with_context(|| format!("Failed to write policy algebra bytes: {}", out.display()))?;
+    println!("Wrote policy algebra v1 bytes to {}", out.display());
+    Ok(())
+}
 
 pub fn emit_tau(policy: PathBuf, output_name: String, out: Option<PathBuf>) -> Result<()> {
     let bytes = fs::read(&policy)

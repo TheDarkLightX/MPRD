@@ -41,31 +41,87 @@ pub fn parse_emitted_tau_gate_allow_expr_v1(
 
     let prefix = format!("(o_{}[t]", output.as_str());
 
-    for (line_no, line) in tau_gate_source.lines().enumerate() {
-        let trimmed = line.trim();
+    let mut lines = tau_gate_source.lines().enumerate();
+    while let Some((line_no, line)) = lines.next() {
+        let trimmed = line.trim_start();
         if !trimmed.starts_with(&prefix) {
             continue;
         }
 
-        let eq_idx = trimmed.find('=').ok_or_else(|| {
-            MprdError::InvalidInput(format!(
-                "tau_sbf_parse: malformed rule line at {} (missing '=')",
-                line_no + 1
-            ))
-        })?;
+        // Parse the full parenthesized rule:
+        //   (o_<output>[t] = <expr>)
+        // allowing <expr> to span multiple lines and include `#` comments.
+        let mut rule_buf = String::new();
+        let mut depth: i32 = 0;
+        let mut started = false;
 
-        let mut rhs = trimmed[(eq_idx + 1)..].trim();
-        if !rhs.ends_with(')') {
+        // Process the start line and all subsequent lines until the rule's parens close.
+        for (cur_line_no, cur_line) in std::iter::once((line_no, trimmed)).chain(lines.by_ref()) {
+            // Strip Tau comment.
+            let code = match cur_line.find('#') {
+                Some(i) => &cur_line[..i],
+                None => cur_line,
+            };
+            let code = code.trim_end();
+
+            for ch in code.chars() {
+                match ch {
+                    '(' => {
+                        started = true;
+                        depth = depth.saturating_add(1);
+                        rule_buf.push('(');
+                    }
+                    ')' => {
+                        if started {
+                            depth = depth.saturating_sub(1);
+                        }
+                        rule_buf.push(')');
+                        if started && depth == 0 {
+                            break;
+                        }
+                    }
+                    '\t' | '\n' | '\r' => rule_buf.push(' '),
+                    other => rule_buf.push(other),
+                }
+            }
+
+            if started && depth == 0 {
+                break;
+            }
+
+            // Treat line boundaries as whitespace (Parser only skips ' ' and '\t').
+            rule_buf.push(' ');
+        }
+
+        if !started || depth != 0 {
             return Err(MprdError::InvalidInput(format!(
-                "tau_sbf_parse: malformed rule line at {} (missing closing ')')",
+                "tau_sbf_parse: unterminated output rule for o_{}[t] starting at line {}",
+                output.as_str(),
                 line_no + 1
             )));
         }
 
+        let eq_idx = rule_buf.find('=').ok_or_else(|| {
+            MprdError::InvalidInput(format!(
+                "tau_sbf_parse: malformed output rule for o_{}[t] at line {} (missing '=')",
+                output.as_str(),
+                line_no + 1
+            ))
+        })?;
+
+        let mut rhs = rule_buf[(eq_idx + 1)..].trim();
+        if !rhs.ends_with(')') {
+            return Err(MprdError::InvalidInput(format!(
+                "tau_sbf_parse: malformed output rule for o_{}[t] at line {} (missing closing ')')",
+                output.as_str(),
+                line_no + 1
+            )));
+        }
         rhs = rhs[..(rhs.len() - 1)].trim();
         if rhs.is_empty() {
             return Err(MprdError::InvalidInput(format!(
-                "tau_sbf_parse: empty rhs at line {}",
+                "tau_sbf_parse: empty rhs for o_{}[t] at line {}",
+                output.as_str(),
                 line_no + 1
             )));
         }
@@ -326,5 +382,22 @@ mod tests {
         let limits = lim();
         let err = parse_emitted_tau_gate_allow_expr_v1("defs\nq\n", "allow", limits).unwrap_err();
         assert!(err.to_string().contains("did not find output rule"));
+    }
+
+    #[test]
+    fn parse_canonical_tau_files_extracts_sbf_allow_expr() {
+        let limits = lim();
+
+        let governance = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../policies/governance/canonical/mprd_governance_gate.tau"
+        ));
+        let _ = parse_emitted_tau_gate_allow_expr_v1(governance, "accept", limits).unwrap();
+
+        let tokenomics = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../policies/tokenomics/canonical/mprd_tokenomics_v6_action_gate.tau"
+        ));
+        let _ = parse_emitted_tau_gate_allow_expr_v1(tokenomics, "allow", limits).unwrap();
     }
 }

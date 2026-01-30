@@ -23,7 +23,9 @@ fn absorb_in_any(mut flat: Vec<PolicyExpr>) -> Vec<PolicyExpr> {
     // child that contains some other direct child `x` as a conjunct.
     let snapshot = flat.clone();
     flat.retain(|e| {
-        let PolicyExpr::All(conj) = e else { return true };
+        let PolicyExpr::All(conj) = e else {
+            return true;
+        };
         !conj.iter().any(|c| snapshot.contains(c))
     });
     flat
@@ -33,7 +35,9 @@ fn absorb_in_all(mut flat: Vec<PolicyExpr>) -> Vec<PolicyExpr> {
     // Absorption: x ∧ (x ∨ y) = x
     let snapshot = flat.clone();
     flat.retain(|e| {
-        let PolicyExpr::Any(disj) = e else { return true };
+        let PolicyExpr::Any(disj) = e else {
+            return true;
+        };
         !disj.iter().any(|c| snapshot.contains(c))
     });
     flat
@@ -255,7 +259,13 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
             }
 
             if keyed.len() == 1 {
-                return Ok(keyed.pop().unwrap().expr);
+                let only = keyed.pop().unwrap().expr;
+                // `DenyIf` is neutral in the main formula, so `Any([DenyIf(x)])` deny-softs
+                // (when veto guards are not triggered). Collapsing would change semantics.
+                if matches!(only, PolicyExpr::DenyIf(_)) {
+                    return Ok(PolicyExpr::Any(vec![only]));
+                }
+                return Ok(only);
             }
 
             Ok(PolicyExpr::Any(keyed.into_iter().map(|k| k.expr).collect()))
@@ -331,13 +341,14 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
                 return Ok(PolicyExpr::False);
             }
             if k_usize == 1 {
-                // Threshold(1, xs) == Any(xs) only when no child can be Neutral; otherwise Neutral
-                // children contribute 0 to the count but do not deny-soft in `Any`, so the two differ.
-                // A sufficient condition is: no DenyIf appears anywhere under the children.
-                if !has_deny_if {
-                    let xs = keyed.into_iter().map(|k| k.expr).collect();
-                    return Ok(PolicyExpr::Any(xs));
-                }
+                // Threshold(1, xs) == Any(xs) in MPRD's main semantics:
+                // - DenyVeto iff any child is DenyVeto
+                // - Allow iff any child is Allow
+                // - DenySoft otherwise
+                //
+                // This holds even with `DenyIf` (Neutral) children; we do not erase DenyIf atoms.
+                let xs = keyed.into_iter().map(|k| k.expr).collect();
+                return canonicalize(&PolicyExpr::Any(xs), limits);
             }
             if k_usize == keyed.len() {
                 // Threshold(n, xs) == All(xs) iff none of the children can be Neutral.

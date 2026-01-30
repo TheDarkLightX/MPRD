@@ -640,6 +640,41 @@ enum PolicyCommands {
         #[arg(long)]
         b: PathBuf,
     },
+
+    /// List curated Policy Algebra “menu” entries (suggestions/templates).
+    AlgebraMenuList {
+        /// Output format (table, json)
+        #[arg(short, long, default_value = "table")]
+        format: String,
+    },
+
+    /// Emit a canonical Tau gate (v2, presence bits) for a policy menu entry.
+    AlgebraMenuEmitTau {
+        /// Menu entry id (see `mprd policy algebra-menu-list`).
+        #[arg(long)]
+        id: String,
+
+        /// Output name (controls `o_<name>` and `outputs/<name>.out`).
+        ///
+        /// If omitted, uses the menu entry’s suggested output name.
+        #[arg(long)]
+        output_name: Option<String>,
+
+        /// Write to a file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+
+    /// Write canonical Policy Algebra v1 bytes for a policy menu entry.
+    AlgebraMenuWrite {
+        /// Menu entry id (see `mprd policy algebra-menu-list`).
+        #[arg(long)]
+        id: String,
+
+        /// Output file path for the v1 bytes.
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -732,6 +767,17 @@ fn main() -> Result<()> {
             } => commands::policy_algebra::certify_tau(policy, tau, output_name),
             PolicyCommands::AlgebraBddHash { policy } => commands::policy_algebra::bdd_hash(policy),
             PolicyCommands::AlgebraDiff { a, b } => commands::policy_algebra::diff(a, b),
+            PolicyCommands::AlgebraMenuList { format } => {
+                commands::policy_algebra::menu_list(format)
+            }
+            PolicyCommands::AlgebraMenuEmitTau {
+                id,
+                output_name,
+                out,
+            } => commands::policy_algebra::menu_emit_tau(id, output_name, out),
+            PolicyCommands::AlgebraMenuWrite { id, out } => {
+                commands::policy_algebra::menu_write_policy(id, out)
+            }
         },
         Commands::Run {
             policy,
