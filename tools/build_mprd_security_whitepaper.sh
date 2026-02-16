@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$ROOT"
 
-SRC="internal/whitepapers/CEO_Simplex_POR_Whitepaper.tex"
-OUTDIR="public/whitepapers"
-OUTPDF="${OUTDIR}/CEO_Simplex_POR_Whitepaper.pdf"
+SRC="internal/whitepapers/MPRD_Security_Whitepaper.tex"
+OUTDIR="docs/whitepapers"
+OUTPDF="${OUTDIR}/MPRD_Security_Whitepaper.pdf"
 
 mkdir -p "$OUTDIR"
 
@@ -16,8 +16,8 @@ cleanup() { rm -rf "$TMPD"; }
 trap cleanup EXIT
 
 cp "$SRC" "$TMPD/main.tex"
-
 latexmk -pdf -interaction=nonstopmode -halt-on-error -quiet -outdir="$TMPD" "$TMPD/main.tex"
 
 cp "$TMPD/main.pdf" "$OUTPDF"
 echo "[whitepaper] wrote ${OUTPDF}"
+

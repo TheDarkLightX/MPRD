@@ -149,6 +149,7 @@ cargo build --release
 | [**Policy Algebra**](docs/POLICY_ALGEBRA.md) | How to write Tau governance specs |
 | [**Production Readiness**](docs/PRODUCTION_READINESS.md) | Pre-deployment checklist |
 | [**Security Hardening**](docs/SECURITY_HARDENING_CHECKLIST.md) | Security best practices |
+| [**MPRD Security Whitepaper (PDF)**](docs/whitepapers/MPRD_Security_Whitepaper.pdf) | Community draft: intelligence–agency separation, executor boundary, and verification rails |
 | [**Testing Guide**](docs/TESTING.md) | Testing strategies and commands |
 | [**CEO Menu Modes**](docs/CEO_MENU_MODES.md) | Algorithmic tokenomics controller |
 | [**CEO Simplex POR (Whitepaper PDF)**](public/whitepapers/CEO_Simplex_POR_Whitepaper.pdf) | Guarded simplex transfers, constant-time independence oracle, and certified commutation + trace swap + canonicalization invariance results |
