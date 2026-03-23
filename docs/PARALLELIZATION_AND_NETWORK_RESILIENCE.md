@@ -113,6 +113,46 @@ java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
   distributed_replay_claim_barrier
 ```
 
+The next tracked replay surface extends that claim with asymmetric visibility:
+
+- `docs/specs/distributed_replay_visibility_barrier.tla`
+- `docs/specs/distributed_replay_visibility_barrier.cfg`
+
+It is still intentionally narrow. It models one atomic shared claim service,
+but now with per-replica connectivity, local claim-owner views, and explicit
+freshness. It proves the stronger safety shape:
+
+- at most one replica can execute
+- executed replicas must own the actual shared claim
+- executed replicas must also hold a fresh local view of that ownership
+- stale or disconnected local views cannot be used to execute on local
+  readiness alone
+- claimed replicas that lose freshness fail closed to rejected instead of
+  executing on stale visibility
+
+Modeling assumptions:
+
+- claim acquisition and the claimant's local fresh-view update are atomic
+- reconnect alone does not restore freshness; an explicit refresh step is still
+  required
+
+What it still does not prove:
+
+- lease expiry or claim revocation
+- split-brain claim-store behavior
+- eventual convergence after recovery
+
+Replay command:
+
+```bash
+cd docs/specs
+java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
+  -cleanup \
+  -deadlock \
+  -config distributed_replay_visibility_barrier.cfg \
+  distributed_replay_visibility_barrier
+```
+
 ## Mode C
 
 Mode C is currently strong as a private-lane verification boundary.
