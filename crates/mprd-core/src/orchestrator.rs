@@ -126,6 +126,8 @@ where
     // - Create token -> attest -> verify -> (optional) record -> execute.
     // This ensures any recorder observes only verified proofs, and the executor only runs on
     // verified inputs.
+    let authority = crate::policy_authority_witness_v1(inputs.policy_hash, &inputs.policy_ref)
+        .inspect_err(|e| record_stage_failure(inputs.metrics, "policy_authority", e))?;
 
     let _total_timer = inputs
         .metrics
@@ -231,12 +233,12 @@ where
         metrics::timed_evaluate(m, || {
             inputs
                 .policy_engine
-                .evaluate(inputs.policy_hash, &state, &candidates)
+                .evaluate(authority.policy_hash(), &state, &candidates)
         })
     } else {
         inputs
             .policy_engine
-            .evaluate(inputs.policy_hash, &state, &candidates)
+            .evaluate(authority.policy_hash(), &state, &candidates)
     }
     .inspect_err(|e| record_stage_failure(inputs.metrics, "evaluate", e))?;
     let allowed_count = verdicts.iter().filter(|v| v.allowed).count();
@@ -258,12 +260,12 @@ where
         metrics::timed_select(m, || {
             inputs
                 .selector
-                .select(inputs.policy_hash, &state, &candidates, &verdicts)
+                .select(authority.policy_hash(), &state, &candidates, &verdicts)
         })
     } else {
         inputs
             .selector
-            .select(inputs.policy_hash, &state, &candidates, &verdicts)
+            .select(authority.policy_hash(), &state, &candidates, &verdicts)
     }
     .inspect_err(|e| record_stage_failure(inputs.metrics, "select", e))?;
     Span::current().record("chosen_index", decision.chosen_index);
@@ -275,6 +277,8 @@ where
 
     enforce_selector_contract(&decision, &candidates, &verdicts)
         .inspect_err(|e| record_stage_failure(inputs.metrics, "select_contract", e))?;
+    crate::verify_decision_policy_authority_v1(&authority, &decision)
+        .inspect_err(|e| record_stage_failure(inputs.metrics, "select_policy_authority", e))?;
 
     // 5. Create decision token
     debug!("Creating decision token");
@@ -284,9 +288,11 @@ where
             &decision,
             &state,
             inputs.nonce_or_tx_hash,
-            &inputs.policy_ref,
+            authority.policy_ref(),
         )
         .inspect_err(|e| record_stage_failure(inputs.metrics, "token", e))?;
+    crate::verify_token_policy_authority_v1(&authority, &token)
+        .inspect_err(|e| record_stage_failure(inputs.metrics, "token_policy_authority", e))?;
     debug!(nonce = %hex::encode(&token.nonce_or_tx_hash.0[..8]), "Token created");
 
     // 6. Attest with ZK
@@ -615,6 +621,28 @@ mod tests {
         }
     }
 
+    struct LoggedPolicyHashDriftSelector {
+        log: CallLog,
+    }
+
+    impl Selector for LoggedPolicyHashDriftSelector {
+        fn select(
+            &self,
+            _policy_hash: &PolicyHash,
+            _state: &StateSnapshot,
+            candidates: &[CandidateAction],
+            _verdicts: &[RuleVerdict],
+        ) -> Result<Decision> {
+            push_call(&self.log, "select");
+            Ok(Decision {
+                chosen_index: 0,
+                chosen_action: candidates[0].clone(),
+                policy_hash: dummy_hash(91),
+                decision_commitment: dummy_hash(5),
+            })
+        }
+    }
+
     struct LoggedTokenFactory {
         log: CallLog,
     }
@@ -631,6 +659,61 @@ mod tests {
             Ok(DecisionToken {
                 policy_hash: decision.policy_hash.clone(),
                 policy_ref: policy_ref.clone(),
+                state_hash: state.state_hash.clone(),
+                state_ref: state.state_ref.clone(),
+                chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                nonce_or_tx_hash: nonce_or_tx_hash.unwrap_or_else(|| dummy_hash(3)),
+                timestamp_ms: 0,
+                signature: vec![],
+            })
+        }
+    }
+
+    struct LoggedPolicyHashDriftTokenFactory {
+        log: CallLog,
+    }
+
+    impl DecisionTokenFactory for LoggedPolicyHashDriftTokenFactory {
+        fn create(
+            &self,
+            decision: &Decision,
+            state: &StateSnapshot,
+            nonce_or_tx_hash: Option<crate::NonceHash>,
+            policy_ref: &PolicyRef,
+        ) -> Result<DecisionToken> {
+            push_call(&self.log, "token");
+            Ok(DecisionToken {
+                policy_hash: dummy_hash(92),
+                policy_ref: policy_ref.clone(),
+                state_hash: state.state_hash.clone(),
+                state_ref: state.state_ref.clone(),
+                chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                nonce_or_tx_hash: nonce_or_tx_hash.unwrap_or_else(|| dummy_hash(3)),
+                timestamp_ms: 0,
+                signature: vec![],
+            })
+        }
+    }
+
+    struct LoggedPolicyRefDriftTokenFactory {
+        log: CallLog,
+    }
+
+    impl DecisionTokenFactory for LoggedPolicyRefDriftTokenFactory {
+        fn create(
+            &self,
+            decision: &Decision,
+            state: &StateSnapshot,
+            nonce_or_tx_hash: Option<crate::NonceHash>,
+            _policy_ref: &PolicyRef,
+        ) -> Result<DecisionToken> {
+            push_call(&self.log, "token");
+            Ok(DecisionToken {
+                policy_hash: decision.policy_hash.clone(),
+                policy_ref: PolicyRef {
+                    policy_epoch: 999,
+                    registry_root: dummy_hash(93),
+                },
                 state_hash: state.state_hash.clone(),
                 state_ref: state.state_ref.clone(),
                 chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
@@ -770,6 +853,25 @@ mod tests {
             Ok(vec![CandidateAction {
                 action_type: "A".into(),
                 params: HashMap::from([("x".into(), Value::Int(1))]),
+                score: Score(10),
+                candidate_hash: dummy_hash(2),
+            }])
+        }
+    }
+
+    struct ValidHttpCallProposer;
+
+    impl Proposer for ValidHttpCallProposer {
+        fn propose(&self, _state: &StateSnapshot) -> Result<Vec<CandidateAction>> {
+            Ok(vec![CandidateAction {
+                action_type: "http_call".into(),
+                params: HashMap::from([
+                    ("http_method".into(), Value::String("GET".into())),
+                    (
+                        "http_url".into(),
+                        Value::String("https://example.com/health".into()),
+                    ),
+                ]),
                 score: Score(10),
                 candidate_hash: dummy_hash(2),
             }])
@@ -950,6 +1052,43 @@ mod tests {
             audit_recorder: None,
         })
         .expect("run_once should succeed in dummy pipeline");
+
+        assert!(result.success);
+        assert_eq!(result.message.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn run_once_happy_path_with_valid_http_call_components() {
+        let state_provider = DummyStateProvider;
+        let proposer = ValidHttpCallProposer;
+        let policy_engine = AllowAllPolicyEngine;
+        let selector = DummySelector;
+        let token_factory = DummyTokenFactory;
+        let attestor = DummyAttestor;
+        let verifier = DummyVerifier;
+        let executor = DummyExecutor;
+        let policy_hash = Hash32([9u8; 32]);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: Hash32([8u8; 32]),
+        };
+
+        let result = run_once(RunOnceInputs {
+            state_provider: &state_provider,
+            proposer: &proposer,
+            policy_engine: &policy_engine,
+            selector: &selector,
+            token_factory: &token_factory,
+            attestor: &attestor,
+            verifier: &verifier,
+            executor: &executor,
+            policy_hash: &policy_hash,
+            policy_ref,
+            nonce_or_tx_hash: None,
+            metrics: None,
+            audit_recorder: None,
+        })
+        .expect("run_once should succeed for valid http_call pipeline");
 
         assert!(result.success);
         assert_eq!(result.message.as_deref(), Some("ok"));
@@ -1664,6 +1803,180 @@ mod tests {
                 "execute"
             ]
         );
+        assert_pipeline_temporal_spec(&calls);
+    }
+
+    #[test]
+    fn run_once_fails_closed_when_selector_drifts_policy_hash_from_authorized_input() {
+        let log = new_call_log();
+        let state_provider = LoggedStateProvider {
+            log: log.clone(),
+            state: StateSnapshot {
+                fields: HashMap::new(),
+                policy_inputs: HashMap::new(),
+                state_hash: dummy_hash(1),
+                state_ref: crate::StateRef::unknown(),
+            },
+        };
+        let proposer = LoggedProposer {
+            log: log.clone(),
+            candidates: vec![CandidateAction {
+                action_type: "noop".into(),
+                params: HashMap::new(),
+                score: Score(1),
+                candidate_hash: dummy_hash(2),
+            }],
+        };
+        let policy_engine = LoggedPolicyEngine { log: log.clone() };
+        let selector = LoggedPolicyHashDriftSelector { log: log.clone() };
+        let token_factory = LoggedTokenFactory { log: log.clone() };
+        let attestor = LoggedAttestor { log: log.clone() };
+        let verifier = LoggedVerifier {
+            log: log.clone(),
+            status: VerificationStatus::Success,
+        };
+        let executor = LoggedExecutor { log: log.clone() };
+        let policy_hash = dummy_hash(9);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: dummy_hash(8),
+        };
+
+        let result = run_once(RunOnceInputs {
+            state_provider: &state_provider,
+            proposer: &proposer,
+            policy_engine: &policy_engine,
+            selector: &selector,
+            token_factory: &token_factory,
+            attestor: &attestor,
+            verifier: &verifier,
+            executor: &executor,
+            policy_hash: &policy_hash,
+            policy_ref,
+            nonce_or_tx_hash: None,
+            metrics: None,
+            audit_recorder: None,
+        });
+
+        assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "decision policy_hash drifted from authorized policy context"));
+        let calls = call_log_snapshot(&log);
+        assert_eq!(calls, vec!["state", "propose", "evaluate", "select"]);
+        assert_pipeline_temporal_spec(&calls);
+    }
+
+    #[test]
+    fn run_once_fails_closed_when_token_factory_drifts_policy_hash_from_authorized_input() {
+        let log = new_call_log();
+        let state_provider = LoggedStateProvider {
+            log: log.clone(),
+            state: StateSnapshot {
+                fields: HashMap::new(),
+                policy_inputs: HashMap::new(),
+                state_hash: dummy_hash(1),
+                state_ref: crate::StateRef::unknown(),
+            },
+        };
+        let proposer = LoggedProposer {
+            log: log.clone(),
+            candidates: vec![CandidateAction {
+                action_type: "noop".into(),
+                params: HashMap::new(),
+                score: Score(1),
+                candidate_hash: dummy_hash(2),
+            }],
+        };
+        let policy_engine = LoggedPolicyEngine { log: log.clone() };
+        let selector = LoggedSelector { log: log.clone() };
+        let token_factory = LoggedPolicyHashDriftTokenFactory { log: log.clone() };
+        let attestor = LoggedAttestor { log: log.clone() };
+        let verifier = LoggedVerifier {
+            log: log.clone(),
+            status: VerificationStatus::Success,
+        };
+        let executor = LoggedExecutor { log: log.clone() };
+        let policy_hash = dummy_hash(9);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: dummy_hash(8),
+        };
+
+        let result = run_once(RunOnceInputs {
+            state_provider: &state_provider,
+            proposer: &proposer,
+            policy_engine: &policy_engine,
+            selector: &selector,
+            token_factory: &token_factory,
+            attestor: &attestor,
+            verifier: &verifier,
+            executor: &executor,
+            policy_hash: &policy_hash,
+            policy_ref,
+            nonce_or_tx_hash: None,
+            metrics: None,
+            audit_recorder: None,
+        });
+
+        assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "token policy_hash drifted from authorized policy context"));
+        let calls = call_log_snapshot(&log);
+        assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
+        assert_pipeline_temporal_spec(&calls);
+    }
+
+    #[test]
+    fn run_once_fails_closed_when_token_factory_drifts_policy_ref_from_authorized_input() {
+        let log = new_call_log();
+        let state_provider = LoggedStateProvider {
+            log: log.clone(),
+            state: StateSnapshot {
+                fields: HashMap::new(),
+                policy_inputs: HashMap::new(),
+                state_hash: dummy_hash(1),
+                state_ref: crate::StateRef::unknown(),
+            },
+        };
+        let proposer = LoggedProposer {
+            log: log.clone(),
+            candidates: vec![CandidateAction {
+                action_type: "noop".into(),
+                params: HashMap::new(),
+                score: Score(1),
+                candidate_hash: dummy_hash(2),
+            }],
+        };
+        let policy_engine = LoggedPolicyEngine { log: log.clone() };
+        let selector = LoggedSelector { log: log.clone() };
+        let token_factory = LoggedPolicyRefDriftTokenFactory { log: log.clone() };
+        let attestor = LoggedAttestor { log: log.clone() };
+        let verifier = LoggedVerifier {
+            log: log.clone(),
+            status: VerificationStatus::Success,
+        };
+        let executor = LoggedExecutor { log: log.clone() };
+        let policy_hash = dummy_hash(9);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: dummy_hash(8),
+        };
+
+        let result = run_once(RunOnceInputs {
+            state_provider: &state_provider,
+            proposer: &proposer,
+            policy_engine: &policy_engine,
+            selector: &selector,
+            token_factory: &token_factory,
+            attestor: &attestor,
+            verifier: &verifier,
+            executor: &executor,
+            policy_hash: &policy_hash,
+            policy_ref,
+            nonce_or_tx_hash: None,
+            metrics: None,
+            audit_recorder: None,
+        });
+
+        assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "token policy_ref drifted from authorized policy context"));
+        let calls = call_log_snapshot(&log);
+        assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
         assert_pipeline_temporal_spec(&calls);
     }
 

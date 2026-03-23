@@ -260,6 +260,68 @@ impl<'a> ExecutionReadyBundle<'a> {
     }
 }
 
+/// Concrete policy authority witness carried on the RC1 path.
+///
+/// This binds the exact `(policy_hash, policy_ref)` pair the orchestrator was authorized to use
+/// and lets downstream stages fail closed on any selector/token drift.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PolicyAuthorityWitnessV1 {
+    policy_hash: PolicyHash,
+    policy_ref: PolicyRef,
+}
+
+impl PolicyAuthorityWitnessV1 {
+    pub fn policy_hash(&self) -> &PolicyHash {
+        &self.policy_hash
+    }
+
+    pub fn policy_ref(&self) -> &PolicyRef {
+        &self.policy_ref
+    }
+}
+
+/// Construct the concrete policy authority witness for a run.
+pub fn policy_authority_witness_v1(
+    policy_hash: &PolicyHash,
+    policy_ref: &PolicyRef,
+) -> Result<PolicyAuthorityWitnessV1> {
+    Ok(PolicyAuthorityWitnessV1 {
+        policy_hash: *policy_hash,
+        policy_ref: policy_ref.clone(),
+    })
+}
+
+/// Verify that the selector preserved the orchestrator-authorized policy identity.
+pub fn verify_decision_policy_authority_v1(
+    authority: &PolicyAuthorityWitnessV1,
+    decision: &Decision,
+) -> Result<()> {
+    if decision.policy_hash != authority.policy_hash {
+        return Err(MprdError::InvalidInput(
+            "decision policy_hash drifted from authorized policy context".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Verify that the decision token preserved the orchestrator-authorized policy identity.
+pub fn verify_token_policy_authority_v1(
+    authority: &PolicyAuthorityWitnessV1,
+    token: &DecisionToken,
+) -> Result<()> {
+    if token.policy_hash != authority.policy_hash {
+        return Err(MprdError::InvalidInput(
+            "token policy_hash drifted from authorized policy context".into(),
+        ));
+    }
+    if token.policy_ref != authority.policy_ref {
+        return Err(MprdError::InvalidInput(
+            "token policy_ref drifted from authorized policy context".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Verify `proof` against `token` and, on success, produce a `VerifiedBundle` for execution.
 pub fn verify_for_execution<'a>(
     verifier: &dyn ZkLocalVerifier,
@@ -730,5 +792,66 @@ mod tests {
 
         let err = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).unwrap_err();
         assert!(matches!(err, MprdError::ExecutionError(_)));
+    }
+
+    #[test]
+    fn policy_authority_witness_accepts_aligned_decision_and_token() {
+        let policy_hash = dummy_hash(21);
+        let policy_ref = PolicyRef {
+            policy_epoch: 7,
+            registry_root: dummy_hash(22),
+        };
+        let authority =
+            policy_authority_witness_v1(&policy_hash, &policy_ref).expect("authority witness");
+        let candidate = valid_http_call_candidate();
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash,
+            decision_commitment: dummy_hash(23),
+        };
+        let token = DecisionToken {
+            policy_hash,
+            policy_ref: policy_ref.clone(),
+            state_hash: dummy_hash(24),
+            state_ref: StateRef::unknown(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(25),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+
+        verify_decision_policy_authority_v1(&authority, &decision)
+            .expect("aligned decision should pass");
+        verify_token_policy_authority_v1(&authority, &token)
+            .expect("aligned token should pass");
+    }
+
+    #[test]
+    fn policy_authority_witness_rejects_token_policy_ref_drift() {
+        let policy_hash = dummy_hash(31);
+        let policy_ref = PolicyRef {
+            policy_epoch: 7,
+            registry_root: dummy_hash(32),
+        };
+        let authority =
+            policy_authority_witness_v1(&policy_hash, &policy_ref).expect("authority witness");
+        let token = DecisionToken {
+            policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 8,
+                registry_root: dummy_hash(33),
+            },
+            state_hash: dummy_hash(34),
+            state_ref: StateRef::unknown(),
+            chosen_action_hash: dummy_hash(35),
+            nonce_or_tx_hash: dummy_hash(36),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+
+        let err = verify_token_policy_authority_v1(&authority, &token)
+            .expect_err("policy_ref drift must fail closed");
+        assert!(matches!(err, MprdError::InvalidInput(message) if message == "token policy_ref drifted from authorized policy context"));
     }
 }
