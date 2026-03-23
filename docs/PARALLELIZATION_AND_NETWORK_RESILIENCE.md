@@ -153,6 +153,49 @@ java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
   distributed_replay_visibility_barrier
 ```
 
+The next tracked replay surface extends that series with lease expiry and
+revocation:
+
+- `docs/specs/distributed_replay_lease_barrier.tla`
+- `docs/specs/distributed_replay_lease_barrier.cfg`
+
+It is still intentionally narrow. It models one atomic shared claim service,
+but now with per-replica owner-plus-epoch views and an explicit shared lease
+epoch. It proves the stronger safety shape:
+
+- at most one replica can execute
+- executed replicas must hold the current shared owner and epoch
+- fresh local views must match both actual owner and actual epoch
+- claimed replicas fail closed to rejected if the lease expires or is revoked
+  before execute
+
+Modeling assumptions:
+
+- claim acquisition and the claimant's local fresh owner-plus-epoch update are
+  atomic
+- lease expiry or revocation clears the shared owner and increments the shared
+  epoch in one step
+- reconnect alone does not restore freshness; an explicit refresh step is still
+  required
+
+What it still does not prove:
+
+- split-brain claim-store behavior
+- leased handoff between two non-`none` owners without a clearing step
+- eventual rejection or execution after lease expiry or recovery
+- eventual convergence after recovery
+
+Replay command:
+
+```bash
+cd docs/specs
+java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
+  -cleanup \
+  -deadlock \
+  -config distributed_replay_lease_barrier.cfg \
+  distributed_replay_lease_barrier
+```
+
 ## Mode C
 
 Mode C is currently strong as a private-lane verification boundary.
