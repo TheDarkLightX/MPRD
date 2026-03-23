@@ -11,6 +11,19 @@ lean_lib MPRDLeanProofs where
     `MPRDLeanProofs,
     `MPRD_Theorem,
     `MPRD_Alignment_Combined,
+    `MPRD_ExecutionLifecycle,
+    `MPRD_ExecutionGate,
+    `MPRD_ExecutionCommitmentBindings,
+    `MPRD_ExecutionBoundary,
+    `MPRD_SelectorContractBinding,
+    `MPRD_TauPolicyAuthority,
+    `MPRD_GovernedPolicySource,
+    `MPRD_GovernedSourceIntentBoundary,
+    `MPRD_GovernedSourceArtifactWitness,
+    `MPRD_GovernanceGateAuthorization,
+    `MPRD_GovernanceStateLinkage,
+    `MPRD_GovernanceExecutionBridge,
+    `MPRD_RegistryPolicyAuthority,
+    `MPRD_ParallelIndependenceOracle,
     `TauTables_SelectSet
   ]
-

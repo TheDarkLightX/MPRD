@@ -4,6 +4,20 @@
 
 import MPRD_Theorem
 import MPRD_Alignment_Combined
+import MPRD_ExecutionLifecycle
+import MPRD_ExecutionGate
+import MPRD_ExecutionCommitmentBindings
+import MPRD_ExecutionBoundary
+import MPRD_SelectorContractBinding
+import MPRD_TauPolicyAuthority
+import MPRD_GovernedPolicySource
+import MPRD_GovernedSourceIntentBoundary
+import MPRD_GovernedSourceArtifactWitness
+import MPRD_GovernanceGateAuthorization
+import MPRD_GovernanceStateLinkage
+import MPRD_GovernanceExecutionBridge
+import MPRD_RegistryPolicyAuthority
+import MPRD_ParallelIndependenceOracle
 import TauTables_SelectSet
 
 -- No declarations needed here; importing ensures the files typecheck.

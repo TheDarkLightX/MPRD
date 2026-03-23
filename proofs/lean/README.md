@@ -8,6 +8,20 @@ assumption.
 
 - `MPRD_Theorem.lean`: the core safety invariant (contract-based).
 - `MPRD_Alignment_Combined.lean`: composition lemma (explicitly states assumptions).
+- `MPRD_ExecutionLifecycle.lean`: a lightweight reachable-state proof of the decision lifecycle invariants mirrored by the checked-in TLA+ model.
+- `MPRD_ExecutionGate.lean`: a guarded reachable-state proof that executed states require verification, an allowed verdict, governance authorization, replay clearance, and binding integrity.
+- `MPRD_ExecutionCommitmentBindings.lean`: a stronger reachable-state proof that expands binding integrity into the concrete commitment checks used by the journal verifier: journal-allowed, limits hash, decision commitment recomputation, policy/state/candidate/action matches, and nonce binding.
+- `MPRD_ExecutionBoundary.lean`: a composed reachable-state proof that joins the journal/request commitment vector with the executor preimage/schema gate, so execution requires both verifier-side and executor-side bindings.
+- `MPRD_SelectorContractBinding.lean`: a lightweight reachable-state proof that execution also requires the selector-specific chosen-index and chosen-action-preimage bindings, so runtime effects cannot drift to a different allowed action.
+- `MPRD_TauPolicyAuthority.lean`: a small reachable-state proof of the architectural split: models propose, Tau decides, the selector chooses from the Tau-allowed set, and execution follows only that choice.
+- `MPRD_GovernedPolicySource.lean`: a lightweight registry-bound proof that if Tau source bytes are the governed rule surface, execution through a compiled artifact still requires pinned policy authorization, routed image selection, and explicit source mapping.
+- `MPRD_GovernedSourceIntentBoundary.lean`: a lightweight proof of the stricter selected boundary: signed Tau intent is weaker than governed mapping, so Tau-declared artifacts stay skipped until source mapping appears.
+- `MPRD_GovernedSourceArtifactWitness.lean`: a lightweight proof of the next deploy/runtime boundary: exact artifact validation is still weaker than governed provenance, so Tau-declared validated artifacts stay skipped until mapping appears, while executed Tau-governed states require a full source-plus-artifact witness.
+- `MPRD_GovernanceGateAuthorization.lean`: a lightweight proof of the prepared governance gate boundary: accepted governance updates require a one-hot prepared lane, `link_ok`, and the lane-matching profile thresholds.
+- `MPRD_GovernanceStateLinkage.lean`: a lightweight proof of the concrete governance-state linkage boundary: applied rules and committee updates require threshold authorization plus previous-hash linkage and monotone sequence continuity.
+- `MPRD_GovernanceExecutionBridge.lean`: a lightweight cross-slice proof that execution-time `governance_ok` requires both a resolved live policy and an admitted governance update before execution can occur.
+- `MPRD_RegistryPolicyAuthority.lean`: a lightweight proof of the registry-backed policy admission boundary: a node only resolves a live policy after a selected trusted authority mode, manifest verification, exact `policy_ref` alignment, policy authorization, and image routing.
+- `MPRD_ParallelIndependenceOracle.lean`: a lightweight local theorem for pre/post-condition-guided parallelization: speculative evaluation and cache refresh commute and preserve the serial authority barrier, while committed states still require all existing commit guards and private committed states additionally require Mode C key admission.
 
 ## How to typecheck
 
@@ -24,6 +38,20 @@ Or typecheck individual files:
 cd proofs/lean
 lake env lean MPRD_Theorem.lean
 lake env lean MPRD_Alignment_Combined.lean
+lake env lean MPRD_ExecutionLifecycle.lean
+lake env lean MPRD_ExecutionGate.lean
+lake env lean MPRD_ExecutionCommitmentBindings.lean
+lake env lean MPRD_ExecutionBoundary.lean
+lake env lean MPRD_SelectorContractBinding.lean
+lake env lean MPRD_TauPolicyAuthority.lean
+lake env lean MPRD_GovernedPolicySource.lean
+lake env lean MPRD_GovernedSourceIntentBoundary.lean
+lake env lean MPRD_GovernedSourceArtifactWitness.lean
+lake env lean MPRD_GovernanceGateAuthorization.lean
+lake env lean MPRD_GovernanceStateLinkage.lean
+lake env lean MPRD_GovernanceExecutionBridge.lean
+lake env lean MPRD_RegistryPolicyAuthority.lean
+lake env lean MPRD_ParallelIndependenceOracle.lean
 ```
 
 ## Notes
