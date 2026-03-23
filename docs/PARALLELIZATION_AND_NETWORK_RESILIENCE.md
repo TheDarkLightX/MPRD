@@ -378,6 +378,52 @@ java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
   distributed_replay_quorum_equivocation_barrier
 ```
 
+The next tracked replay surface extends that series with post-conflict recovery:
+
+- `docs/specs/distributed_replay_equivocation_recovery_barrier.tla`
+- `docs/specs/distributed_replay_equivocation_recovery_barrier.cfg`
+
+It is still intentionally narrow. It models visible same-epoch equivocation,
+an explicit recovery step that clears conflicting certificates and advances a
+resolution epoch, and the requirement that only fresh post-resolution
+certificates may cross the execute barrier. It proves the safety shape:
+
+- at most one replica can execute
+- visible conflict blocks execution, and the explicit recovery step clears
+  conflicting certificates
+- executed replicas require a fresh certificate strictly above the current
+  resolution epoch
+- stale pre-resolution certificates cannot survive recovery and then execute
+
+Modeling assumptions:
+
+- recovery is an explicit fail-closed step, not a liveness or fairness theorem
+- hidden or never-shared equivocation is still outside this packet
+- certificate freshness must be reacquired after recovery before execute
+- the global `effect_count` barrier from the earlier serial-commit packet still
+  carries the non-equivocation at-most-once part of the safety story
+- this packet does not model Byzantine certificate forgery beyond conflicting
+  owner claims
+
+What it still does not prove:
+
+- eventual recovery after visible conflict
+- eventual successful progress after recovery
+- hidden equivocation detection
+- quorum reconfiguration or membership churn
+- direct owner handoff combined with recovery
+
+Replay command:
+
+```bash
+cd docs/specs
+java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
+  -cleanup \
+  -deadlock \
+  -config distributed_replay_equivocation_recovery_barrier.cfg \
+  distributed_replay_equivocation_recovery_barrier
+```
+
 ## Mode C
 
 Mode C is currently strong as a private-lane verification boundary.
