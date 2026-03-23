@@ -156,6 +156,42 @@ pub enum NonceClaim {
     Claimed,
 }
 
+/// Concrete replay-clearance witness carried after the nonce validator accepts the token.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReplayClearanceWitnessV1 {
+    claim: NonceClaim,
+}
+
+impl ReplayClearanceWitnessV1 {
+    pub fn claim(&self) -> NonceClaim {
+        self.claim
+    }
+}
+
+/// Verify replay clearance and capture the resulting claim mode as a witness.
+pub fn replay_clearance_witness_v1(
+    token: &DecisionToken,
+    nonce_validator: &dyn NonceValidator,
+) -> Result<ReplayClearanceWitnessV1> {
+    let claim = nonce_validator.validate_and_claim(token)?;
+    Ok(ReplayClearanceWitnessV1 { claim })
+}
+
+/// Finalize replay clearance after execution.
+///
+/// If the nonce was not pre-claimed, successful execution must mark it used exactly once.
+pub fn finalize_replay_clearance_v1(
+    token: &DecisionToken,
+    witness: ReplayClearanceWitnessV1,
+    result: &crate::ExecutionResult,
+    nonce_validator: &dyn NonceValidator,
+) -> Result<()> {
+    if result.success && witness.claim == NonceClaim::NotClaimed {
+        nonce_validator.mark_used(token)?;
+    }
+    Ok(())
+}
+
 // =============================================================================
 // Verified kernel: nonce lifecycle gate (rate/window discipline)
 // =============================================================================
@@ -1655,16 +1691,24 @@ where
         let token = verified.token();
 
         // Pre-condition: validate nonce (and, for distributed deployments, claim before execute).
-        let claim = self.nonce_validator.validate_and_claim(token)?;
+        let replay = replay_clearance_witness_v1(token, &self.nonce_validator)?;
 
         // Execute the action
         let result = self.inner.execute(verified)?;
 
-        // Post-condition: mark nonce as used (only on success)
-        if result.success && claim == NonceClaim::NotClaimed {
-            self.nonce_validator.mark_used(token)?;
-        }
+        finalize_replay_clearance_v1(token, replay, &result, &self.nonce_validator)?;
 
+        Ok(result)
+    }
+
+    fn execute_ready(
+        &self,
+        ready: &crate::ExecutionReadyBundle<'_>,
+    ) -> Result<crate::ExecutionResult> {
+        let token = ready.token();
+        let replay = replay_clearance_witness_v1(token, &self.nonce_validator)?;
+        let result = self.inner.execute_ready(ready)?;
+        finalize_replay_clearance_v1(token, replay, &result, &self.nonce_validator)?;
         Ok(result)
     }
 }
@@ -2063,6 +2107,44 @@ mod tests {
                 message: None,
             })
         }
+
+        fn execute_ready(
+            &self,
+            _ready: &crate::ExecutionReadyBundle<'_>,
+        ) -> Result<ExecutionResult> {
+            if self.success {
+                push_call(&self.log, "execute_ready_ok");
+            } else {
+                push_call(&self.log, "execute_ready_fail");
+            }
+            Ok(ExecutionResult {
+                success: self.success,
+                message: None,
+            })
+        }
+    }
+
+    fn dummy_bound_proof_for(token: &DecisionToken) -> ProofBundle {
+        let preimage = crate::hash::candidate_hash_preimage(&crate::CandidateAction {
+            action_type: crate::validation::ACTION_TYPE_NOOP_V1.into(),
+            params: HashMap::new(),
+            score: crate::Score(0),
+            candidate_hash: Hash32([0u8; 32]),
+        });
+        let chosen_action_hash = crate::hash::hash_candidate_preimage_v1(&preimage);
+        let limits_bytes = vec![];
+        let limits_hash = crate::limits::limits_hash_v1(&limits_bytes);
+        ProofBundle {
+            policy_hash: token.policy_hash.clone(),
+            state_hash: token.state_hash.clone(),
+            candidate_set_hash: Hash32([4u8; 32]),
+            chosen_action_hash,
+            limits_hash,
+            limits_bytes,
+            chosen_action_preimage: preimage,
+            risc0_receipt: vec![1],
+            attestation_metadata: HashMap::new(),
+        }
     }
 
     #[test]
@@ -2173,6 +2255,89 @@ mod tests {
         let spec = ltlf::Formula::and(vec![
             ltlf::Formula::precedence("validate_and_claim", "execute_ok"),
             ltlf::Formula::precedence("claimed", "execute_ok"),
+            ltlf::Formula::always(ltlf::Formula::not_atom("mark_used")),
+        ]);
+        let trace = calls_to_trace(&calls);
+        assert!(ltlf::eval_trace(spec, &trace));
+    }
+
+    #[test]
+    fn ltlf_anti_replay_execute_ready_not_claimed_marks_used_after_ready_success() {
+        let log = new_call_log();
+        let validator = LoggedNonceValidator {
+            log: log.clone(),
+            claim: NonceClaim::NotClaimed,
+        };
+        let inner = LoggedOutcomeExecutor {
+            log: log.clone(),
+            success: true,
+        };
+        let exec = AntiReplayExecutor::new(inner, validator);
+
+        let base = InMemoryNonceTracker::current_time_ms().expect("clock");
+        let mut token = dummy_token(7, base);
+        let proof = dummy_bound_proof_for(&token);
+        token.chosen_action_hash = proof.chosen_action_hash;
+        let ready = crate::prepare_execution_ready(VerifiedBundle::new(&token, &proof))
+            .expect("ready bundle");
+
+        let result = exec.execute_ready(&ready).expect("execute_ready");
+        assert!(result.success);
+
+        let calls = call_log_snapshot(&log);
+        assert_eq!(
+            calls,
+            vec![
+                "validate_and_claim",
+                "not_claimed",
+                "execute_ready_ok",
+                "mark_used"
+            ]
+        );
+
+        let spec = ltlf::Formula::and(vec![
+            ltlf::Formula::precedence("validate_and_claim", "execute_ready_ok"),
+            ltlf::Formula::precedence("execute_ready_ok", "mark_used"),
+            ltlf::Formula::always(ltlf::Formula::or(vec![
+                ltlf::Formula::not_atom("execute_ready_ok"),
+                ltlf::Formula::eventually(ltlf::Formula::atom("mark_used")),
+            ])),
+        ]);
+        let trace = calls_to_trace(&calls);
+        assert!(ltlf::eval_trace(spec, &trace));
+    }
+
+    #[test]
+    fn ltlf_anti_replay_execute_ready_failed_result_does_not_mark_used() {
+        let log = new_call_log();
+        let validator = LoggedNonceValidator {
+            log: log.clone(),
+            claim: NonceClaim::NotClaimed,
+        };
+        let inner = LoggedOutcomeExecutor {
+            log: log.clone(),
+            success: false,
+        };
+        let exec = AntiReplayExecutor::new(inner, validator);
+
+        let base = InMemoryNonceTracker::current_time_ms().expect("clock");
+        let mut token = dummy_token(8, base);
+        let proof = dummy_bound_proof_for(&token);
+        token.chosen_action_hash = proof.chosen_action_hash;
+        let ready = crate::prepare_execution_ready(VerifiedBundle::new(&token, &proof))
+            .expect("ready bundle");
+
+        let result = exec.execute_ready(&ready).expect("execute_ready");
+        assert!(!result.success);
+
+        let calls = call_log_snapshot(&log);
+        assert_eq!(
+            calls,
+            vec!["validate_and_claim", "not_claimed", "execute_ready_fail"]
+        );
+
+        let spec = ltlf::Formula::and(vec![
+            ltlf::Formula::precedence("validate_and_claim", "execute_ready_fail"),
             ltlf::Formula::always(ltlf::Formula::not_atom("mark_used")),
         ]);
         let trace = calls_to_trace(&calls);

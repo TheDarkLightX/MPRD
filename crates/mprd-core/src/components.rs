@@ -539,6 +539,12 @@ impl ExecutorAdapter for SignatureVerifyingBoxedExecutor {
         self.verifying_key.verify_token(token, &token.signature)?;
         self.inner.execute(verified)
     }
+
+    fn execute_ready(&self, ready: &crate::ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
+        let token = ready.token();
+        self.verifying_key.verify_token(token, &token.signature)?;
+        self.inner.execute_ready(ready)
+    }
 }
 
 pub struct StateProvenanceBoxedExecutor {
@@ -581,6 +587,30 @@ impl ExecutorAdapter for StateProvenanceBoxedExecutor {
         }
 
         self.inner.execute(verified)
+    }
+
+    fn execute_ready(&self, ready: &crate::ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
+        let token = ready.token();
+        let state_ref = &token.state_ref;
+        if state_ref.state_source_id == Hash32([0u8; 32])
+            || state_ref.state_attestation_hash == Hash32([0u8; 32])
+        {
+            return Err(crate::MprdError::InvalidInput(
+                "missing state provenance (state_ref)".into(),
+            ));
+        }
+
+        if !self
+            .allowed_state_source_ids
+            .iter()
+            .any(|h| h == &state_ref.state_source_id)
+        {
+            return Err(crate::MprdError::InvalidInput(
+                "unallowlisted state provenance scheme (state_source_id)".into(),
+            ));
+        }
+
+        self.inner.execute_ready(ready)
     }
 }
 
@@ -676,6 +706,11 @@ impl ExecutorAdapter for ExecutionGuardBoxedExecutor {
         // SECURITY: enforce committed transcript binding at the executor boundary.
         Self::enforce(verified)?;
         self.inner.execute(verified)
+    }
+
+    fn execute_ready(&self, ready: &crate::ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
+        // `ExecutionReadyBundle` already carries the concrete execution-boundary witness.
+        self.inner.execute_ready(ready)
     }
 }
 
@@ -870,6 +905,40 @@ impl ExecutorAdapter for CircuitBreakerBoxedExecutor {
 
         result
     }
+
+    fn execute_ready(&self, ready: &crate::ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
+        let now_ms = (self.now_ms)()?;
+
+        {
+            let mut gate = self.gate.lock().map_err(|_| {
+                crate::MprdError::ExecutionError("Circuit breaker lock poisoned".into())
+            })?;
+            gate.observe_time(self.tick_ms, now_ms)?;
+            gate.try_half_open_if_ready()?;
+            if gate.is_open() {
+                return Err(crate::MprdError::ExecutionError(
+                    "circuit breaker is OPEN: executor unavailable".into(),
+                ));
+            }
+        }
+
+        let result = self.inner.execute_ready(ready);
+
+        let Some(success) = Self::observe_outcome_for_breaker(&result) else {
+            return result;
+        };
+
+        let mut gate = self.gate.lock().map_err(|_| {
+            crate::MprdError::ExecutionError("Circuit breaker lock poisoned".into())
+        })?;
+        if success {
+            gate.record_success()?;
+        } else {
+            gate.record_failure()?;
+        }
+
+        result
+    }
 }
 
 pub struct AntiReplayBoxedExecutor {
@@ -898,16 +967,33 @@ impl ExecutorAdapter for AntiReplayBoxedExecutor {
         // - Effect:
         //   - If the nonce was not claimed before execution, mark it used only on success.
         //   - If the nonce was claimed before execution (low-trust multi-node), do not re-claim.
-        let claim = self.nonce_validator.validate_and_claim(token)?;
+        let replay = crate::anti_replay::replay_clearance_witness_v1(
+            token,
+            self.nonce_validator.as_ref(),
+        )?;
         let result = self.inner.execute(verified)?;
+        crate::anti_replay::finalize_replay_clearance_v1(
+            token,
+            replay,
+            &result,
+            self.nonce_validator.as_ref(),
+        )?;
+        Ok(result)
+    }
 
-        if !result.success {
-            return Ok(result);
-        }
-
-        if claim == crate::anti_replay::NonceClaim::NotClaimed {
-            self.nonce_validator.mark_used(token)?;
-        }
+    fn execute_ready(&self, ready: &crate::ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
+        let token = ready.token();
+        let replay = crate::anti_replay::replay_clearance_witness_v1(
+            token,
+            self.nonce_validator.as_ref(),
+        )?;
+        let result = self.inner.execute_ready(ready)?;
+        crate::anti_replay::finalize_replay_clearance_v1(
+            token,
+            replay,
+            &result,
+            self.nonce_validator.as_ref(),
+        )?;
         Ok(result)
     }
 }
@@ -1457,6 +1543,31 @@ mod tests {
         }
     }
 
+    struct ReadyOnlyExecutor {
+        raw_calls: Arc<AtomicUsize>,
+        ready_calls: Arc<AtomicUsize>,
+    }
+
+    impl ExecutorAdapter for ReadyOnlyExecutor {
+        fn execute(&self, _verified: &crate::VerifiedBundle<'_>) -> Result<ExecutionResult> {
+            self.raw_calls.fetch_add(1, Ordering::SeqCst);
+            Err(crate::MprdError::ExecutionError(
+                "raw execute path should not be used".into(),
+            ))
+        }
+
+        fn execute_ready(
+            &self,
+            _ready: &crate::ExecutionReadyBundle<'_>,
+        ) -> Result<ExecutionResult> {
+            self.ready_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ExecutionResult {
+                success: true,
+                message: None,
+            })
+        }
+    }
+
     fn now_ms_for_tests() -> i64 {
         let ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1595,6 +1706,44 @@ mod tests {
         let second = guarded.execute(&verified);
         assert!(matches!(second, Err(crate::MprdError::NonceReplay { .. })));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn wrap_executor_with_guards_execute_ready_preserves_ready_bundle_through_guard_stack() {
+        let signing_key = crate::crypto::TokenSigningKey::from_seed(&[7u8; 32]);
+        let mut config = crate::MprdConfig::builder()
+            .require_signatures(true)
+            .signing_key_hex(hex::encode([7u8; 32]))
+            .require_state_provenance(true)
+            .allowed_state_source_ids_hex(vec![hex::encode(dummy_hash(0x55).0)])
+            .enable_circuit_breaker(true)
+            .build()
+            .expect("config");
+        config.execution.circuit_breaker.tick_ms = 1;
+
+        let (mut token, proof) = noop_token_and_proof(dummy_hash(13));
+        token.state_ref = crate::StateRef {
+            state_source_id: dummy_hash(0x55),
+            state_epoch: 1,
+            state_attestation_hash: dummy_hash(0x56),
+        };
+        token.signature = signing_key.sign_token(&token).to_vec();
+
+        let ready = crate::prepare_execution_ready(crate::VerifiedBundle::new(&token, &proof))
+            .expect("ready");
+
+        let raw_calls = Arc::new(AtomicUsize::new(0));
+        let ready_calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(ReadyOnlyExecutor {
+            raw_calls: raw_calls.clone(),
+            ready_calls: ready_calls.clone(),
+        });
+        let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
+
+        let result = guarded.execute_ready(&ready).expect("execute_ready");
+        assert!(result.success);
+        assert_eq!(raw_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(ready_calls.load(Ordering::SeqCst), 1);
     }
 
     struct FailingExecutor {
