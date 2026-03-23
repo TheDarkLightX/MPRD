@@ -6,14 +6,47 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use mprd_core::{
     CandidateAction, Decision, DecisionToken, Hash32, PolicyRef, ProofBundle, RuleVerdict, Score,
-    StateRef, StateSnapshot,
+    StateRef, StateSnapshot, ZkAttestor,
 };
+use mprd_zk::{ModeConfig, RobustMpbAttestor};
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::pin::Pin;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::task::{Context, Poll};
 use tower::ServiceExt;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct EnvGuard {
+    prev: Vec<(&'static str, Option<String>)>,
+    _lock: MutexGuard<'static, ()>,
+}
+
+impl EnvGuard {
+    fn set_many(vars: &[(&'static str, &str)]) -> Self {
+        let lock = ENV_LOCK.lock().expect("env lock");
+        let mut prev = Vec::with_capacity(vars.len());
+        for (key, value) in vars {
+            prev.push((*key, std::env::var(key).ok()));
+            std::env::set_var(key, value);
+        }
+        Self { prev, _lock: lock }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        for (key, prev) in self.prev.drain(..) {
+            if let Some(prev) = prev {
+                std::env::set_var(key, prev);
+            } else {
+                std::env::remove_var(key);
+            }
+        }
+    }
+}
 
 fn test_state(tmp: &tempfile::TempDir) -> AppState {
     let policy_dir = tmp.path().join("policies");
@@ -33,6 +66,79 @@ fn test_state(tmp: &tempfile::TempDir) -> AppState {
         config: super::super::MprdConfigFile::default(),
         cegis_metrics: Arc::new(RwLock::new(mprd_core::cegis::ProposerMetrics::default())),
     }
+}
+
+fn sample_mpb_lite_decision_inputs() -> (
+    DecisionToken,
+    ProofBundle,
+    StateSnapshot,
+    Vec<CandidateAction>,
+    Vec<RuleVerdict>,
+    Decision,
+) {
+    let policy_bytecode = mprd_core::mpb::BytecodeBuilder::new()
+        .push_i64(1)
+        .halt()
+        .build();
+    let policy_hash = mprd_zk::mpb_lite::policy_hash_from_artifact_v1(&policy_bytecode, &[]);
+
+    let mut cfg = ModeConfig::mode_b_lite();
+    cfg.mpb_policy_bytecode = Some(policy_bytecode);
+    cfg.mpb_policy_variables = Some(vec![]);
+    let attestor = RobustMpbAttestor::new(cfg).expect("attestor");
+
+    let state = StateSnapshot {
+        fields: HashMap::new(),
+        policy_inputs: HashMap::new(),
+        state_hash: mprd_core::hash::hash_state(&StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: Hash32([0u8; 32]),
+            state_ref: StateRef::unknown(),
+        }),
+        state_ref: StateRef::unknown(),
+    };
+
+    let mut candidate = CandidateAction {
+        action_type: "TEST".into(),
+        params: HashMap::new(),
+        score: Score(10),
+        candidate_hash: Hash32([0u8; 32]),
+    };
+    candidate.candidate_hash = mprd_core::hash::hash_candidate(&candidate);
+    let candidates = vec![candidate.clone()];
+
+    let decision = Decision {
+        chosen_index: 0,
+        chosen_action: candidate,
+        policy_hash,
+        decision_commitment: Hash32([4u8; 32]),
+    };
+
+    let token = DecisionToken {
+        policy_hash,
+        policy_ref: PolicyRef {
+            policy_epoch: 1,
+            registry_root: Hash32([9u8; 32]),
+        },
+        state_hash: state.state_hash,
+        state_ref: state.state_ref.clone(),
+        chosen_action_hash: decision.chosen_action.candidate_hash,
+        nonce_or_tx_hash: Hash32([10u8; 32]),
+        timestamp_ms: 1,
+        signature: vec![],
+    };
+
+    let proof = attestor
+        .attest(&token, &decision, &state, &candidates)
+        .expect("mpb-lite proof");
+    let verdicts = vec![RuleVerdict {
+        allowed: true,
+        reasons: vec![],
+        limits: HashMap::new(),
+    }];
+
+    (token, proof, state, candidates, verdicts, decision)
 }
 
 async fn read_json<T: DeserializeOwned>(res: axum::http::Response<Body>) -> T {
@@ -214,6 +320,50 @@ async fn api_does_not_require_key_when_not_configured() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn decision_blob_serves_receipt_derived_mpb_lite_chosen_preimage() {
+    let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state = test_state(&tmp);
+    let (token, proof, state_snapshot, candidates, verdicts, decision) =
+        sample_mpb_lite_decision_inputs();
+    let id = state
+        .store
+        .write_verified_decision(
+            &token,
+            &proof,
+            &state_snapshot,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .expect("write decision");
+    assert!(!state
+        .store_dir
+        .join("decisions")
+        .join(&id)
+        .join("chosen_action_preimage.bin")
+        .exists());
+
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/decisions/{id}/blob/chosen_action_preimage.bin"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 2 * 1024 * 1024)
+        .await
+        .expect("read body");
+    assert_eq!(bytes.as_ref(), proof.chosen_action_preimage.as_slice());
 }
 
 #[tokio::test]

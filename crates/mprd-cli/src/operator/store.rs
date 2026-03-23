@@ -18,6 +18,7 @@ const DEFAULT_DECISION_RETENTION_DAYS: u64 = 30;
 const DEFAULT_MAX_DECISIONS: u64 = 10_000;
 const SETTINGS_VERSION_V1: u32 = 1;
 const AUTOPILOT_STATE_VERSION_V1: u32 = 1;
+const DERIVED_CHOSEN_ACTION_PREIMAGE_PATH_V1: &str = "@derived_from_receipt:chosen_action_preimage";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -306,6 +307,71 @@ impl OperatorStore {
         Ok(bytes)
     }
 
+    fn derive_chosen_action_preimage_from_receipt_bytes(
+        receipt_bytes: &[u8],
+    ) -> anyhow::Result<Vec<u8>> {
+        let artifact_bytes = if receipt_bytes.starts_with(&wire::MAGIC) {
+            match wire::parse_or_legacy_bounded(
+                receipt_bytes,
+                Some(WireKind::ZkReceiptBincode),
+                MAX_RECEIPT_BYTES,
+            ) {
+                Ok(wire::ParsedPayload::Enveloped(env)) => env.payload.to_vec(),
+                Ok(wire::ParsedPayload::Legacy(payload)) => payload.to_vec(),
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "failed to unwrap stored receipt envelope: {e}"
+                    ))
+                }
+            }
+        } else {
+            receipt_bytes.to_vec()
+        };
+
+        let artifact = mprd_zk::mpb_lite::deserialize_artifact(&artifact_bytes)
+            .map_err(|e| anyhow::anyhow!("failed to decode MPB-lite artifact from receipt: {e}"))?;
+        mprd_zk::mpb_lite::verify_artifact_header(&artifact)
+            .map_err(|e| anyhow::anyhow!("invalid MPB-lite artifact in receipt: {e}"))?;
+        let preimage = mprd_zk::mpb_lite::chosen_action_preimage_from_family(&artifact)
+            .map_err(|e| anyhow::anyhow!("failed to derive chosen action from receipt: {e}"))?;
+        Ok(preimage.to_vec())
+    }
+
+    fn can_deduplicate_chosen_action_preimage(proof: &ProofBundle) -> bool {
+        let backend = proof
+            .attestation_metadata
+            .get("proof_backend")
+            .map(|s| s.as_str());
+        if backend != Some("mpb_lite_v2") && backend != Some("mpb_lite_v3") {
+            return false;
+        }
+        match Self::derive_chosen_action_preimage_from_receipt_bytes(&proof.risc0_receipt) {
+            Ok(derived) => derived == proof.chosen_action_preimage,
+            Err(_) => false,
+        }
+    }
+
+    fn chosen_action_preimage_from_record_bytes(
+        dir: &Path,
+        record: &OperatorDecisionRecordV1,
+        receipt_bytes: &[u8],
+    ) -> anyhow::Result<Vec<u8>> {
+        if record.proof.chosen_action_preimage_path.trim().is_empty() {
+            anyhow::bail!(
+                "chosen_action_preimage is not stored (set MPRD_OPERATOR_STORE_SENSITIVE=1 to enable)"
+            );
+        }
+
+        if record.proof.chosen_action_preimage_path == DERIVED_CHOSEN_ACTION_PREIMAGE_PATH_V1 {
+            return Self::derive_chosen_action_preimage_from_receipt_bytes(receipt_bytes);
+        }
+
+        Self::read_bounded_file(
+            &dir.join(&record.proof.chosen_action_preimage_path),
+            Self::MAX_CHOSEN_ACTION_PREIMAGE_BYTES,
+        )
+    }
+
     fn retention_settings_path(root: &std::path::Path) -> PathBuf {
         root.join("settings.json")
     }
@@ -550,12 +616,14 @@ impl OperatorStore {
         let receipt_path = dir.join("receipt.bin");
         let limits_bytes_path = dir.join("limits.bin");
         let action_preimage_path = dir.join("chosen_action_preimage.bin");
+        let deduplicate_chosen_action_preimage =
+            self.store_sensitive && Self::can_deduplicate_chosen_action_preimage(proof);
 
         // Store receipts as MPRDPACK v1 (kind-tagged + integrity). Readers accept legacy bytes too.
         let receipt_bytes = wire::wrap_v1(WireKind::ZkReceiptBincode, 0, &proof.risc0_receipt);
         atomic_write(&receipt_path, &receipt_bytes)?;
         atomic_write(&limits_bytes_path, &proof.limits_bytes)?;
-        if self.store_sensitive {
+        if self.store_sensitive && !deduplicate_chosen_action_preimage {
             atomic_write(&action_preimage_path, &proof.chosen_action_preimage)?;
         }
 
@@ -612,11 +680,15 @@ impl OperatorStore {
                     .unwrap_or("limits.bin")
                     .to_string(),
                 chosen_action_preimage_path: if self.store_sensitive {
-                    action_preimage_path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("chosen_action_preimage.bin")
-                        .to_string()
+                    if deduplicate_chosen_action_preimage {
+                        DERIVED_CHOSEN_ACTION_PREIMAGE_PATH_V1.to_string()
+                    } else {
+                        action_preimage_path
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("chosen_action_preimage.bin")
+                            .to_string()
+                    }
                 } else {
                     String::new()
                 },
@@ -966,16 +1038,19 @@ impl OperatorStore {
             &dir.join(&record.proof.limits_bytes_path),
             Self::MAX_LIMITS_BYTES,
         )?;
-        if record.proof.chosen_action_preimage_path.trim().is_empty() {
-            anyhow::bail!(
-                "chosen_action_preimage is not stored (set MPRD_OPERATOR_STORE_SENSITIVE=1 to enable)"
-            );
-        }
-        let preimage = Self::read_bounded_file(
-            &dir.join(&record.proof.chosen_action_preimage_path),
-            Self::MAX_CHOSEN_ACTION_PREIMAGE_BYTES,
-        )?;
+        let preimage = Self::chosen_action_preimage_from_record_bytes(&dir, record, &receipt)?;
         Ok((receipt, limits, preimage))
+    }
+
+    pub fn chosen_action_preimage_for_record(
+        &self,
+        decision_id_hex: &str,
+        record: &OperatorDecisionRecordV1,
+    ) -> anyhow::Result<Vec<u8>> {
+        let dir = self.decision_dir(decision_id_hex);
+        let receipt =
+            Self::read_bounded_file(&dir.join(&record.proof.receipt_path), MAX_RECEIPT_BYTES)?;
+        Self::chosen_action_preimage_from_record_bytes(&dir, record, &receipt)
     }
 
     fn alert_ack_path(&self) -> PathBuf {
@@ -1052,8 +1127,9 @@ mod tests {
     use crate::operator::api as op_api;
     use mprd_core::{
         CandidateAction, Decision, DecisionToken, Hash32, PolicyRef, ProofBundle, RuleVerdict,
-        Score, StateRef, StateSnapshot,
+        Score, StateRef, StateSnapshot, ZkAttestor,
     };
+    use mprd_zk::{ModeConfig, RobustMpbAttestor};
     use proptest::prelude::*;
     use std::collections::HashMap;
     use std::sync::{Mutex, MutexGuard};
@@ -1150,6 +1226,79 @@ mod tests {
             signature: vec![1, 2, 3],
         };
         (token, proof, state, vec![candidate], verdicts, decision)
+    }
+
+    fn sample_mpb_lite_decision_inputs() -> (
+        DecisionToken,
+        ProofBundle,
+        StateSnapshot,
+        Vec<CandidateAction>,
+        Vec<RuleVerdict>,
+        Decision,
+    ) {
+        let policy_bytecode = mprd_core::mpb::BytecodeBuilder::new()
+            .push_i64(1)
+            .halt()
+            .build();
+        let policy_hash = mprd_zk::mpb_lite::policy_hash_from_artifact_v1(&policy_bytecode, &[]);
+
+        let mut cfg = ModeConfig::mode_b_lite();
+        cfg.mpb_policy_bytecode = Some(policy_bytecode);
+        cfg.mpb_policy_variables = Some(vec![]);
+        let attestor = RobustMpbAttestor::new(cfg).expect("attestor");
+
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: mprd_core::hash::hash_state(&StateSnapshot {
+                fields: HashMap::new(),
+                policy_inputs: HashMap::new(),
+                state_hash: Hash32([0u8; 32]),
+                state_ref: StateRef::unknown(),
+            }),
+            state_ref: StateRef::unknown(),
+        };
+
+        let mut candidate = CandidateAction {
+            action_type: "TEST".into(),
+            params: HashMap::new(),
+            score: Score(10),
+            candidate_hash: Hash32([0u8; 32]),
+        };
+        candidate.candidate_hash = mprd_core::hash::hash_candidate(&candidate);
+        let candidates = vec![candidate.clone()];
+
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate,
+            policy_hash,
+            decision_commitment: Hash32([4u8; 32]),
+        };
+
+        let token = DecisionToken {
+            policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 1,
+                registry_root: Hash32([9u8; 32]),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash,
+            nonce_or_tx_hash: Hash32([10u8; 32]),
+            timestamp_ms: super::now_ms(),
+            signature: vec![],
+        };
+
+        let proof = attestor
+            .attest(&token, &decision, &state, &candidates)
+            .expect("mpb-lite proof");
+        let verdicts = vec![RuleVerdict {
+            allowed: true,
+            reasons: vec![],
+            limits: HashMap::new(),
+        }];
+
+        (token, proof, state, candidates, verdicts, decision)
     }
 
     #[test]
@@ -1516,6 +1665,64 @@ mod tests {
         assert!(receipt.starts_with(&mprd_core::wire::MAGIC));
         assert_eq!(limits, proof.limits_bytes);
         assert_eq!(preimage, proof.chosen_action_preimage);
+    }
+
+    #[test]
+    fn write_verified_decision_deduplicates_mpb_lite_preimage_storage_when_receipt_matches() {
+        let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+
+        let tmp = TempDir::new().expect("tempdir");
+        let store = OperatorStore::new(tmp.path()).expect("store");
+        let (token, proof, state, candidates, verdicts, decision) =
+            sample_mpb_lite_decision_inputs();
+
+        let id = store
+            .write_verified_decision(&token, &proof, &state, &candidates, &verdicts, &decision)
+            .expect("write decision");
+        let record = store.read_record(&id).expect("read record");
+
+        assert_eq!(
+            record.proof.chosen_action_preimage_path,
+            super::DERIVED_CHOSEN_ACTION_PREIMAGE_PATH_V1
+        );
+        assert!(!store
+            .decision_dir(&id)
+            .join("chosen_action_preimage.bin")
+            .exists());
+
+        let (receipt, limits, preimage) = store.blobs_for_proof(&id, &record).expect("blobs");
+        assert!(receipt.starts_with(&mprd_core::wire::MAGIC));
+        assert_eq!(limits, proof.limits_bytes);
+        assert_eq!(preimage, proof.chosen_action_preimage);
+    }
+
+    #[test]
+    fn blobs_for_proof_fail_closed_when_derived_mpb_lite_preimage_receipt_is_corrupted() {
+        let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+
+        let tmp = TempDir::new().expect("tempdir");
+        let store = OperatorStore::new(tmp.path()).expect("store");
+        let (token, proof, state, candidates, verdicts, decision) =
+            sample_mpb_lite_decision_inputs();
+
+        let id = store
+            .write_verified_decision(&token, &proof, &state, &candidates, &verdicts, &decision)
+            .expect("write decision");
+        let record = store.read_record(&id).expect("read record");
+        assert_eq!(
+            record.proof.chosen_action_preimage_path,
+            super::DERIVED_CHOSEN_ACTION_PREIMAGE_PATH_V1
+        );
+
+        let receipt_path = store.decision_dir(&id).join(&record.proof.receipt_path);
+        std::fs::write(&receipt_path, b"not-a-valid-receipt").expect("corrupt receipt");
+
+        let err = store
+            .blobs_for_proof(&id, &record)
+            .expect_err("should reject corrupted derived receipt");
+        assert!(err
+            .to_string()
+            .contains("failed to decode MPB-lite artifact from receipt"));
     }
 
     #[test]

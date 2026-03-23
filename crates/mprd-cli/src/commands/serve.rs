@@ -1761,7 +1761,6 @@ async fn api_decision_blob(
     }
 
     const MAX_LIMITS_BYTES: u64 = 4 * 1024;
-    const MAX_PREIMAGE_BYTES: u64 = mprd_core::validation::MAX_CANDIDATE_PREIMAGE_BYTES_V1 as u64;
 
     let (bytes, content_type) = match name.as_str() {
         "record.json" => (
@@ -1780,10 +1779,13 @@ async fn api_decision_blob(
             "application/octet-stream",
         ),
         "chosen_action_preimage.bin"
-            if record.proof.chosen_action_preimage_path == "chosen_action_preimage.bin" =>
+            if !record.proof.chosen_action_preimage_path.trim().is_empty() =>
         {
             (
-                read_bounded(&dir.join("chosen_action_preimage.bin"), MAX_PREIMAGE_BYTES)?,
+                state
+                    .store
+                    .chosen_action_preimage_for_record(&id, &record)
+                    .map_err(|_| StatusCode::NOT_FOUND)?,
                 "application/octet-stream",
             )
         }

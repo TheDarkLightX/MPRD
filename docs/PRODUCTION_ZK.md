@@ -38,10 +38,118 @@ via `crates/mprd-zk/src/registry_state.rs` (`RegistryBoundRisc0Verifier`), which
 - selects the allowed `image_id` from verifier-trusted `registry_state` *before* receipt verification
 - checks `policy_hash` is authorized at exactly `(policy_epoch, registry_root)`
 
+Current runtime policy admission is therefore fail-closed on verifier-trusted
+cryptographic authority, not on arbitrary uploaded spec files. A node only
+treats a policy as live after a trusted signed or committee-authenticated
+registry checkpoint is accepted, the guest manifest verifies, `policy_ref`
+matches the same `(policy_epoch, registry_root)`, the `policy_hash` is listed
+in the checkpoint, and the authorized exec kind routes through the manifest.
+Today that authority is pseudonymous public-key material (single key, signer
+set, or signer-weight map), not yet a first-class owner-namespace assignment or
+certification-tier system.
+The formal ShapeForge bundle now also has a local governance-execution bridge
+packet: execution-time `governance_ok` should depend on both a resolved live
+policy and an admitted governance update. That packet is proved locally, but the
+runtime refinement from concrete registry and governance objects into the
+execution slice's `governance_ok` bit is still an open boundary.
+The formal ShapeForge bundle now also has a local selector-contract-binding
+packet: execution should require both `chosen_index` selecting the same
+`chosen_action_hash` and `chosen_action_preimage` hashing back to that same
+selected candidate. Candidate-family admission is also stricter now: the core
+canonicalizer sorts unique candidate hashes into ascending canonical-hash order,
+rejects score-agnostic duplicate executable payloads, and the guest/attestor/
+verifier surfaces reject noncanonical sorted-unique families. MPB-lite artifact
+admission now also carries aligned `candidate_preimages`, so local and external
+verifiers reject duplicate executable payloads across the full family and fail
+closed if that witness is missing. The aligned family witness is now the
+authoritative chosen-action source for MPB-lite artifacts; current
+`mpb_lite_v3` artifacts omit the redundant duplicated `candidate_hashes` and
+the always-empty duplicate `chosen_action_preimage`, while legacy v1/v2
+duplicates are only accepted when they normalize exactly to that same family
+and chosen member. The runtime still lacks a replayable refinement edge from the
+concrete candidate-set and preimage objects into the formal selector-binding
+state, and broader semantic canonicalization beyond action type plus sorted
+params remains open.
+
+On operator decision-log paths, MPB-lite v2/v3 proofs can now deduplicate the
+persisted chosen-action blob when the stored receipt replayably derives the
+same chosen preimage. The store records a sentinel instead of
+`chosen_action_preimage.bin`, and both operator blob export and HTTP download
+surfaces resolve that sentinel through the same fail-closed receipt-to-preimage
+helper in `crates/mprd-cli/src/operator/store.rs`.
+
 If Tau source bytes are treated as the governed policy source-of-truth while executing MPB bytecode, publish a governed mapping in `registry_state` and require it fail-closed:
 
-- `crates/mprd-zk/src/registry_state.rs`: `AuthorizedPolicyV1::{policy_source_kind_id, policy_source_hash}`
+- `crates/mprd-zk/src/registry_state.rs`: `AuthorizedPolicyV1::{policy_source_kind_id, policy_source_hash, policy_source_intent_kind_id}`
 - `crates/mprd-zk/src/lib.rs`: `create_production_verifier_from_signed_registry_state()` requires the mapping by default
+
+Current production helper factories enforce this conservatively once selected: they require
+`policy_source_*` presence uniformly and do not branch on `policy_source_kind_id` at the public
+boundary.
+
+For deployment inspection, `mprd deploy check-bundle` now reports deterministically sorted
+per-policy source-governance rows in human output, and `--format json` emits the same partition
+in a machine-readable bundle report. `source_governance` stays tri-valued
+(`TauGovernedMapped | OtherMapped | Unmapped`), and the per-policy
+`source_intent_classification` field reports the signed source-intent witness
+(`TauDeclared | OtherDeclared | Undeclared`) without upgrading it into governance proof. The per-policy
+`source_boundary_classification` field further splits `Unmapped` into
+`TauCompiledCarrierUnmapped | OtherCarrierUnmapped`, so operators can see when a missing mapping
+occurs on a Tau carrier and whether that carrier was explicitly Tau-intended, without overclaiming
+full source governance. The same checked report now also exposes
+`strict_selector_aliases`, so accepted strict carrier selectors are queryable from the bundle JSON
+and strict failure packets instead of being reconstructed from docs or tests. The report also exposes
+`artifact_hash_validated` plus `source_artifact_witness_state`
+(`Ready | BlockedMissingSourceMapping | BlockedArtifactValidation`), so source mapping and exact
+artifact-byte validation can be tracked as a single deploy-boundary witness without treating that
+artifact witness as compiler equivalence. The deploy surface also exposes
+`--format normalized-json` and `--format digest`, both derived from the same checked report object
+but with local artifact paths stripped, so equivalent bundle checks can be compared safely across
+different checkout roots. If operator intent is explicit, repeat
+`--strict-governed-source <exec-kind>` to require those exec kinds to be `TauGovernedMapped`;
+failures are deterministic and include a stable strict-failure digest. For automation, add
+`--strict-governed-source-failure-format json|digest` to emit the structured strict failure witness
+on stdout before exiting nonzero, rather than scraping stderr. Strict governed-source rejection now
+uses a dedicated exit code (`2`) so automation can distinguish it from generic command failure,
+while ordinary bundle-validation failures stay on the generic exit code (`1`).
+Built-in exec kinds accept both their friendly labels and their canonical lowercase hex ids on
+this strict surface.
+If operator intent also requires a full source-plus-artifact witness, repeat
+`--strict-source-artifact-witness <exec-kind>` to require
+`source_artifact_witness_state = Ready` for those exec kinds. That is stricter than governed-source
+mapping alone: selected exec kinds must have both source mapping and exact local artifact-byte
+validation at the deploy boundary. For automation, add
+`--strict-source-artifact-witness-failure-format json|digest` to emit the structured strict
+failure witness on stdout before exiting nonzero. Strict source-artifact-witness rejection uses its
+own dedicated exit code (`3`), which stays distinct from governed-source rejection (`2`) and from
+generic bundle-validation failure (`1`).
+Built-in exec kinds accept the same label-or-canonical-hex aliases on this stricter surface too.
+If both strict modes are declared for the same exec kind, governed-source runs first and
+source-artifact witness runs second. That keeps source mapping as the antecedent contract for the
+stronger source-plus-artifact readiness check.
+The issue-kind to response mapping is pinned in
+`internal/shapeforge/mprd/evidence/strict_governed_source_response_matrix.json`, so remediation
+logic does not have to be reconstructed from prose or tests, and the machine failure packet now
+embeds the corresponding `classification`, `required_response`, signed intent classification, and
+boundary classification data directly. That lets automation distinguish the stronger
+`tau_declared_mapping_missing` case from a generic `policy_not_tau_governed` rejection without
+treating source intent as equivalent to governed mapping.
+External consumers can query the same contract from the binary with
+`mprd deploy strict-governed-source-response-matrix --format human|json|digest`, and the JSON
+export is regression-checked against the pinned artifact bytes.
+The sibling source-artifact contract is pinned in
+`internal/shapeforge/mprd/evidence/strict_source_artifact_witness_response_matrix.json`, and
+external consumers can query it with
+`mprd deploy strict-source-artifact-witness-response-matrix --format human|json|digest`.
+The built-in strict selector language is also pinned independently of bundle contents in
+`internal/shapeforge/mprd/evidence/strict_selector_alias_matrix.json`, and external consumers can
+query it with `mprd deploy strict-selector-alias-matrix --format human|json|digest`. That matrix
+stays intentionally limited to built-in selector families; non-built-in exec-kind selectors remain
+bundle-discovered through per-policy `strict_selector_aliases` rows.
+Human rows, JSON stdout,
+normalized JSON, digest output, and strict-mode success/failure paths are regression-tested end to
+end against scrambled bundle fixtures, including cross-checks that human strict-failure fields and
+machine failure packets describe the same rejection.
 
 If your registry checkpoint key and manifest key differ, use:
 - `crates/mprd-zk/src/lib.rs`: `create_production_verifier_from_signed_registry_state_with_manifest_key()`
