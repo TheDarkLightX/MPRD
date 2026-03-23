@@ -241,6 +241,50 @@ java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
   distributed_replay_split_brain_barrier
 ```
 
+The next tracked replay surface extends the lease series with direct
+owner-to-owner handoff:
+
+- `docs/specs/distributed_replay_direct_handoff_barrier.tla`
+- `docs/specs/distributed_replay_direct_handoff_barrier.cfg`
+
+It is still intentionally narrow. It models one atomic shared claim service
+with per-replica owner-plus-epoch views, but now allows direct handoff from one
+non-`none` owner to the other without clearing through `none`. It proves the
+safety shape:
+
+- at most one replica can execute
+- executed replicas must hold the current shared owner and epoch
+- direct handoff invalidates the old claimant instead of letting it execute on
+  stale ownership
+- the new owner can execute only through the fresh post-handoff owner-plus-epoch
+  view
+
+Modeling assumptions:
+
+- direct handoff is atomic at the shared claim service
+- the recipient receives the fresh post-handoff owner-plus-epoch view in the
+  same step
+- the donor's freshness is invalidated in the same step
+- no split-brain claim-store behavior is modeled here
+
+What it still does not prove:
+
+- split-brain or divergent local-claim histories
+- handoff to a replica that is not already locally ready
+- eventual progress after a failed handoff or disconnected recipient
+- Byzantine shared-claim service behavior
+
+Replay command:
+
+```bash
+cd docs/specs
+java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
+  -cleanup \
+  -deadlock \
+  -config distributed_replay_direct_handoff_barrier.cfg \
+  distributed_replay_direct_handoff_barrier
+```
+
 ## Mode C
 
 Mode C is currently strong as a private-lane verification boundary.
