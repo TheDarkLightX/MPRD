@@ -163,8 +163,18 @@ pub struct OperatorProofV1 {
     pub receipt_path: String,
     pub limits_bytes_path: String,
     pub chosen_action_preimage_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chosen_action_preimage_storage_mode: Option<OperatorChosenActionPreimageStorageModeV1>,
 
     pub attestation_metadata: HashMap<String, String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OperatorChosenActionPreimageStorageModeV1 {
+    NotStored,
+    InlineBlob,
+    DerivedFromReceipt,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -370,6 +380,34 @@ impl OperatorStore {
             &dir.join(&record.proof.chosen_action_preimage_path),
             Self::MAX_CHOSEN_ACTION_PREIMAGE_BYTES,
         )
+    }
+
+    fn infer_chosen_action_preimage_storage_mode(
+        chosen_action_preimage_path: &str,
+    ) -> OperatorChosenActionPreimageStorageModeV1 {
+        if chosen_action_preimage_path.trim().is_empty() {
+            OperatorChosenActionPreimageStorageModeV1::NotStored
+        } else if chosen_action_preimage_path == DERIVED_CHOSEN_ACTION_PREIMAGE_PATH_V1 {
+            OperatorChosenActionPreimageStorageModeV1::DerivedFromReceipt
+        } else {
+            OperatorChosenActionPreimageStorageModeV1::InlineBlob
+        }
+    }
+
+    fn api_chosen_action_preimage_storage(
+        mode: OperatorChosenActionPreimageStorageModeV1,
+    ) -> api::ChosenActionPreimageStorage {
+        match mode {
+            OperatorChosenActionPreimageStorageModeV1::NotStored => {
+                api::ChosenActionPreimageStorage::NotStored
+            }
+            OperatorChosenActionPreimageStorageModeV1::InlineBlob => {
+                api::ChosenActionPreimageStorage::InlineBlob
+            }
+            OperatorChosenActionPreimageStorageModeV1::DerivedFromReceipt => {
+                api::ChosenActionPreimageStorage::DerivedFromReceipt
+            }
+        }
     }
 
     fn retention_settings_path(root: &std::path::Path) -> PathBuf {
@@ -692,6 +730,15 @@ impl OperatorStore {
                 } else {
                     String::new()
                 },
+                chosen_action_preimage_storage_mode: Some(
+                    if self.store_sensitive && deduplicate_chosen_action_preimage {
+                        OperatorChosenActionPreimageStorageModeV1::DerivedFromReceipt
+                    } else if self.store_sensitive {
+                        OperatorChosenActionPreimageStorageModeV1::InlineBlob
+                    } else {
+                        OperatorChosenActionPreimageStorageModeV1::NotStored
+                    },
+                ),
                 attestation_metadata: proof.attestation_metadata.clone(),
             },
             state: OperatorStateV1 {
@@ -807,6 +854,12 @@ impl OperatorStore {
     pub fn read_record(&self, decision_id_hex: &str) -> anyhow::Result<OperatorDecisionRecordV1> {
         let bytes = fs::read(self.decision_dir(decision_id_hex).join("record.json"))?;
         let mut record: OperatorDecisionRecordV1 = serde_json::from_slice(&bytes)?;
+        if record.proof.chosen_action_preimage_storage_mode.is_none() {
+            record.proof.chosen_action_preimage_storage_mode =
+                Some(Self::infer_chosen_action_preimage_storage_mode(
+                    &record.proof.chosen_action_preimage_path,
+                ));
+        }
         self.apply_status_updates(decision_id_hex, &mut record);
         Ok(record)
     }
@@ -888,6 +941,10 @@ impl OperatorStore {
                 proof_status: record.summary.proof_status.clone(),
                 execution_status: record.summary.execution_status.clone(),
                 latency_ms: record.summary.latency_ms,
+                chosen_action_preimage_storage: record
+                    .proof
+                    .chosen_action_preimage_storage_mode
+                    .map(Self::api_chosen_action_preimage_storage),
             });
         }
         summaries.sort_by_key(|s| std::cmp::Reverse(s.timestamp));
@@ -1685,6 +1742,10 @@ mod tests {
             record.proof.chosen_action_preimage_path,
             super::DERIVED_CHOSEN_ACTION_PREIMAGE_PATH_V1
         );
+        assert_eq!(
+            record.proof.chosen_action_preimage_storage_mode,
+            Some(super::OperatorChosenActionPreimageStorageModeV1::DerivedFromReceipt)
+        );
         assert!(!store
             .decision_dir(&id)
             .join("chosen_action_preimage.bin")
@@ -1723,6 +1784,39 @@ mod tests {
         assert!(err
             .to_string()
             .contains("failed to decode MPB-lite artifact from receipt"));
+    }
+
+    #[test]
+    fn read_record_backfills_missing_chosen_preimage_storage_mode_from_legacy_path() {
+        let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+
+        let tmp = TempDir::new().expect("tempdir");
+        let store = OperatorStore::new(tmp.path()).expect("store");
+        let (token, proof, state, candidates, verdicts, decision) =
+            sample_mpb_lite_decision_inputs();
+
+        let id = store
+            .write_verified_decision(&token, &proof, &state, &candidates, &verdicts, &decision)
+            .expect("write decision");
+        let record_path = store.decision_dir(&id).join("record.json");
+        let mut raw: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&record_path).expect("read record json"))
+                .expect("parse record json");
+        raw.get_mut("proof")
+            .and_then(|proof| proof.as_object_mut())
+            .expect("proof object")
+            .remove("chosen_action_preimage_storage_mode");
+        std::fs::write(
+            &record_path,
+            serde_json::to_vec_pretty(&raw).expect("serialize legacy record"),
+        )
+        .expect("rewrite record json");
+
+        let record = store.read_record(&id).expect("read legacy record");
+        assert_eq!(
+            record.proof.chosen_action_preimage_storage_mode,
+            Some(super::OperatorChosenActionPreimageStorageModeV1::DerivedFromReceipt)
+        );
     }
 
     #[test]

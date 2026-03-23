@@ -48,6 +48,7 @@ export interface DecisionSummary {
     proofStatus: ProofStatus;
     executionStatus: ExecutionStatus;
     latencyMs: number;
+    chosenActionPreimageStorage?: ChosenActionPreimageStorage;
 }
 
 export interface CandidateWithVerdict {
@@ -76,6 +77,7 @@ export interface ProofBundle {
     limitsHash: string;
     receiptSize: number;
     verifiedAt: number;
+    chosenActionPreimageStorage?: ChosenActionPreimageStorage;
 }
 
 export interface StateSnapshot {
@@ -279,8 +281,14 @@ export interface DecisionExport {
     recordUrl: string;
     receiptUrl: string;
     limitsUrl: string;
-    chosenActionPreimageUrl: string;
+    chosenActionPreimageUrl?: string;
+    chosenActionPreimageStorage: ChosenActionPreimageStorage;
 }
+
+export type ChosenActionPreimageStorage =
+    | 'not_stored'
+    | 'inline_blob'
+    | 'derived_from_receipt';
 
 // =============================================================================
 // Autopilot & Attention Types (Algorithms 5, 10-12)

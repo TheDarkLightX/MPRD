@@ -367,6 +367,141 @@ async fn decision_blob_serves_receipt_derived_mpb_lite_chosen_preimage() {
 }
 
 #[tokio::test]
+async fn decision_detail_reports_receipt_derived_chosen_preimage_storage() {
+    let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state = test_state(&tmp);
+    let (token, proof, state_snapshot, candidates, verdicts, decision) =
+        sample_mpb_lite_decision_inputs();
+    let id = state
+        .store
+        .write_verified_decision(
+            &token,
+            &proof,
+            &state_snapshot,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .expect("write decision");
+
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/decisions/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value = read_json(res).await;
+    assert_eq!(
+        body["proof"]["chosenActionPreimageStorage"],
+        serde_json::Value::String("derived_from_receipt".into())
+    );
+}
+
+#[tokio::test]
+async fn decision_export_reports_receipt_derived_chosen_preimage_storage_and_url() {
+    let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state = test_state(&tmp);
+    let (token, proof, state_snapshot, candidates, verdicts, decision) =
+        sample_mpb_lite_decision_inputs();
+    let id = state
+        .store
+        .write_verified_decision(
+            &token,
+            &proof,
+            &state_snapshot,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .expect("write decision");
+
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/decisions/{id}/export"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: op_api::DecisionExport = read_json(res).await;
+    assert_eq!(
+        body.chosen_action_preimage_storage,
+        op_api::ChosenActionPreimageStorage::DerivedFromReceipt
+    );
+    let expected_url = format!("/api/decisions/{id}/blob/chosen_action_preimage.bin");
+    assert_eq!(
+        body.chosen_action_preimage_url.as_deref(),
+        Some(expected_url.as_str())
+    );
+}
+
+#[tokio::test]
+async fn decision_export_reports_inline_chosen_preimage_storage_and_url() {
+    let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state = test_state(&tmp);
+    let id = write_simple_decision(&state.store, 1, true, None);
+
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/decisions/{id}/export"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: op_api::DecisionExport = read_json(res).await;
+    assert_eq!(
+        body.chosen_action_preimage_storage,
+        op_api::ChosenActionPreimageStorage::InlineBlob
+    );
+    let expected_url = format!("/api/decisions/{id}/blob/chosen_action_preimage.bin");
+    assert_eq!(
+        body.chosen_action_preimage_url.as_deref(),
+        Some(expected_url.as_str())
+    );
+}
+
+#[tokio::test]
+async fn decision_export_omits_preimage_url_when_not_stored() {
+    let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "0")]);
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state = test_state(&tmp);
+    let id = write_simple_decision(&state.store, 1, true, None);
+
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/decisions/{id}/export"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: op_api::DecisionExport = read_json(res).await;
+    assert_eq!(
+        body.chosen_action_preimage_storage,
+        op_api::ChosenActionPreimageStorage::NotStored
+    );
+    assert_eq!(body.chosen_action_preimage_url, None);
+}
+
+#[tokio::test]
 async fn autopilot_state_defaults_and_transition_is_guarded_by_anchors() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state = test_state(&tmp);
@@ -513,6 +648,73 @@ async fn decisions_filter_by_policy_hash() {
     let out: op_api::PaginatedResponse<op_api::DecisionSummary> = read_json(res).await;
     assert_eq!(out.total, 1);
     assert_eq!(out.data[0].policy_hash, want_hex);
+}
+
+#[tokio::test]
+async fn decisions_list_reports_receipt_derived_chosen_preimage_storage() {
+    let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state = test_state(&tmp);
+    let app = build_app(state.clone(), ApiKeyConfig { api_key: None });
+    let (token, proof, state_snapshot, candidates, verdicts, decision) =
+        sample_mpb_lite_decision_inputs();
+    state
+        .store
+        .write_verified_decision(
+            &token,
+            &proof,
+            &state_snapshot,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .expect("write decision");
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/decisions")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let out: op_api::PaginatedResponse<op_api::DecisionSummary> = read_json(res).await;
+    assert_eq!(out.total, 1);
+    assert_eq!(
+        out.data[0].chosen_action_preimage_storage,
+        Some(op_api::ChosenActionPreimageStorage::DerivedFromReceipt)
+    );
+}
+
+#[tokio::test]
+async fn decisions_list_reports_not_stored_chosen_preimage_storage() {
+    let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "0")]);
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state = test_state(&tmp);
+    let store = state.store.clone();
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let _id = write_simple_decision(&store, 1_000, true, Some(true));
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/decisions")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let out: op_api::PaginatedResponse<op_api::DecisionSummary> = read_json(res).await;
+    assert_eq!(out.total, 1);
+    assert_eq!(
+        out.data[0].chosen_action_preimage_storage,
+        Some(op_api::ChosenActionPreimageStorage::NotStored)
+    );
 }
 
 #[tokio::test]

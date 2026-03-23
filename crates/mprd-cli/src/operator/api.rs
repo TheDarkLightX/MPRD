@@ -89,6 +89,8 @@ pub struct DecisionSummary {
     pub proof_status: ProofStatus,
     pub execution_status: ExecutionStatus,
     pub latency_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chosen_action_preimage_storage: Option<ChosenActionPreimageStorage>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -123,6 +125,16 @@ pub struct ProofBundle {
     pub limits_hash: HashHex,
     pub receipt_size: u64,
     pub verified_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chosen_action_preimage_storage: Option<ChosenActionPreimageStorage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChosenActionPreimageStorage {
+    NotStored,
+    InlineBlob,
+    DerivedFromReceipt,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -257,7 +269,9 @@ pub struct DecisionExport {
     pub record_url: String,
     pub receipt_url: String,
     pub limits_url: String,
-    pub chosen_action_preimage_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chosen_action_preimage_url: Option<String>,
+    pub chosen_action_preimage_storage: ChosenActionPreimageStorage,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -52,6 +52,22 @@ mod router_tests;
 #[cfg(test)]
 mod status_tests;
 
+fn map_chosen_action_preimage_storage(
+    mode: op_store::OperatorChosenActionPreimageStorageModeV1,
+) -> op_api::ChosenActionPreimageStorage {
+    match mode {
+        op_store::OperatorChosenActionPreimageStorageModeV1::NotStored => {
+            op_api::ChosenActionPreimageStorage::NotStored
+        }
+        op_store::OperatorChosenActionPreimageStorageModeV1::InlineBlob => {
+            op_api::ChosenActionPreimageStorage::InlineBlob
+        }
+        op_store::OperatorChosenActionPreimageStorageModeV1::DerivedFromReceipt => {
+            op_api::ChosenActionPreimageStorage::DerivedFromReceipt
+        }
+    }
+}
+
 struct CliAllowAllPolicyEngine;
 
 impl PolicyEngine for CliAllowAllPolicyEngine {
@@ -1669,6 +1685,7 @@ async fn api_decision_detail(
         proof_status: record.summary.proof_status.clone(),
         execution_status: record.summary.execution_status.clone(),
         latency_ms: record.summary.latency_ms,
+        chosen_action_preimage_storage: None,
     };
 
     Ok(Json(op_api::DecisionDetail {
@@ -1688,6 +1705,10 @@ async fn api_decision_detail(
             limits_hash: record.proof.limits_hash,
             receipt_size: record.proof.receipt_size,
             verified_at: record.proof.verified_at_ms,
+            chosen_action_preimage_storage: record
+                .proof
+                .chosen_action_preimage_storage_mode
+                .map(map_chosen_action_preimage_storage),
         },
         state: op_api::StateSnapshot {
             fields: record.state.fields_json,
@@ -1716,18 +1737,35 @@ async fn api_decision_detail(
 }
 
 async fn api_decision_export(
+    State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<op_api::DecisionExport>, StatusCode> {
     if !is_decision_id(&id) {
         return Err(StatusCode::BAD_REQUEST);
     }
+    let record = state
+        .store
+        .read_record(&id)
+        .map_err(|_| StatusCode::NOT_FOUND)?;
     let base = format!("/api/decisions/{id}/blob");
+    let chosen_action_preimage_storage = record
+        .proof
+        .chosen_action_preimage_storage_mode
+        .map(map_chosen_action_preimage_storage)
+        .unwrap_or(op_api::ChosenActionPreimageStorage::NotStored);
     Ok(Json(op_api::DecisionExport {
         decision_id: id.clone(),
         record_url: format!("{base}/record.json"),
         receipt_url: format!("{base}/receipt.bin"),
         limits_url: format!("{base}/limits.bin"),
-        chosen_action_preimage_url: format!("{base}/chosen_action_preimage.bin"),
+        chosen_action_preimage_url: match chosen_action_preimage_storage {
+            op_api::ChosenActionPreimageStorage::NotStored => None,
+            op_api::ChosenActionPreimageStorage::InlineBlob
+            | op_api::ChosenActionPreimageStorage::DerivedFromReceipt => {
+                Some(format!("{base}/chosen_action_preimage.bin"))
+            }
+        },
+        chosen_action_preimage_storage,
     }))
 }
 

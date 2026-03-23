@@ -76,7 +76,14 @@ persisted chosen-action blob when the stored receipt replayably derives the
 same chosen preimage. The store records a sentinel instead of
 `chosen_action_preimage.bin`, and both operator blob export and HTTP download
 surfaces resolve that sentinel through the same fail-closed receipt-to-preimage
-helper in `crates/mprd-cli/src/operator/store.rs`.
+helper in `crates/mprd-cli/src/operator/store.rs`. Operator records,
+decision-list summaries, and decision-detail responses now also publish the
+resolved storage mode (`not_stored | inline_blob | derived_from_receipt`)
+explicitly, with legacy records backfilled from the existing path layout on
+read. The decision export surface is now record-aware too: it publishes the
+same storage mode and only advertises `chosen_action_preimage.bin` when that
+blob is actually available on the export surface, so clients do not need a
+detail call or a probing 404 to know whether the chosen preimage is fetchable.
 
 If Tau source bytes are treated as the governed policy source-of-truth while executing MPB bytecode, publish a governed mapping in `registry_state` and require it fail-closed:
 
