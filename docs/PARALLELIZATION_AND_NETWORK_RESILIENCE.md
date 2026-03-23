@@ -285,6 +285,53 @@ java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
   distributed_replay_direct_handoff_barrier
 ```
 
+The next tracked replay surface extends the replay series with a quorum-backed
+claim service:
+
+- `docs/specs/distributed_replay_quorum_barrier.tla`
+- `docs/specs/distributed_replay_quorum_barrier.cfg`
+
+It is still intentionally narrow. It models one 2-of-3 replicated claim
+service, local quorum certificates at each replica, and degraded connectivity to
+individual claim-store replicas. Claims and execution require a current quorum
+certificate rather than unanimous store agreement. It proves the safety shape:
+
+- at most one replica can execute
+- executed replicas require a current quorum certificate for their owner and
+  epoch
+- stale claimed states cannot execute without first regaining a current quorum
+  or taking the fail-closed rejection path
+- degraded connectivity or minority lag stays fail-closed instead of executing
+  on one-store or stale-cert evidence
+
+Modeling assumptions:
+
+- claims update one write quorum atomically
+- local quorum certificates are refreshed explicitly and can become stale
+- competing local certificates are not atomically invalidated; stale ones fail
+  closed through the reject or execute guards
+- no direct owner handoff is modeled in this packet
+- no Byzantine store behavior is modeled here
+
+What it still does not prove:
+
+- split-brain or quorum-member equivocation
+- liveness under degraded connectivity
+- post-execution quorum sustainment after the barrier step
+- quorum reconfiguration or membership churn
+- direct owner-to-owner handoff under quorum replication
+
+Replay command:
+
+```bash
+cd docs/specs
+java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
+  -cleanup \
+  -deadlock \
+  -config distributed_replay_quorum_barrier.cfg \
+  distributed_replay_quorum_barrier
+```
+
 ## Mode C
 
 Mode C is currently strong as a private-lane verification boundary.
