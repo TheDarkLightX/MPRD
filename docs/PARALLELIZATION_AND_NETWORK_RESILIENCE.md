@@ -196,6 +196,51 @@ java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
   distributed_replay_lease_barrier
 ```
 
+The next tracked replay surface extends that series with split-brain local
+claim stores:
+
+- `docs/specs/distributed_replay_split_brain_barrier.tla`
+- `docs/specs/distributed_replay_split_brain_barrier.cfg`
+
+It is still intentionally narrow. It models one local claim store per replica,
+coupled while healthy and allowed to diverge under partition. The commit
+barrier remains fail-closed and requires store agreement before execute, while
+conflict reconciliation clears ownership instead of guessing a winner. It
+proves the safety shape:
+
+- at most one replica can execute
+- executed replicas require both local stores to agree on the same owner and
+  epoch
+- split-brain store disagreement blocks execution
+- reconciliation under disagreement rejects claimed replicas instead of
+  executing under divergent ownership
+
+Modeling assumptions:
+
+- each replica has access only to its own local claim store view
+- healthy mode keeps the two claim stores coupled
+- conflict reconciliation clears ownership instead of performing direct
+  ownership handoff
+
+What it still does not prove:
+
+- eventual convergence after split-brain
+- direct winner selection between divergent claim histories
+- a subsequent successful re-claim after reconciliation
+- Byzantine store behavior or forged local views
+- quorum-backed replicated claim services beyond the two-store abstraction
+
+Replay command:
+
+```bash
+cd docs/specs
+java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
+  -cleanup \
+  -deadlock \
+  -config distributed_replay_split_brain_barrier.cfg \
+  distributed_replay_split_brain_barrier
+```
+
 ## Mode C
 
 Mode C is currently strong as a private-lane verification boundary.
