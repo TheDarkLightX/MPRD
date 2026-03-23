@@ -10,6 +10,7 @@ The local packet is:
 - `proofs/lean/MPRD_ParallelIndependenceOracle.lean`
 - `internal/shapeforge/mprd/esso/parallel_independence_oracle.yaml`
 - `internal/shapeforge/mprd/tla/parallel_independence_oracle.tla`
+- `docs/specs/serial_commit_network_barrier.tla`
 
 What it proves:
 
@@ -60,6 +61,27 @@ The next required replayable disaster states are:
 - distributed replay race across replicas
 - Tau or API outage with fail-closed fallback
 - Mode C key rotation or allowlist drift
+
+The first tracked replay surface for this frontier is:
+
+- `docs/specs/serial_commit_network_barrier.tla`
+- `docs/specs/serial_commit_network_barrier.cfg`
+
+It is intentionally narrow. It proves only that once local work is ready,
+commit still rejects on stale checkpoints, withheld checkpoints, quorum
+degradation, or Tau/API failure instead of silently treating cached state as
+fresh authority.
+
+Replay command:
+
+```bash
+cd docs/specs
+java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
+  -cleanup \
+  -deadlock \
+  -config serial_commit_network_barrier.cfg \
+  serial_commit_network_barrier
+```
 
 ## Mode C
 
