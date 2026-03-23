@@ -4,6 +4,10 @@ EXTENDS Naturals, Sequences
 Results == {"idle", "ready", "claimed", "executed", "rejected"}
 Owners == {"none", "r1", "r2"}
 
+\* Intentionally narrow abstraction:
+\* - one atomic shared claim service
+\* - symmetric partition visibility
+\* - no lease expiry or split-brain claim-store behavior
 VARIABLES ready1, ready2, partitioned, claim_store_up, claim_owner,
           effect_count, result1, result2
 
@@ -89,7 +93,7 @@ InvExecutedRequiresClaimOwner ==
     /\ (result1 = "executed" => claim_owner = "r1")
     /\ (result2 = "executed" => claim_owner = "r2")
 
-InvClaimOwnerUnique ==
+InvClaimOwnerWellFormed ==
     claim_owner \in Owners
 
 InvNoDualExecution ==

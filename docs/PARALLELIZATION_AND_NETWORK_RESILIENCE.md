@@ -93,8 +93,14 @@ atomic shared nonce-claim owner and proves the fail-closed shape:
 
 - at most one replica can execute
 - executed replicas must own the shared claim
-- partitions or claim-store outages force ready replicas to reject instead of
-  executing on local readiness alone
+- partitions or claim-store outages prevent ready replicas from executing on
+  local readiness alone
+
+What it does not prove:
+
+- eventual rejection after outage or partition
+- asymmetric connectivity or stale claim visibility
+- lease expiry or split-brain claim-store behavior
 
 Replay command:
 
