@@ -83,6 +83,30 @@ java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
   serial_commit_network_barrier
 ```
 
+The next tracked replay surface is:
+
+- `docs/specs/distributed_replay_claim_barrier.tla`
+- `docs/specs/distributed_replay_claim_barrier.cfg`
+
+It is also intentionally narrow. It models two ready replicas behind one
+atomic shared nonce-claim owner and proves the fail-closed shape:
+
+- at most one replica can execute
+- executed replicas must own the shared claim
+- partitions or claim-store outages force ready replicas to reject instead of
+  executing on local readiness alone
+
+Replay command:
+
+```bash
+cd docs/specs
+java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
+  -cleanup \
+  -deadlock \
+  -config distributed_replay_claim_barrier.cfg \
+  distributed_replay_claim_barrier
+```
+
 ## Mode C
 
 Mode C is currently strong as a private-lane verification boundary.
