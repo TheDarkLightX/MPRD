@@ -332,6 +332,52 @@ java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
   distributed_replay_quorum_barrier
 ```
 
+The next tracked replay surface extends that series with observable quorum
+equivocation:
+
+- `docs/specs/distributed_replay_quorum_equivocation_barrier.tla`
+- `docs/specs/distributed_replay_quorum_equivocation_barrier.cfg`
+
+It is still intentionally narrow. It models one quorum certificate per replica,
+explicit peer-certificate visibility that can become stale, and the possibility
+that conflicting same-epoch certificates exist due to equivocation. It proves
+the safety shape:
+
+- at most one replica can execute
+- executed replicas require fresh peer-certificate visibility and no visible
+  same-epoch owner conflict
+- visible same-epoch owner conflict blocks execution and introduces a
+  fail-closed rejection step from the claimed state
+- visible equivocation cannot cross the execute barrier
+
+Modeling assumptions:
+
+- equivocation may exist before peer-certificate visibility catches up
+- the barrier explicitly refreshes peer-certificate visibility before execute
+- `effect_count` still models the earlier serial commit barrier, so the
+  equivocation logic itself only blocks same-epoch visible conflicts
+- this packet does not prove invisible equivocation is detected
+- this packet does not model Byzantine certificate forgery beyond conflicting
+  owner claims
+
+What it still does not prove:
+
+- hidden or never-shared equivocation
+- quorum membership churn or threshold reconfiguration
+- crash-fault claim-store replication details
+- liveness after conflict detection
+
+Replay command:
+
+```bash
+cd docs/specs
+java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
+  -cleanup \
+  -deadlock \
+  -config distributed_replay_quorum_equivocation_barrier.cfg \
+  distributed_replay_quorum_equivocation_barrier
+```
+
 ## Mode C
 
 Mode C is currently strong as a private-lane verification boundary.
