@@ -424,6 +424,52 @@ java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
   distributed_replay_equivocation_recovery_barrier
 ```
 
+The next tracked replay surface isolates hidden or delayed certificate
+visibility:
+
+- `docs/specs/distributed_replay_hidden_equivocation_barrier.tla`
+- `docs/specs/distributed_replay_hidden_equivocation_barrier.cfg`
+
+It is still intentionally narrow. It models actual same-epoch conflicting
+certificates, per-replica peer-certificate views that can be stale or absent,
+and the requirement that execute only trusts a fresh peer view. It proves the
+safety shape:
+
+- at most one replica can execute, with the global `effect_count` barrier from
+  the earlier serial-commit packet still carrying the non-equivocation
+  at-most-once part of that safety story
+- fresh peer views mirror the actual peer certificate state
+- a hidden same-epoch conflict cannot cross execute while peer visibility is
+  stale
+- a visible same-epoch conflict blocks execute and enables a fail-closed
+  rejection path from `claimed`
+
+Modeling assumptions:
+
+- peer visibility is refreshed explicitly; stale visibility is represented by
+  `fresh12` and `fresh21`
+- this packet is safety-only and does not prove eventual peer refresh
+- this packet does not model Byzantine certificate forgery beyond conflicting
+  owner claims
+
+What it still does not prove:
+
+- hidden-conflict detection without a fresh peer refresh
+- eventual progress after link recovery
+- quorum membership churn or threshold reconfiguration
+- post-conflict recovery once a hidden conflict becomes visible
+
+Replay command:
+
+```bash
+cd docs/specs
+java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
+  -cleanup \
+  -deadlock \
+  -config distributed_replay_hidden_equivocation_barrier.cfg \
+  distributed_replay_hidden_equivocation_barrier
+```
+
 ## Mode C
 
 Mode C is currently strong as a private-lane verification boundary.
