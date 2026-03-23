@@ -344,10 +344,12 @@ where
             // 8. Execute via adapter
             debug!("Executing action");
             let verified = VerifiedBundle::new(&token, &proof);
+            let ready = crate::prepare_execution_ready(verified)
+                .inspect_err(|e| record_stage_failure(inputs.metrics, "execute", e))?;
             let result = if let Some(m) = inputs.metrics {
-                metrics::timed_execute(m, || inputs.executor.execute(&verified))
+                metrics::timed_execute(m, || inputs.executor.execute_ready(&ready))
             } else {
-                inputs.executor.execute(&verified)
+                inputs.executor.execute_ready(&ready)
             }
             .inspect_err(|e| record_stage_failure(inputs.metrics, "execute", e))?;
 
@@ -848,6 +850,35 @@ mod tests {
         }
     }
 
+    struct MissingChosenActionPreimageAttestor;
+
+    impl ZkAttestor for MissingChosenActionPreimageAttestor {
+        fn attest(
+            &self,
+            token: &DecisionToken,
+            decision: &Decision,
+            state: &StateSnapshot,
+            _candidates: &[CandidateAction],
+        ) -> Result<ProofBundle> {
+            let mut metadata = HashMap::new();
+            metadata.insert(
+                "nonce_or_tx_hash".into(),
+                hex::encode(token.nonce_or_tx_hash.0),
+            );
+            Ok(ProofBundle {
+                policy_hash: decision.policy_hash.clone(),
+                state_hash: state.state_hash.clone(),
+                candidate_set_hash: dummy_hash(4),
+                chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                limits_hash: crate::limits::limits_hash_v1(&[]),
+                limits_bytes: vec![],
+                chosen_action_preimage: vec![],
+                risc0_receipt: vec![],
+                attestation_metadata: metadata,
+            })
+        }
+    }
+
     struct DummyVerifier;
 
     impl ZkLocalVerifier for DummyVerifier {
@@ -922,6 +953,45 @@ mod tests {
 
         assert!(result.success);
         assert_eq!(result.message.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn run_once_fails_closed_when_execution_boundary_witness_is_missing_even_for_raw_executor() {
+        let state_provider = DummyStateProvider;
+        let proposer = DummyProposer;
+        let policy_engine = AllowAllPolicyEngine;
+        let selector = DummySelector;
+        let token_factory = DummyTokenFactory;
+        let attestor = MissingChosenActionPreimageAttestor;
+        let verifier = DummyVerifier;
+        let called = Arc::new(AtomicBool::new(false));
+        let executor = RecordingExecutor {
+            called: called.clone(),
+        };
+        let policy_hash = Hash32([9u8; 32]);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: Hash32([8u8; 32]),
+        };
+
+        let result = run_once(RunOnceInputs {
+            state_provider: &state_provider,
+            proposer: &proposer,
+            policy_engine: &policy_engine,
+            selector: &selector,
+            token_factory: &token_factory,
+            attestor: &attestor,
+            verifier: &verifier,
+            executor: &executor,
+            policy_hash: &policy_hash,
+            policy_ref,
+            nonce_or_tx_hash: None,
+            metrics: None,
+            audit_recorder: None,
+        });
+
+        assert!(matches!(result, Err(MprdError::ExecutionError(_))));
+        assert!(!called.load(Ordering::SeqCst));
     }
 
     #[test]

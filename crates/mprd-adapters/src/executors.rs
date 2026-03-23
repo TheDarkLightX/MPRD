@@ -38,33 +38,9 @@ use std::sync::{Arc, Mutex};
 use crate::egress;
 
 fn require_action_preimage(verified: &VerifiedBundle<'_>) -> Result<Vec<u8>> {
-    let token = verified.token();
-    let proof = verified.proof();
-
-    // Fail-closed: ensure committed limits bytes match committed limits hash and are understood.
-    mprd_core::limits::verify_limits_binding_v1(&proof.limits_hash, &proof.limits_bytes)?;
-    let _ = mprd_core::limits::parse_limits_v1(&proof.limits_bytes)?;
-
-    if proof.chosen_action_preimage.is_empty() {
-        return Err(MprdError::ExecutionError(
-            "missing chosen_action_preimage (executor must derive action from committed transcript)"
-                .into(),
-        ));
-    }
-
-    let h = mprd_core::hash::hash_candidate_preimage_v1(&proof.chosen_action_preimage);
-    if h != token.chosen_action_hash || h != proof.chosen_action_hash {
-        return Err(MprdError::ExecutionError(
-            "chosen_action_preimage hash mismatch".into(),
-        ));
-    }
-
-    // Fail-closed: ensure the action bytes are well-formed and schema-valid under canonical v1.
-    let (action_type, params, _score) =
-        mprd_core::validation::decode_candidate_preimage_v1(&proof.chosen_action_preimage)?;
-    mprd_core::validation::validate_action_schema_v1(&action_type, &params)?;
-
-    Ok(proof.chosen_action_preimage.clone())
+    Ok(mprd_core::execution_boundary_witness_v1(verified)?
+        .chosen_action_preimage()
+        .to_vec())
 }
 
 // =============================================================================

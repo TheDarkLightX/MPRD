@@ -220,6 +220,46 @@ impl<'a> VerifiedBundle<'a> {
     }
 }
 
+/// Concrete execution-boundary witness carried after the final fail-closed binding checks pass.
+///
+/// This is the first runtime step toward replacing free execution booleans with witness-carrying
+/// types on the RC1 path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionBoundaryWitnessV1 {
+    chosen_action_preimage: Vec<u8>,
+}
+
+impl ExecutionBoundaryWitnessV1 {
+    pub fn chosen_action_preimage(&self) -> &[u8] {
+        &self.chosen_action_preimage
+    }
+}
+
+/// A locally verified bundle that is also admitted through the concrete execution boundary.
+#[derive(Clone, Debug)]
+pub struct ExecutionReadyBundle<'a> {
+    verified: VerifiedBundle<'a>,
+    boundary: ExecutionBoundaryWitnessV1,
+}
+
+impl<'a> ExecutionReadyBundle<'a> {
+    pub fn verified(&self) -> &VerifiedBundle<'a> {
+        &self.verified
+    }
+
+    pub fn boundary(&self) -> &ExecutionBoundaryWitnessV1 {
+        &self.boundary
+    }
+
+    pub fn token(&self) -> &'a DecisionToken {
+        self.verified.token()
+    }
+
+    pub fn proof(&self) -> &'a ProofBundle {
+        self.verified.proof()
+    }
+}
+
 /// Verify `proof` against `token` and, on success, produce a `VerifiedBundle` for execution.
 pub fn verify_for_execution<'a>(
     verifier: &dyn ZkLocalVerifier,
@@ -230,6 +270,45 @@ pub fn verify_for_execution<'a>(
         VerificationStatus::Success => Ok(VerifiedBundle::new(token, proof)),
         VerificationStatus::Failure(reason) => Err(MprdError::ZkError(reason)),
     }
+}
+
+/// Verify that the locally-verified bundle also satisfies the concrete execution boundary.
+pub fn execution_boundary_witness_v1(
+    verified: &VerifiedBundle<'_>,
+) -> Result<ExecutionBoundaryWitnessV1> {
+    let token = verified.token();
+    let proof = verified.proof();
+
+    limits::verify_limits_binding_v1(&proof.limits_hash, &proof.limits_bytes)?;
+    let _ = limits::parse_limits_v1(&proof.limits_bytes)?;
+
+    if proof.chosen_action_preimage.is_empty() {
+        return Err(MprdError::ExecutionError(
+            "missing chosen_action_preimage (execution boundary requires committed action bytes)"
+                .into(),
+        ));
+    }
+
+    let h = hash::hash_candidate_preimage_v1(&proof.chosen_action_preimage);
+    if h != token.chosen_action_hash || h != proof.chosen_action_hash {
+        return Err(MprdError::ExecutionError(
+            "chosen_action_preimage hash mismatch".into(),
+        ));
+    }
+
+    let (action_type, params, _score) =
+        validation::decode_candidate_preimage_v1(&proof.chosen_action_preimage)?;
+    validation::validate_action_schema_v1(&action_type, &params)?;
+
+    Ok(ExecutionBoundaryWitnessV1 {
+        chosen_action_preimage: proof.chosen_action_preimage.clone(),
+    })
+}
+
+/// Upgrade a verified bundle into an execution-ready bundle carrying the concrete boundary witness.
+pub fn prepare_execution_ready<'a>(verified: VerifiedBundle<'a>) -> Result<ExecutionReadyBundle<'a>> {
+    let boundary = execution_boundary_witness_v1(&verified)?;
+    Ok(ExecutionReadyBundle { verified, boundary })
 }
 
 /// Unified error type for MPRD core operations.
@@ -391,6 +470,15 @@ pub trait ExecutorAdapter {
     /// Postconditions:
     /// - Either performs the side effect exactly once, or performs none.
     fn execute(&self, verified: &VerifiedBundle<'_>) -> Result<ExecutionResult>;
+
+    /// Preferred RC1 path: only execute bundles that also carry a concrete execution witness.
+    ///
+    /// RC1 note: this default preserves compatibility for adapters that have not yet been migrated
+    /// to consume `ExecutionReadyBundle` directly. The orchestrator already requires the witness
+    /// before any executor call; future tightening should move adapters onto the witness-native path.
+    fn execute_ready(&self, ready: &ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
+        self.execute(ready.verified())
+    }
 }
 
 pub struct DefaultSelector;
@@ -555,5 +643,92 @@ mod tests {
         let selector = DefaultSelector;
         let result = selector.select(&policy_hash, &state, &candidates, &verdicts);
         assert!(matches!(result, Err(MprdError::BoundedValueExceeded(_))));
+    }
+
+    fn valid_http_call_candidate() -> CandidateAction {
+        let params = HashMap::from([
+            ("http_method".into(), Value::String("GET".into())),
+            (
+                "http_url".into(),
+                Value::String("https://example.com/health".into()),
+            ),
+        ]);
+        let mut candidate = CandidateAction {
+            action_type: validation::ACTION_TYPE_HTTP_CALL_V1.into(),
+            params,
+            score: Score(7),
+            candidate_hash: dummy_hash(0),
+        };
+        candidate.candidate_hash = hash::hash_candidate_preimage_v1(&hash::candidate_hash_preimage(
+            &candidate,
+        ));
+        candidate
+    }
+
+    #[test]
+    fn prepare_execution_ready_accepts_well_bound_transcript() {
+        let candidate = valid_http_call_candidate();
+        let token = DecisionToken {
+            policy_hash: dummy_hash(1),
+            policy_ref: PolicyRef {
+                policy_epoch: 1,
+                registry_root: dummy_hash(2),
+            },
+            state_hash: dummy_hash(3),
+            state_ref: StateRef::unknown(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(4),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(5),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+
+        let ready = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).expect("ready");
+        assert_eq!(
+            ready.boundary().chosen_action_preimage(),
+            proof.chosen_action_preimage.as_slice()
+        );
+    }
+
+    #[test]
+    fn prepare_execution_ready_rejects_missing_chosen_action_preimage() {
+        let candidate = valid_http_call_candidate();
+        let token = DecisionToken {
+            policy_hash: dummy_hash(11),
+            policy_ref: PolicyRef {
+                policy_epoch: 1,
+                registry_root: dummy_hash(12),
+            },
+            state_hash: dummy_hash(13),
+            state_ref: StateRef::unknown(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(14),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(15),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+
+        let err = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).unwrap_err();
+        assert!(matches!(err, MprdError::ExecutionError(_)));
     }
 }
