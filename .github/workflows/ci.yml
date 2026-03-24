@@ -1,4 +1,4 @@
-name: CI (Fmt + Tests)
+name: CI (Fmt + Clippy + Tests)
 
 on:
   pull_request:
@@ -26,6 +26,29 @@ jobs:
       - name: Fmt (gate)
         run: cargo fmt --check
 
+  clippy:
+    name: cargo clippy --workspace
+    runs-on: ubuntu-latest
+    env:
+      # Keep linting runnable in environments without the Risc0 guest target installed.
+      # The dedicated risc0-methods workflow still builds the real guests and enforces image ID drift.
+      RISC0_SKIP_BUILD: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87.0
+          components: clippy
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy (gate)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
   test:
     name: cargo test --workspace
     runs-on: ubuntu-latest
@@ -47,4 +70,3 @@ jobs:
 
       - name: Test (gate)
         run: cargo test --workspace --all-targets
-
