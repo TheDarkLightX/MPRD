@@ -47,5 +47,11 @@ jobs:
           install -m 0755 "$tmpdir/$dir/cargo-audit" "$HOME/.cargo/bin/cargo-audit"
           cargo-audit --version
 
+      - name: Seed advisory DB
+        run: |
+          set -euo pipefail
+          rm -rf "$HOME/.cargo/advisory-db"
+          git clone --depth 1 https://github.com/RustSec/advisory-db.git "$HOME/.cargo/advisory-db"
+
       - name: Run cargo audit
         run: cargo audit --no-fetch
