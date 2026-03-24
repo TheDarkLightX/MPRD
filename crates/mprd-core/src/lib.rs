@@ -246,6 +246,7 @@ impl ExecutionBoundaryWitnessV1 {
 pub struct ExecutionReadyBundle<'a> {
     verified: VerifiedBundle<'a>,
     boundary: ExecutionBoundaryWitnessV1,
+    authorization: Option<ExecutionAuthorizationWitnessV1>,
 }
 
 impl<'a> ExecutionReadyBundle<'a> {
@@ -255,6 +256,10 @@ impl<'a> ExecutionReadyBundle<'a> {
 
     pub fn boundary(&self) -> &ExecutionBoundaryWitnessV1 {
         &self.boundary
+    }
+
+    pub fn authorization(&self) -> Option<&ExecutionAuthorizationWitnessV1> {
+        self.authorization.as_ref()
     }
 
     pub fn token(&self) -> &'a DecisionToken {
@@ -375,6 +380,32 @@ impl PolicyAuthorityWitnessV1 {
 
     pub fn policy_ref(&self) -> &PolicyRef {
         &self.policy_ref
+    }
+}
+
+/// Concrete execution-authorization witness carried into the executor boundary on the RC1 path.
+///
+/// This preserves the orchestrator's admitted policy/state/governance identity beyond
+/// attestation, so execution no longer relies only on transcript-local bindings.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionAuthorizationWitnessV1 {
+    policy_authority: PolicyAuthorityWitnessV1,
+    state_binding: crate::state_provenance::StateBindingWitnessV1,
+    governance: Option<GovernanceAdmissionWitnessV1>,
+}
+
+impl ExecutionAuthorizationWitnessV1 {
+    pub fn policy_authority(&self) -> &PolicyAuthorityWitnessV1 {
+        &self.policy_authority
+    }
+
+    pub fn state_binding(&self) -> &crate::state_provenance::StateBindingWitnessV1 {
+        &self.state_binding
+    }
+
+    pub fn governance(&self) -> Option<&GovernanceAdmissionWitnessV1> {
+        self.governance.as_ref()
     }
 }
 
@@ -615,12 +646,50 @@ pub fn execution_boundary_witness_v1(
     })
 }
 
+/// Construct the concrete execution-authorization witness for the live RC1 execute path.
+pub fn execution_authorization_witness_v1(
+    verified: &VerifiedBundle<'_>,
+    authority: &PolicyAuthorityWitnessV1,
+    state_binding: &crate::state_provenance::StateBindingWitnessV1,
+    governance: Option<GovernanceAdmissionWitnessV1>,
+) -> Result<ExecutionAuthorizationWitnessV1> {
+    verify_token_policy_authority_v1(authority, verified.token())?;
+    crate::state_provenance::verify_token_state_binding_v1(state_binding, verified.token())?;
+    Ok(ExecutionAuthorizationWitnessV1 {
+        policy_authority: authority.clone(),
+        state_binding: state_binding.clone(),
+        governance,
+    })
+}
+
 /// Upgrade a verified bundle into an execution-ready bundle carrying the concrete boundary witness.
 pub fn prepare_execution_ready<'a>(
     verified: VerifiedBundle<'a>,
 ) -> Result<ExecutionReadyBundle<'a>> {
     let boundary = execution_boundary_witness_v1(&verified)?;
-    Ok(ExecutionReadyBundle { verified, boundary })
+    Ok(ExecutionReadyBundle {
+        verified,
+        boundary,
+        authorization: None,
+    })
+}
+
+/// Upgrade a verified bundle into an execution-ready bundle carrying both transcript binding and
+/// the orchestrator's admitted authorization context.
+pub fn prepare_execution_ready_with_authorization<'a>(
+    verified: VerifiedBundle<'a>,
+    authority: &PolicyAuthorityWitnessV1,
+    state_binding: &crate::state_provenance::StateBindingWitnessV1,
+    governance: Option<GovernanceAdmissionWitnessV1>,
+) -> Result<ExecutionReadyBundle<'a>> {
+    let authorization =
+        execution_authorization_witness_v1(&verified, authority, state_binding, governance)?;
+    let boundary = execution_boundary_witness_v1(&verified)?;
+    Ok(ExecutionReadyBundle {
+        verified,
+        boundary,
+        authorization: Some(authorization),
+    })
 }
 
 /// Upgrade token, decision, and state inputs into an attestation-ready bundle after checking that
@@ -1096,6 +1165,191 @@ mod tests {
         assert_eq!(
             ready.boundary().limits_binding().limits(),
             &limits::LimitsV1::default()
+        );
+        assert!(ready.authorization().is_none());
+    }
+
+    #[test]
+    fn prepare_execution_ready_with_authorization_accepts_aligned_witnesses() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: governance_policy_inputs(
+                GovernanceUpdateKindV1::PolicyTweak,
+                true,
+                false,
+                true,
+            ),
+            state_hash: dummy_hash(6),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(7),
+                state_epoch: 8,
+                state_attestation_hash: dummy_hash(9),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(1),
+            policy_ref: PolicyRef {
+                policy_epoch: 2,
+                registry_root: dummy_hash(3),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(4),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(5),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let governance = governance_admission_witness_v1(&state)
+            .expect("governance")
+            .expect("governance witness");
+
+        let ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            Some(governance),
+        )
+        .expect("ready");
+
+        let authorization = ready.authorization().expect("authorization");
+        assert_eq!(
+            authorization.policy_authority().policy_hash(),
+            &token.policy_hash
+        );
+        assert_eq!(
+            authorization.policy_authority().policy_ref(),
+            &token.policy_ref
+        );
+        assert_eq!(
+            authorization.state_binding().state_hash(),
+            &state.state_hash
+        );
+        assert_eq!(authorization.state_binding().state_ref(), &state.state_ref);
+        assert_eq!(
+            authorization.governance().map(|g| g.update_kind()),
+            Some(GovernanceUpdateKindV1::PolicyTweak)
+        );
+    }
+
+    #[test]
+    fn prepare_execution_ready_with_authorization_rejects_policy_authority_drift() {
+        let candidate = valid_http_call_candidate();
+        let token = DecisionToken {
+            policy_hash: dummy_hash(11),
+            policy_ref: PolicyRef {
+                policy_epoch: 1,
+                registry_root: dummy_hash(12),
+            },
+            state_hash: dummy_hash(13),
+            state_ref: StateRef::unknown(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(14),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(15),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let wrong_authority = policy_authority_witness_v1(
+            &dummy_hash(16),
+            &PolicyRef {
+                policy_epoch: token.policy_ref.policy_epoch,
+                registry_root: token.policy_ref.registry_root,
+            },
+        )
+        .expect("authority");
+        let aligned_state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: token.state_hash,
+            state_ref: token.state_ref.clone(),
+        };
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&aligned_state);
+
+        let err = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &wrong_authority,
+            &state_binding,
+            None,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "token policy_hash drifted from authorized policy context")
+        );
+    }
+
+    #[test]
+    fn prepare_execution_ready_with_authorization_rejects_state_binding_drift() {
+        let candidate = valid_http_call_candidate();
+        let token = DecisionToken {
+            policy_hash: dummy_hash(21),
+            policy_ref: PolicyRef {
+                policy_epoch: 1,
+                registry_root: dummy_hash(22),
+            },
+            state_hash: dummy_hash(23),
+            state_ref: StateRef::unknown(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(24),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(25),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let drifted_state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(26),
+            state_ref: token.state_ref.clone(),
+        };
+        let drifted_state_binding =
+            crate::state_provenance::state_binding_witness_v1(&drifted_state);
+
+        let err = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &drifted_state_binding,
+            None,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "token state_hash drifted from observed state snapshot")
         );
     }
 

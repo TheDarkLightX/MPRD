@@ -361,8 +361,13 @@ where
             // 8. Execute via adapter
             debug!("Executing action");
             let verified = VerifiedBundle::new(&token, &proof);
-            let ready = crate::prepare_execution_ready(verified)
-                .inspect_err(|e| record_stage_failure(inputs.metrics, "execute", e))?;
+            let ready = crate::prepare_execution_ready_with_authorization(
+                verified,
+                &authority,
+                &state_binding,
+                attest_ready.governance().copied(),
+            )
+            .inspect_err(|e| record_stage_failure(inputs.metrics, "execute", e))?;
             let result = if let Some(m) = inputs.metrics {
                 metrics::timed_execute(m, || inputs.executor.execute_ready(&ready))
             } else {
@@ -1121,6 +1126,49 @@ mod tests {
         }
     }
 
+    struct AuthorizationCapturingExecutor {
+        saw_authorization: Arc<AtomicBool>,
+        saw_governance: Arc<AtomicBool>,
+    }
+
+    impl ExecutorAdapter for AuthorizationCapturingExecutor {
+        fn execute(&self, _verified: &VerifiedBundle<'_>) -> Result<ExecutionResult> {
+            Err(MprdError::ExecutionError(
+                "raw execute path should not be used".into(),
+            ))
+        }
+
+        fn execute_ready(
+            &self,
+            ready: &crate::ExecutionReadyBundle<'_>,
+        ) -> Result<ExecutionResult> {
+            let authorization = ready.authorization().expect("authorization");
+            assert_eq!(
+                authorization.policy_authority().policy_hash(),
+                &ready.token().policy_hash
+            );
+            assert_eq!(
+                authorization.policy_authority().policy_ref(),
+                &ready.token().policy_ref
+            );
+            assert_eq!(
+                authorization.state_binding().state_hash(),
+                &ready.token().state_hash
+            );
+            assert_eq!(
+                authorization.state_binding().state_ref(),
+                &ready.token().state_ref
+            );
+            self.saw_authorization.store(true, Ordering::SeqCst);
+            self.saw_governance
+                .store(authorization.governance().is_some(), Ordering::SeqCst);
+            Ok(ExecutionResult {
+                success: true,
+                message: Some("ok".into()),
+            })
+        }
+    }
+
     struct DummySelector;
 
     impl Selector for DummySelector {
@@ -1213,6 +1261,49 @@ mod tests {
 
         assert!(result.success);
         assert_eq!(result.message.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn run_once_threads_execution_authorization_to_executor() {
+        let state_provider = DummyStateProvider;
+        let proposer = ValidHttpCallProposer;
+        let policy_engine = AllowAllPolicyEngine;
+        let selector = DummySelector;
+        let token_factory = DummyTokenFactory;
+        let attestor = DummyAttestor;
+        let verifier = DummyVerifier;
+        let saw_authorization = Arc::new(AtomicBool::new(false));
+        let saw_governance = Arc::new(AtomicBool::new(false));
+        let executor = AuthorizationCapturingExecutor {
+            saw_authorization: saw_authorization.clone(),
+            saw_governance: saw_governance.clone(),
+        };
+        let policy_hash = Hash32([9u8; 32]);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: Hash32([8u8; 32]),
+        };
+
+        let result = run_once(RunOnceInputs {
+            state_provider: &state_provider,
+            proposer: &proposer,
+            policy_engine: &policy_engine,
+            selector: &selector,
+            token_factory: &token_factory,
+            attestor: &attestor,
+            verifier: &verifier,
+            executor: &executor,
+            policy_hash: &policy_hash,
+            policy_ref,
+            nonce_or_tx_hash: None,
+            metrics: None,
+            audit_recorder: None,
+        })
+        .expect("run_once should succeed for valid http_call pipeline");
+
+        assert!(result.success);
+        assert!(saw_authorization.load(Ordering::SeqCst));
+        assert!(!saw_governance.load(Ordering::SeqCst));
     }
 
     #[test]
