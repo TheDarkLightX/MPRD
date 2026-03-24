@@ -7,6 +7,8 @@ use mprd_risc0_shared::{
 use serde::{Deserialize, Serialize};
 
 pub const MPB_LITE_ARTIFACT_VERSION_V1: u32 = 1;
+pub const MPB_LITE_ARTIFACT_VERSION_V2: u32 = 2;
+pub const MPB_LITE_ARTIFACT_VERSION_V3: u32 = 3;
 pub const MPB_LITE_CONTEXT_DOMAIN_V1: &[u8] = b"MPRD_MPB_LITE_CONTEXT_V1";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -34,6 +36,123 @@ pub struct MpbLiteArtifactV1 {
     /// MUST fail-closed if this is missing/empty.
     #[serde(default)]
     pub chosen_action_preimage: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MpbLiteArtifactV2 {
+    pub version: u32,
+    pub mpb_register_mapping_id: Id32,
+    pub policy_variables: Vec<MpbVarBindingV1>,
+    pub state_preimage: Vec<u8>,
+    pub candidate_preimages: Vec<Vec<u8>>,
+    pub chosen_index: u32,
+    pub mpb_proof_bundle: MpbProofBundle,
+    #[serde(default)]
+    pub limits_bytes: Vec<u8>,
+    #[serde(default)]
+    pub chosen_action_preimage: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MpbLiteArtifactV3 {
+    pub version: u32,
+    pub mpb_register_mapping_id: Id32,
+    pub policy_variables: Vec<MpbVarBindingV1>,
+    pub state_preimage: Vec<u8>,
+    pub candidate_preimages: Vec<Vec<u8>>,
+    pub chosen_index: u32,
+    pub mpb_proof_bundle: MpbProofBundle,
+    #[serde(default)]
+    pub limits_bytes: Vec<u8>,
+}
+
+fn artifact_from_v2_compat(
+    value: MpbLiteArtifactV2,
+) -> std::result::Result<MpbLiteArtifactV1, String> {
+    let candidate_hashes = value
+        .candidate_preimages
+        .iter()
+        .map(|preimage| mprd_core::hash::hash_candidate_preimage_v1(preimage).0)
+        .collect();
+    let chosen_action_preimage = if value.chosen_action_preimage.is_empty() {
+        value
+            .candidate_preimages
+            .get(value.chosen_index as usize)
+            .cloned()
+            .ok_or_else(|| "mpb lite v2 chosen_index out of bounds".to_string())?
+    } else {
+        value.chosen_action_preimage
+    };
+    Ok(MpbLiteArtifactV1 {
+        version: value.version,
+        mpb_register_mapping_id: value.mpb_register_mapping_id,
+        policy_variables: value.policy_variables,
+        state_preimage: value.state_preimage,
+        candidate_hashes,
+        chosen_index: value.chosen_index,
+        mpb_proof_bundle: value.mpb_proof_bundle,
+        limits_bytes: value.limits_bytes,
+        chosen_action_preimage,
+    })
+}
+
+fn artifact_from_v3_compat(
+    value: MpbLiteArtifactV3,
+) -> std::result::Result<MpbLiteArtifactV1, String> {
+    let candidate_hashes = value
+        .candidate_preimages
+        .iter()
+        .map(|preimage| mprd_core::hash::hash_candidate_preimage_v1(preimage).0)
+        .collect();
+    let chosen_action_preimage = value
+        .candidate_preimages
+        .get(value.chosen_index as usize)
+        .cloned()
+        .ok_or_else(|| "mpb lite v3 chosen_index out of bounds".to_string())?;
+    Ok(MpbLiteArtifactV1 {
+        version: value.version,
+        mpb_register_mapping_id: value.mpb_register_mapping_id,
+        policy_variables: value.policy_variables,
+        state_preimage: value.state_preimage,
+        candidate_hashes,
+        chosen_index: value.chosen_index,
+        mpb_proof_bundle: value.mpb_proof_bundle,
+        limits_bytes: value.limits_bytes,
+        chosen_action_preimage,
+    })
+}
+
+fn peek_artifact_version(bytes: &[u8]) -> Option<u32> {
+    let version_bytes: [u8; 4] = bytes.get(0..4)?.try_into().ok()?;
+    Some(u32::from_le_bytes(version_bytes))
+}
+
+pub fn deserialize_artifact(bytes: &[u8]) -> std::result::Result<MpbLiteArtifactV1, String> {
+    let payload =
+        crate::bounded_deser::extract_mpb_artifact_payload(bytes).map_err(|e| e.to_string())?;
+    match peek_artifact_version(payload) {
+        Some(MPB_LITE_ARTIFACT_VERSION_V3) => {
+            let artifact: MpbLiteArtifactV3 = crate::bounded_deser::deserialize_bounded(
+                payload,
+                crate::bounded_deser::MAX_MPB_ARTIFACT_BYTES,
+            )
+            .map_err(|e| e.to_string())?;
+            artifact_from_v3_compat(artifact)
+        }
+        Some(MPB_LITE_ARTIFACT_VERSION_V2) => {
+            let artifact: MpbLiteArtifactV2 = crate::bounded_deser::deserialize_bounded(
+                payload,
+                crate::bounded_deser::MAX_MPB_ARTIFACT_BYTES,
+            )
+            .map_err(|e| e.to_string())?;
+            artifact_from_v2_compat(artifact)
+        }
+        _ => crate::bounded_deser::deserialize_bounded(
+            payload,
+            crate::bounded_deser::MAX_MPB_ARTIFACT_BYTES,
+        )
+        .map_err(|e| e.to_string()),
+    }
 }
 
 pub fn mpb_lite_context_hash_v1(token: &DecisionToken, proof: &ProofBundle) -> Hash256 {
@@ -119,7 +238,10 @@ pub fn validate_vars_canonical(vars: &[MpbVarBindingV1]) -> Result<()> {
 }
 
 pub fn verify_artifact_header(a: &MpbLiteArtifactV1) -> Result<()> {
-    if a.version != MPB_LITE_ARTIFACT_VERSION_V1 {
+    if a.version != MPB_LITE_ARTIFACT_VERSION_V1
+        && a.version != MPB_LITE_ARTIFACT_VERSION_V2
+        && a.version != MPB_LITE_ARTIFACT_VERSION_V3
+    {
         return Err(MprdError::ZkError(
             "unsupported mpb lite artifact version".into(),
         ));
