@@ -209,6 +209,7 @@ where
     .inspect_err(|e| record_stage_failure(inputs.metrics, "state", e))?;
     let state = canonicalize_state_snapshot_v1(state)
         .inspect_err(|e| record_stage_failure(inputs.metrics, "state", e))?;
+    let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
     debug!(
         state_hash = %hex::encode(&state.state_hash.0[..8]),
         "State captured"
@@ -291,6 +292,8 @@ where
             authority.policy_ref(),
         )
         .inspect_err(|e| record_stage_failure(inputs.metrics, "token", e))?;
+    crate::state_provenance::verify_token_state_binding_v1(&state_binding, &token)
+        .inspect_err(|e| record_stage_failure(inputs.metrics, "token_state_binding", e))?;
     crate::verify_token_policy_authority_v1(&authority, &token)
         .inspect_err(|e| record_stage_failure(inputs.metrics, "token_policy_authority", e))?;
     debug!(nonce = %hex::encode(&token.nonce_or_tx_hash.0[..8]), "Token created");
@@ -716,6 +719,62 @@ mod tests {
                 },
                 state_hash: state.state_hash.clone(),
                 state_ref: state.state_ref.clone(),
+                chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                nonce_or_tx_hash: nonce_or_tx_hash.unwrap_or_else(|| dummy_hash(3)),
+                timestamp_ms: 0,
+                signature: vec![],
+            })
+        }
+    }
+
+    struct LoggedStateHashDriftTokenFactory {
+        log: CallLog,
+    }
+
+    impl DecisionTokenFactory for LoggedStateHashDriftTokenFactory {
+        fn create(
+            &self,
+            decision: &Decision,
+            state: &StateSnapshot,
+            nonce_or_tx_hash: Option<crate::NonceHash>,
+            policy_ref: &PolicyRef,
+        ) -> Result<DecisionToken> {
+            push_call(&self.log, "token");
+            Ok(DecisionToken {
+                policy_hash: decision.policy_hash.clone(),
+                policy_ref: policy_ref.clone(),
+                state_hash: dummy_hash(94),
+                state_ref: state.state_ref.clone(),
+                chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                nonce_or_tx_hash: nonce_or_tx_hash.unwrap_or_else(|| dummy_hash(3)),
+                timestamp_ms: 0,
+                signature: vec![],
+            })
+        }
+    }
+
+    struct LoggedStateRefDriftTokenFactory {
+        log: CallLog,
+    }
+
+    impl DecisionTokenFactory for LoggedStateRefDriftTokenFactory {
+        fn create(
+            &self,
+            decision: &Decision,
+            state: &StateSnapshot,
+            nonce_or_tx_hash: Option<crate::NonceHash>,
+            policy_ref: &PolicyRef,
+        ) -> Result<DecisionToken> {
+            push_call(&self.log, "token");
+            Ok(DecisionToken {
+                policy_hash: decision.policy_hash.clone(),
+                policy_ref: policy_ref.clone(),
+                state_hash: state.state_hash.clone(),
+                state_ref: crate::StateRef {
+                    state_source_id: dummy_hash(95),
+                    state_epoch: 999,
+                    state_attestation_hash: dummy_hash(96),
+                },
                 chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
                 nonce_or_tx_hash: nonce_or_tx_hash.unwrap_or_else(|| dummy_hash(3)),
                 timestamp_ms: 0,
@@ -1975,6 +2034,122 @@ mod tests {
         });
 
         assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "token policy_ref drifted from authorized policy context"));
+        let calls = call_log_snapshot(&log);
+        assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
+        assert_pipeline_temporal_spec(&calls);
+    }
+
+    #[test]
+    fn run_once_fails_closed_when_token_factory_drifts_state_hash_from_observed_snapshot() {
+        let log = new_call_log();
+        let state_provider = LoggedStateProvider {
+            log: log.clone(),
+            state: StateSnapshot {
+                fields: HashMap::new(),
+                policy_inputs: HashMap::new(),
+                state_hash: dummy_hash(1),
+                state_ref: crate::StateRef::unknown(),
+            },
+        };
+        let proposer = LoggedProposer {
+            log: log.clone(),
+            candidates: vec![CandidateAction {
+                action_type: "noop".into(),
+                params: HashMap::new(),
+                score: Score(1),
+                candidate_hash: dummy_hash(2),
+            }],
+        };
+        let policy_engine = LoggedPolicyEngine { log: log.clone() };
+        let selector = LoggedSelector { log: log.clone() };
+        let token_factory = LoggedStateHashDriftTokenFactory { log: log.clone() };
+        let attestor = LoggedAttestor { log: log.clone() };
+        let verifier = LoggedVerifier {
+            log: log.clone(),
+            status: VerificationStatus::Success,
+        };
+        let executor = LoggedExecutor { log: log.clone() };
+        let policy_hash = dummy_hash(9);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: dummy_hash(8),
+        };
+
+        let result = run_once(RunOnceInputs {
+            state_provider: &state_provider,
+            proposer: &proposer,
+            policy_engine: &policy_engine,
+            selector: &selector,
+            token_factory: &token_factory,
+            attestor: &attestor,
+            verifier: &verifier,
+            executor: &executor,
+            policy_hash: &policy_hash,
+            policy_ref,
+            nonce_or_tx_hash: None,
+            metrics: None,
+            audit_recorder: None,
+        });
+
+        assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "token state_hash drifted from observed state snapshot"));
+        let calls = call_log_snapshot(&log);
+        assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
+        assert_pipeline_temporal_spec(&calls);
+    }
+
+    #[test]
+    fn run_once_fails_closed_when_token_factory_drifts_state_ref_from_observed_snapshot() {
+        let log = new_call_log();
+        let state_provider = LoggedStateProvider {
+            log: log.clone(),
+            state: StateSnapshot {
+                fields: HashMap::new(),
+                policy_inputs: HashMap::new(),
+                state_hash: dummy_hash(1),
+                state_ref: crate::StateRef::unknown(),
+            },
+        };
+        let proposer = LoggedProposer {
+            log: log.clone(),
+            candidates: vec![CandidateAction {
+                action_type: "noop".into(),
+                params: HashMap::new(),
+                score: Score(1),
+                candidate_hash: dummy_hash(2),
+            }],
+        };
+        let policy_engine = LoggedPolicyEngine { log: log.clone() };
+        let selector = LoggedSelector { log: log.clone() };
+        let token_factory = LoggedStateRefDriftTokenFactory { log: log.clone() };
+        let attestor = LoggedAttestor { log: log.clone() };
+        let verifier = LoggedVerifier {
+            log: log.clone(),
+            status: VerificationStatus::Success,
+        };
+        let executor = LoggedExecutor { log: log.clone() };
+        let policy_hash = dummy_hash(9);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: dummy_hash(8),
+        };
+
+        let result = run_once(RunOnceInputs {
+            state_provider: &state_provider,
+            proposer: &proposer,
+            policy_engine: &policy_engine,
+            selector: &selector,
+            token_factory: &token_factory,
+            attestor: &attestor,
+            verifier: &verifier,
+            executor: &executor,
+            policy_hash: &policy_hash,
+            policy_ref,
+            nonce_or_tx_hash: None,
+            metrics: None,
+            audit_recorder: None,
+        });
+
+        assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "token state_ref drifted from observed state snapshot"));
         let calls = call_log_snapshot(&log);
         assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
         assert_pipeline_temporal_spec(&calls);

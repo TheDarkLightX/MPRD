@@ -9,8 +9,8 @@ use crate::crypto::sha256;
 use crate::hash::{hash_state_preimage_v1, state_hash_preimage};
 use crate::validation::validate_state_snapshot_v1;
 use crate::{
-    Hash32, MprdError, Result, StateProvider, StateRef, StateSnapshot, TokenSigningKey,
-    TokenVerifyingKey,
+    DecisionToken, Hash32, MprdError, Result, StateHash, StateProvider, StateRef, StateSnapshot,
+    TokenSigningKey, TokenVerifyingKey,
 };
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +32,57 @@ impl StateProvenanceWitnessV1 {
     pub fn state_ref(&self) -> &StateRef {
         &self.state_ref
     }
+}
+
+/// Concrete observed-state witness carried after the orchestrator captures the canonical snapshot.
+///
+/// This witness binds the exact `(state_hash, state_ref)` pair that downstream token creation must
+/// preserve. It is separate from provenance admission: even transitional deployments using
+/// `StateRef::unknown()` must not let token factories drift away from the observed snapshot.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StateBindingWitnessV1 {
+    state_hash: StateHash,
+    state_ref: StateRef,
+}
+
+impl StateBindingWitnessV1 {
+    pub fn state_hash(&self) -> &StateHash {
+        &self.state_hash
+    }
+
+    pub fn state_ref(&self) -> &StateRef {
+        &self.state_ref
+    }
+}
+
+/// Construct the concrete observed-state witness for token binding.
+pub fn state_binding_witness_v1(state: &StateSnapshot) -> StateBindingWitnessV1 {
+    StateBindingWitnessV1 {
+        state_hash: state.state_hash,
+        state_ref: state.state_ref.clone(),
+    }
+}
+
+/// Verify that a decision token preserved the exact observed-state binding.
+///
+/// The check fails on `state_hash` drift before `state_ref` drift so error ordering remains
+/// stable for focused fail-closed regressions.
+pub fn verify_token_state_binding_v1(
+    witness: &StateBindingWitnessV1,
+    token: &DecisionToken,
+) -> Result<()> {
+    if token.state_hash != witness.state_hash {
+        return Err(MprdError::InvalidInput(
+            "token state_hash drifted from observed state snapshot".into(),
+        ));
+    }
+    if token.state_ref != witness.state_ref {
+        return Err(MprdError::InvalidInput(
+            "token state_ref drifted from observed state snapshot".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Construct the concrete provenance witness for executor admission.
@@ -534,6 +585,132 @@ mod tests {
         let err = state_provenance_witness_v1(&state_ref, &[state_source_id_signed_snapshot_v1()])
             .expect_err("unallowlisted provenance must fail closed");
         assert!(matches!(err, MprdError::InvalidInput(message) if message == "unallowlisted state provenance scheme (state_source_id)"));
+    }
+
+    #[test]
+    fn state_binding_witness_accepts_aligned_token() {
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: Hash32([0x22; 32]),
+            state_ref: StateRef {
+                state_source_id: state_source_id_signed_snapshot_v1(),
+                state_epoch: 7,
+                state_attestation_hash: Hash32([0x23; 32]),
+            },
+        };
+        let witness = state_binding_witness_v1(&state);
+        let token = DecisionToken {
+            policy_hash: Hash32([0x30; 32]),
+            policy_ref: crate::PolicyRef {
+                policy_epoch: 1,
+                registry_root: Hash32([0x31; 32]),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: Hash32([0x32; 32]),
+            nonce_or_tx_hash: Hash32([0x33; 32]),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        verify_token_state_binding_v1(&witness, &token).expect("aligned binding");
+    }
+
+    #[test]
+    fn state_binding_witness_rejects_state_hash_drift() {
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: Hash32([0x40; 32]),
+            state_ref: StateRef::unknown(),
+        };
+        let witness = state_binding_witness_v1(&state);
+        let token = DecisionToken {
+            policy_hash: Hash32([0x41; 32]),
+            policy_ref: crate::PolicyRef {
+                policy_epoch: 1,
+                registry_root: Hash32([0x42; 32]),
+            },
+            state_hash: Hash32([0x43; 32]),
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: Hash32([0x44; 32]),
+            nonce_or_tx_hash: Hash32([0x45; 32]),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let err = verify_token_state_binding_v1(&witness, &token)
+            .expect_err("state hash drift must fail closed");
+        assert!(matches!(err, MprdError::InvalidInput(message) if message == "token state_hash drifted from observed state snapshot"));
+    }
+
+    #[test]
+    fn state_binding_witness_rejects_state_ref_drift() {
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: Hash32([0x50; 32]),
+            state_ref: StateRef {
+                state_source_id: Hash32([0x51; 32]),
+                state_epoch: 8,
+                state_attestation_hash: Hash32([0x52; 32]),
+            },
+        };
+        let witness = state_binding_witness_v1(&state);
+        let token = DecisionToken {
+            policy_hash: Hash32([0x53; 32]),
+            policy_ref: crate::PolicyRef {
+                policy_epoch: 1,
+                registry_root: Hash32([0x54; 32]),
+            },
+            state_hash: state.state_hash,
+            state_ref: StateRef {
+                state_source_id: Hash32([0x55; 32]),
+                state_epoch: 9,
+                state_attestation_hash: Hash32([0x56; 32]),
+            },
+            chosen_action_hash: Hash32([0x57; 32]),
+            nonce_or_tx_hash: Hash32([0x58; 32]),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let err = verify_token_state_binding_v1(&witness, &token)
+            .expect_err("state ref drift must fail closed");
+        assert!(matches!(err, MprdError::InvalidInput(message) if message == "token state_ref drifted from observed state snapshot"));
+    }
+
+    #[test]
+    fn state_binding_witness_prefers_state_hash_error_when_both_fields_drift() {
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: Hash32([0x60; 32]),
+            state_ref: StateRef {
+                state_source_id: Hash32([0x61; 32]),
+                state_epoch: 10,
+                state_attestation_hash: Hash32([0x62; 32]),
+            },
+        };
+        let witness = state_binding_witness_v1(&state);
+        let token = DecisionToken {
+            policy_hash: Hash32([0x63; 32]),
+            policy_ref: crate::PolicyRef {
+                policy_epoch: 1,
+                registry_root: Hash32([0x64; 32]),
+            },
+            state_hash: Hash32([0x65; 32]),
+            state_ref: StateRef {
+                state_source_id: Hash32([0x66; 32]),
+                state_epoch: 11,
+                state_attestation_hash: Hash32([0x67; 32]),
+            },
+            chosen_action_hash: Hash32([0x68; 32]),
+            nonce_or_tx_hash: Hash32([0x69; 32]),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let err = verify_token_state_binding_v1(&witness, &token)
+            .expect_err("dual drift must fail closed");
+        assert!(matches!(err, MprdError::InvalidInput(message) if message == "token state_hash drifted from observed state snapshot"));
     }
 
     // =========================================================================
