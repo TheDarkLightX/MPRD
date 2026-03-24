@@ -1250,7 +1250,7 @@ mod tests {
             audit_recorder: None,
         });
 
-        assert!(matches!(result, Err(MprdError::ExecutionError(_))));
+        assert!(matches!(result, Err(MprdError::InvalidInput(_))));
         assert!(!called.load(Ordering::SeqCst));
     }
 
