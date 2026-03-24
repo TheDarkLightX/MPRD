@@ -1,3 +1,4 @@
+use bincode::Options;
 use mprd_core::{DecisionToken, Hash32, MprdError, ProofBundle, Result};
 use mprd_proof::{Hash256, LocalVerificationResult, MpbLocalVerifier, MpbProofBundle};
 use mprd_risc0_shared::{
@@ -66,6 +67,11 @@ struct MpbLiteArtifactV3 {
     pub limits_bytes: Vec<u8>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct MpbLiteArtifactVersionTag {
+    version: u32,
+}
+
 fn artifact_from_v2_compat(
     value: MpbLiteArtifactV2,
 ) -> std::result::Result<MpbLiteArtifactV1, String> {
@@ -123,8 +129,11 @@ fn artifact_from_v3_compat(
 }
 
 fn peek_artifact_version(bytes: &[u8]) -> Option<u32> {
-    let version_bytes: [u8; 4] = bytes.get(0..4)?.try_into().ok()?;
-    Some(u32::from_le_bytes(version_bytes))
+    bincode::DefaultOptions::new()
+        .allow_trailing_bytes()
+        .deserialize::<MpbLiteArtifactVersionTag>(bytes)
+        .ok()
+        .map(|tag| tag.version)
 }
 
 pub fn deserialize_artifact(bytes: &[u8]) -> std::result::Result<MpbLiteArtifactV1, String> {
@@ -278,4 +287,38 @@ pub fn verify_artifact_header(a: &MpbLiteArtifactV1) -> Result<()> {
 pub fn policy_hash_from_artifact_v1(bytecode: &[u8], vars: &[MpbVarBindingV1]) -> Hash32 {
     let refs: Vec<(&[u8], u8)> = vars.iter().map(|v| (v.name.as_slice(), v.reg)).collect();
     Hash32(mprd_mpb::policy_hash_v1(bytecode, &refs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, Serialize)]
+    struct SerializedVersionTag {
+        version: u32,
+    }
+
+    #[test]
+    fn peek_artifact_version_reads_bincode_tag_for_v2() {
+        let bytes = bincode::serialize(&SerializedVersionTag {
+            version: MPB_LITE_ARTIFACT_VERSION_V2,
+        })
+        .expect("serialize version tag");
+        assert_eq!(
+            peek_artifact_version(&bytes),
+            Some(MPB_LITE_ARTIFACT_VERSION_V2)
+        );
+    }
+
+    #[test]
+    fn peek_artifact_version_reads_bincode_tag_for_v3() {
+        let bytes = bincode::serialize(&SerializedVersionTag {
+            version: MPB_LITE_ARTIFACT_VERSION_V3,
+        })
+        .expect("serialize version tag");
+        assert_eq!(
+            peek_artifact_version(&bytes),
+            Some(MPB_LITE_ARTIFACT_VERSION_V3)
+        );
+    }
 }
