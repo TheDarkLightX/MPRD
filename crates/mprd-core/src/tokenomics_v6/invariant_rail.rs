@@ -67,24 +67,21 @@ fn check_transition_invariants(
     action: &ActionV6,
     outcome: &ActionOutcomeV6,
 ) -> Option<InvariantViolationV6> {
-    match (action, outcome) {
-        (ActionV6::SettleOpsPayroll, ActionOutcomeV6::SettleOpsPayroll(o)) => {
-            let pool = o.ops_payroll_pool.get() as u128;
-            let paid = o.payout_total.get() as u128;
-            let carry = o.carry_to_reserve.get() as u128;
-            if paid + carry != pool {
-                return Some(InvariantViolationV6::new(
-                    InvariantIdV6::RewardConserve,
-                    format!(
-                        "reward conservation broken: payout_total({}) + carry_to_reserve({}) != ops_payroll_pool({})",
-                        o.payout_total.get(),
-                        o.carry_to_reserve.get(),
-                        o.ops_payroll_pool.get()
-                    ),
-                ));
-            }
+    if let (ActionV6::SettleOpsPayroll, ActionOutcomeV6::SettleOpsPayroll(o)) = (action, outcome) {
+        let pool = o.ops_payroll_pool.get() as u128;
+        let paid = o.payout_total.get() as u128;
+        let carry = o.carry_to_reserve.get() as u128;
+        if paid + carry != pool {
+            return Some(InvariantViolationV6::new(
+                InvariantIdV6::RewardConserve,
+                format!(
+                    "reward conservation broken: payout_total({}) + carry_to_reserve({}) != ops_payroll_pool({})",
+                    o.payout_total.get(),
+                    o.carry_to_reserve.get(),
+                    o.ops_payroll_pool.get()
+                ),
+            ));
         }
-        _ => {}
     }
     None
 }
@@ -117,7 +114,7 @@ pub fn minimize_counterexample_v1(
     let mut n = 2usize;
     while cur.len() >= 2 {
         let len = cur.len();
-        let chunk = (len + n - 1) / n;
+        let chunk = len.div_ceil(n);
         let mut reduced = false;
 
         for start in (0..len).step_by(chunk) {

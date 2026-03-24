@@ -109,10 +109,10 @@ pub fn decoded_mpb_v1_fixture(seed: GenSeed) -> DecodedMpbV1Fixture {
     };
 
     let proof = mprd_core::ProofBundle {
-        policy_hash: token.policy_hash.clone(),
-        state_hash: token.state_hash.clone(),
+        policy_hash: token.policy_hash,
+        state_hash: token.state_hash,
         candidate_set_hash: g.next_hash32(b"candidate_set_hash"),
-        chosen_action_hash: token.chosen_action_hash.clone(),
+        chosen_action_hash: token.chosen_action_hash,
         limits_hash: Hash32(limits_hash_mpb_v1()),
         limits_bytes: limits_bytes_mpb_v1().to_vec(),
         chosen_action_preimage: Vec::new(),

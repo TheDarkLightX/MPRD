@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use mprd_core::egress::validate_outbound_url;
 use mprd_core::hash::hash_candidate;
 use mprd_core::validation::validate_candidate_action_v1;
@@ -224,8 +226,10 @@ mod tests {
     #[test]
     fn rejects_too_many_candidates() {
         let policy_hash = Hash32([9u8; 32]);
-        let mut config = HttpProposerConfig::default();
-        config.max_candidates = 1;
+        let config = HttpProposerConfig {
+            max_candidates: 1,
+            ..HttpProposerConfig::default()
+        };
         let http: Box<dyn HttpPoster> = Box::new(FakePoster {
             status: 200,
             body: br#"{"candidates":[{"action_type":"a","score":0,"params":{}},{"action_type":"b","score":0,"params":{}}]}"#,

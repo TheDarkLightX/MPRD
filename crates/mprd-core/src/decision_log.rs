@@ -223,7 +223,7 @@ impl FileDecisionRecorder {
     }
 
     pub fn last_record_hash(&self) -> Hash32 {
-        self.last_hash.lock().expect("lock poisoned").clone()
+        *self.last_hash.lock().expect("lock poisoned")
     }
 }
 
@@ -231,28 +231,28 @@ impl DecisionRecorder for FileDecisionRecorder {
     fn record(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<()> {
         let _guard = self.lock.lock().expect("lock poisoned");
         let published_at_ms = now_ms()?;
-        let prev_hash = self.last_hash.lock().expect("lock poisoned").clone();
+        let prev_hash = *self.last_hash.lock().expect("lock poisoned");
         let record_hash = record_hash_v2(&prev_hash, published_at_ms, token, proof);
 
         let record = DecisionLogRecordV2 {
             record_version: 2,
             published_at_ms,
             prev_record_hash: prev_hash,
-            record_hash: record_hash.clone(),
+            record_hash,
 
-            policy_hash: token.policy_hash.clone(),
+            policy_hash: token.policy_hash,
             policy_epoch: token.policy_ref.policy_epoch,
-            registry_root: token.policy_ref.registry_root.clone(),
+            registry_root: token.policy_ref.registry_root,
 
-            state_hash: token.state_hash.clone(),
-            state_source_id: token.state_ref.state_source_id.clone(),
+            state_hash: token.state_hash,
+            state_source_id: token.state_ref.state_source_id,
             state_epoch: token.state_ref.state_epoch,
-            state_attestation_hash: token.state_ref.state_attestation_hash.clone(),
+            state_attestation_hash: token.state_ref.state_attestation_hash,
 
-            chosen_action_hash: token.chosen_action_hash.clone(),
-            nonce_or_tx_hash: token.nonce_or_tx_hash.clone(),
+            chosen_action_hash: token.chosen_action_hash,
+            nonce_or_tx_hash: token.nonce_or_tx_hash,
 
-            limits_hash: proof.limits_hash.clone(),
+            limits_hash: proof.limits_hash,
             limits_bytes_hash: sha256(&proof.limits_bytes),
             chosen_action_preimage_hash: sha256(&proof.chosen_action_preimage),
             risc0_receipt_hash: sha256(&proof.risc0_receipt),
@@ -330,7 +330,7 @@ impl VerifiedDecisionLog {
     }
 
     pub fn last_record_hash(&self) -> Hash32 {
-        self.last_hash.lock().expect("lock poisoned").clone()
+        *self.last_hash.lock().expect("lock poisoned")
     }
 
     pub fn saw_unverified_v1(&self) -> bool {
@@ -342,14 +342,14 @@ impl DecisionRecorder for VerifiedDecisionLog {
     fn record(&self, token: &DecisionToken, proof: &ProofBundle) -> Result<()> {
         let _guard = self.lock.lock().expect("lock poisoned");
         let published_at_ms = now_ms()?;
-        let prev_hash = self.last_hash.lock().expect("lock poisoned").clone();
+        let prev_hash = *self.last_hash.lock().expect("lock poisoned");
         let record_hash = record_hash_v2(&prev_hash, published_at_ms, token, proof);
 
         let record = DecisionLogRecordV2 {
             record_version: 2,
             published_at_ms,
             prev_record_hash: prev_hash,
-            record_hash: record_hash.clone(),
+            record_hash,
 
             policy_hash: token.policy_hash,
             policy_epoch: token.policy_ref.policy_epoch,

@@ -18,6 +18,8 @@
 //!
 //! // Development/Testing: Use MPB (experimental)
 //! let config = ProductionConfig::experimental_mpb();
+
+#![cfg_attr(test, allow(deprecated))]
 //! let attestor = create_production_attestor(&config)?;
 //! ```
 //!

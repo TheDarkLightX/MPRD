@@ -1,5 +1,6 @@
 //! bcr_staking kernel module.
 //! Generated from IR hash: 3a689bfcd8d45a74
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

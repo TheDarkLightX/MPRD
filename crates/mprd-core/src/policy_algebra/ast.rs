@@ -189,6 +189,7 @@ impl PolicyExpr {
         Ok(Self::DenyIf(PolicyAtom::new(name, limits)?))
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn not(child: PolicyExpr) -> Self {
         Self::Not(Box::new(child))
     }

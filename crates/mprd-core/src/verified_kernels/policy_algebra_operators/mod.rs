@@ -1,5 +1,6 @@
 //! policy_algebra_operators kernel module.
 //! Generated from IR hash: a3da52b2930831e2
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

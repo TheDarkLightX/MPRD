@@ -273,7 +273,7 @@ fn handle_connection(mut stream: TcpStream, body: &str) -> std::io::Result<()> {
         "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         status,
         content_type,
-        response_body.as_bytes().len(),
+        response_body.len(),
         response_body
     );
 

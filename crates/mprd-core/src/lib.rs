@@ -28,6 +28,7 @@ pub mod tau_net_output_attestation;
 pub mod tau_testnet;
 pub mod tokenomics_v6;
 pub mod validation;
+#[allow(clippy::module_inception)]
 pub mod verified_kernels;
 pub mod wire;
 
@@ -523,7 +524,6 @@ pub fn governance_admission_witness_v1(
 
 /// Construct the concrete token-binding witness from the orchestrator's authority, state, and
 /// selected action.
-#[must_use]
 pub fn decision_token_binding_witness_v1(
     authority: &PolicyAuthorityWitnessV1,
     state_binding: &crate::state_provenance::StateBindingWitnessV1,
@@ -891,7 +891,7 @@ impl Selector for DefaultSelector {
         Ok(Decision {
             chosen_index,
             chosen_action,
-            policy_hash: policy_hash.clone(),
+            policy_hash: *policy_hash,
             decision_commitment,
         })
     }

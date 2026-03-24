@@ -1,5 +1,6 @@
 //! mprd_difficulty_adjustment kernel module.
 //! Generated from IR hash: d2072902abbb02c1
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

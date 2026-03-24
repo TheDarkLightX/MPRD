@@ -52,7 +52,7 @@ where
     let mut n = 2;
 
     while current.len() >= 2 {
-        let chunk_size = (current.len() + n - 1) / n; // Ceiling division
+        let chunk_size = current.len().div_ceil(n);
         let chunks: Vec<Vec<T>> = current.chunks(chunk_size).map(|c| c.to_vec()).collect();
 
         let mut reduced = false;

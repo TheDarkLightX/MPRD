@@ -123,7 +123,7 @@ pub struct TrustScore(f64);
 impl TrustScore {
     /// Create a trust score, returns None if out of range.
     pub fn new(score: f64) -> Option<Self> {
-        if score >= 0.0 && score <= 1.0 {
+        if (0.0..=1.0).contains(&score) {
             Some(TrustScore(score))
         } else {
             None

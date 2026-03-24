@@ -626,7 +626,7 @@ mod tests {
             Ok(Decision {
                 chosen_index: 0,
                 chosen_action: candidates[0].clone(),
-                policy_hash: policy_hash.clone(),
+                policy_hash: *policy_hash,
                 decision_commitment: dummy_hash(5),
             })
         }
@@ -858,10 +858,10 @@ mod tests {
                 );
             }
             Ok(ProofBundle {
-                policy_hash: decision.policy_hash.clone(),
-                state_hash: state.state_hash.clone(),
+                policy_hash: decision.policy_hash,
+                state_hash: state.state_hash,
                 candidate_set_hash: dummy_hash(4),
-                chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                chosen_action_hash: decision.chosen_action.candidate_hash,
                 limits_hash: crate::limits::limits_hash_v1(&[]),
                 limits_bytes: vec![],
                 chosen_action_preimage: crate::hash::candidate_hash_preimage(
@@ -1057,10 +1057,10 @@ mod tests {
                 hex::encode(token.nonce_or_tx_hash.0),
             );
             Ok(ProofBundle {
-                policy_hash: decision.policy_hash.clone(),
-                state_hash: state.state_hash.clone(),
+                policy_hash: decision.policy_hash,
+                state_hash: state.state_hash,
                 candidate_set_hash: dummy_hash(4),
-                chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                chosen_action_hash: decision.chosen_action.candidate_hash,
                 limits_hash: crate::limits::limits_hash_v1(&[]),
                 limits_bytes: vec![],
                 chosen_action_preimage: crate::hash::candidate_hash_preimage(
@@ -1089,10 +1089,10 @@ mod tests {
                 hex::encode(token.nonce_or_tx_hash.0),
             );
             Ok(ProofBundle {
-                policy_hash: decision.policy_hash.clone(),
-                state_hash: state.state_hash.clone(),
+                policy_hash: decision.policy_hash,
+                state_hash: state.state_hash,
                 candidate_set_hash: dummy_hash(4),
-                chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                chosen_action_hash: decision.chosen_action.candidate_hash,
                 limits_hash: crate::limits::limits_hash_v1(&[]),
                 limits_bytes: vec![],
                 chosen_action_preimage: vec![],
@@ -1135,7 +1135,7 @@ mod tests {
             Ok(Decision {
                 chosen_index: 0,
                 chosen_action,
-                policy_hash: policy_hash.clone(),
+                policy_hash: *policy_hash,
                 decision_commitment: dummy_hash(5),
             })
         }
@@ -2459,7 +2459,7 @@ mod tests {
 
         #[derive(Clone, Copy, Debug)]
         struct Scenario {
-            name: &'static str,
+            _name: &'static str,
             verify_ok: bool,
             with_audit: bool,
             audit_fail: bool,
@@ -2470,7 +2470,7 @@ mod tests {
 
         let scenarios = [
             Scenario {
-                name: "verify_fails_no_record_no_execute",
+                _name: "verify_fails_no_record_no_execute",
                 verify_ok: false,
                 with_audit: true,
                 audit_fail: false,
@@ -2479,7 +2479,7 @@ mod tests {
                 executor_fail: false,
             },
             Scenario {
-                name: "verify_ok_no_audit_no_recorder_executes",
+                _name: "verify_ok_no_audit_no_recorder_executes",
                 verify_ok: true,
                 with_audit: false,
                 audit_fail: false,
@@ -2488,7 +2488,7 @@ mod tests {
                 executor_fail: false,
             },
             Scenario {
-                name: "verify_ok_audit_ok_recorder_ok_executes",
+                _name: "verify_ok_audit_ok_recorder_ok_executes",
                 verify_ok: true,
                 with_audit: true,
                 audit_fail: false,
@@ -2497,7 +2497,7 @@ mod tests {
                 executor_fail: false,
             },
             Scenario {
-                name: "verify_ok_audit_fails_best_effort_still_executes",
+                _name: "verify_ok_audit_fails_best_effort_still_executes",
                 verify_ok: true,
                 with_audit: true,
                 audit_fail: true,
@@ -2506,7 +2506,7 @@ mod tests {
                 executor_fail: false,
             },
             Scenario {
-                name: "verify_ok_recorder_fails_abort_before_execute",
+                _name: "verify_ok_recorder_fails_abort_before_execute",
                 verify_ok: true,
                 with_audit: true,
                 audit_fail: false,
@@ -2515,7 +2515,7 @@ mod tests {
                 executor_fail: false,
             },
             Scenario {
-                name: "verify_ok_executor_fails_but_ordering_holds",
+                _name: "verify_ok_executor_fails_but_ordering_holds",
                 verify_ok: true,
                 with_audit: true,
                 audit_fail: false,
@@ -2834,7 +2834,7 @@ mod tests {
             Ok(Decision {
                 chosen_index: 0,
                 chosen_action: candidates[0].clone(),
-                policy_hash: policy_hash.clone(),
+                policy_hash: *policy_hash,
                 decision_commitment: dummy_hash(5),
             })
         }
@@ -2853,7 +2853,7 @@ mod tests {
             Ok(Decision {
                 chosen_index: candidates.len() + 1,
                 chosen_action: candidates[0].clone(),
-                policy_hash: policy_hash.clone(),
+                policy_hash: *policy_hash,
                 decision_commitment: dummy_hash(5),
             })
         }

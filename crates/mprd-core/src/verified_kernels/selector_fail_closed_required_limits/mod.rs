@@ -1,5 +1,6 @@
 //! selector_fail_closed_required_limits kernel module.
 //! Generated from IR hash: 4e2f069a0802ee16
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

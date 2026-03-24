@@ -46,8 +46,10 @@ fn trust_anchors_configured_requires_existing_path_and_decodable_key() {
 
 #[test]
 fn system_status_is_critical_when_trust_anchors_missing_in_trustless_mode() {
-    let mut config = super::super::MprdConfigFile::default();
-    config.mode = "trustless".into();
+    let config = super::super::MprdConfigFile {
+        mode: "trustless".into(),
+        ..super::super::MprdConfigFile::default()
+    };
 
     let now = 123;
     let out = compute_system_status(
@@ -87,8 +89,10 @@ fn system_status_is_degraded_when_executor_unavailable() {
 
 #[test]
 fn system_status_is_critical_when_risc0_unavailable_in_private_mode() {
-    let mut config = super::super::MprdConfigFile::default();
-    config.mode = "private".into();
+    let config = super::super::MprdConfigFile {
+        mode: "private".into(),
+        ..super::super::MprdConfigFile::default()
+    };
 
     let out = compute_system_status(
         &config,
@@ -105,8 +109,10 @@ fn system_status_is_critical_when_risc0_unavailable_in_private_mode() {
 
 #[test]
 fn system_status_is_not_critical_when_risc0_unavailable_in_local_mode() {
-    let mut config = super::super::MprdConfigFile::default();
-    config.mode = "local".into();
+    let config = super::super::MprdConfigFile {
+        mode: "local".into(),
+        ..super::super::MprdConfigFile::default()
+    };
 
     let out = compute_system_status(
         &config,
@@ -124,9 +130,11 @@ fn system_status_is_not_critical_when_risc0_unavailable_in_local_mode() {
 
 #[test]
 fn system_status_degrades_on_tau_unavailable_only_when_tau_binary_configured() {
-    let mut config = super::super::MprdConfigFile::default();
-    config.mode = "local".into();
-    config.tau_binary = Some("tau".into());
+    let config = super::super::MprdConfigFile {
+        mode: "local".into(),
+        tau_binary: Some("tau".into()),
+        ..super::super::MprdConfigFile::default()
+    };
 
     let out = compute_system_status(
         &config,

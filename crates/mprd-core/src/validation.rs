@@ -2,6 +2,7 @@
 //!
 //! This module enforces bounded inputs (DoS resistance) and provides canonicalization helpers
 //! used at pipeline boundaries.
+#![allow(clippy::items_after_test_module)]
 
 use crate::hash::{
     candidate_hash_preimage, hash_candidate_preimage_v1, hash_state_preimage_v1,

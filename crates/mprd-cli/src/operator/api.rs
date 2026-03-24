@@ -451,6 +451,7 @@ pub enum AutopilotMode {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(clippy::enum_variant_names)]
 pub enum AutoActionType {
     AutoDismiss,
     AutoCorrelate,

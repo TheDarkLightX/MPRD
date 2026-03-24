@@ -557,10 +557,8 @@ impl OperatorStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => return Err(e.into()),
         };
-        let mut items: Vec<api::AutoAction> = match serde_json::from_slice(&bytes) {
-            Ok(v) => v,
-            Err(_) => Vec::new(),
-        };
+        let mut items: Vec<api::AutoAction> =
+            serde_json::from_slice(&bytes).unwrap_or_default();
         if items.len() > limit {
             items.truncate(limit);
         }
@@ -1185,6 +1183,7 @@ impl OperatorStore {
 mod tests {
     use super::OperatorStore;
     use crate::operator::api as op_api;
+    use crate::test_support::EnvGuard;
     use mprd_core::{
         CandidateAction, Decision, DecisionToken, Hash32, PolicyRef, ProofBundle, RuleVerdict,
         Score, StateRef, StateSnapshot, ZkAttestor,
@@ -1192,39 +1191,7 @@ mod tests {
     use mprd_zk::{ModeConfig, RobustMpbAttestor};
     use proptest::prelude::*;
     use std::collections::HashMap;
-    use std::sync::{Mutex, MutexGuard};
     use tempfile::TempDir;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvGuard {
-        prev: Vec<(&'static str, Option<String>)>,
-        _lock: MutexGuard<'static, ()>,
-    }
-
-    impl EnvGuard {
-        fn set_many(vars: &[(&'static str, &str)]) -> Self {
-            let lock = ENV_LOCK.lock().expect("env lock");
-            let mut prev = Vec::with_capacity(vars.len());
-            for (key, value) in vars {
-                prev.push((*key, std::env::var(key).ok()));
-                std::env::set_var(key, value);
-            }
-            Self { prev, _lock: lock }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for (key, prev) in self.prev.drain(..) {
-                if let Some(prev) = prev {
-                    std::env::set_var(key, prev);
-                } else {
-                    std::env::remove_var(key);
-                }
-            }
-        }
-    }
 
     fn sample_decision_inputs(
         allowed: bool,
@@ -1567,7 +1534,7 @@ mod tests {
         let decision = Decision {
             chosen_index: 0,
             chosen_action: candidate.clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             decision_commitment: Hash32([4u8; 32]),
         };
         let verdicts = vec![RuleVerdict {
@@ -1578,12 +1545,12 @@ mod tests {
         let state = StateSnapshot {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
         };
         let proof = ProofBundle {
-            policy_hash: policy_hash.clone(),
-            state_hash: state_hash.clone(),
+            policy_hash,
+            state_hash,
             candidate_set_hash: Hash32([5u8; 32]),
             chosen_action_hash: Hash32([6u8; 32]),
             limits_hash: Hash32([7u8; 32]),
@@ -1594,12 +1561,12 @@ mod tests {
         };
 
         let old_token = DecisionToken {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: Hash32([9u8; 32]),
             },
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
             chosen_action_hash: Hash32([6u8; 32]),
             nonce_or_tx_hash: Hash32([10u8; 32]),
@@ -1608,12 +1575,12 @@ mod tests {
         };
 
         let new_token = DecisionToken {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: Hash32([9u8; 32]),
             },
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
             chosen_action_hash: Hash32([6u8; 32]),
             nonce_or_tx_hash: Hash32([11u8; 32]),
@@ -1676,7 +1643,7 @@ mod tests {
         let decision = Decision {
             chosen_index: 0,
             chosen_action: candidate.clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             decision_commitment: Hash32([4u8; 32]),
         };
         let verdicts = vec![RuleVerdict {
@@ -1687,12 +1654,12 @@ mod tests {
         let state = StateSnapshot {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
         };
         let proof = ProofBundle {
-            policy_hash: policy_hash.clone(),
-            state_hash: state_hash.clone(),
+            policy_hash,
+            state_hash,
             candidate_set_hash: Hash32([5u8; 32]),
             chosen_action_hash: Hash32([6u8; 32]),
             limits_hash: Hash32([7u8; 32]),
@@ -1703,12 +1670,12 @@ mod tests {
         };
 
         let token = DecisionToken {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: Hash32([9u8; 32]),
             },
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
             chosen_action_hash: Hash32([6u8; 32]),
             nonce_or_tx_hash: Hash32([10u8; 32]),
@@ -1841,7 +1808,7 @@ mod tests {
         let decision = Decision {
             chosen_index: 0,
             chosen_action: candidate.clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             decision_commitment: Hash32([4u8; 32]),
         };
         let verdicts = vec![RuleVerdict {
@@ -1852,12 +1819,12 @@ mod tests {
         let state = StateSnapshot {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
         };
         let proof = ProofBundle {
-            policy_hash: policy_hash.clone(),
-            state_hash: state_hash.clone(),
+            policy_hash,
+            state_hash,
             candidate_set_hash: Hash32([5u8; 32]),
             chosen_action_hash: Hash32([6u8; 32]),
             limits_hash: Hash32([7u8; 32]),
@@ -1868,12 +1835,12 @@ mod tests {
         };
 
         let token = DecisionToken {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: Hash32([9u8; 32]),
             },
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
             chosen_action_hash: Hash32([6u8; 32]),
             nonce_or_tx_hash: Hash32([10u8; 32]),
@@ -1918,7 +1885,7 @@ mod tests {
         let decision = Decision {
             chosen_index: 0,
             chosen_action: candidate.clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             decision_commitment: Hash32([4u8; 32]),
         };
         let verdicts = vec![RuleVerdict {
@@ -1929,12 +1896,12 @@ mod tests {
         let state = StateSnapshot {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
         };
         let proof = ProofBundle {
-            policy_hash: policy_hash.clone(),
-            state_hash: state_hash.clone(),
+            policy_hash,
+            state_hash,
             candidate_set_hash: Hash32([5u8; 32]),
             chosen_action_hash: Hash32([6u8; 32]),
             limits_hash: Hash32([7u8; 32]),
@@ -1945,12 +1912,12 @@ mod tests {
         };
 
         let token = DecisionToken {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: Hash32([9u8; 32]),
             },
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
             chosen_action_hash: Hash32([6u8; 32]),
             nonce_or_tx_hash: Hash32([10u8; 32]),
@@ -1996,7 +1963,7 @@ mod tests {
         let decision = Decision {
             chosen_index: 0,
             chosen_action: candidate.clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             decision_commitment: Hash32([4u8; 32]),
         };
         let verdicts = vec![RuleVerdict {
@@ -2007,12 +1974,12 @@ mod tests {
         let state = StateSnapshot {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
         };
         let proof = ProofBundle {
-            policy_hash: policy_hash.clone(),
-            state_hash: state_hash.clone(),
+            policy_hash,
+            state_hash,
             candidate_set_hash: Hash32([5u8; 32]),
             chosen_action_hash: Hash32([6u8; 32]),
             limits_hash: Hash32([7u8; 32]),
@@ -2023,12 +1990,12 @@ mod tests {
         };
 
         let token = DecisionToken {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: Hash32([9u8; 32]),
             },
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
             chosen_action_hash: Hash32([6u8; 32]),
             nonce_or_tx_hash: Hash32([10u8; 32]),

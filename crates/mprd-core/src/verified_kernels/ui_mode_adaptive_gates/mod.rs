@@ -1,5 +1,6 @@
 //! ui_mode_adaptive_gates kernel module.
 //! Generated from IR hash: 5b341afd57beaa56
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

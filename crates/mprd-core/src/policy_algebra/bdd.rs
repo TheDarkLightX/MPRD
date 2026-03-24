@@ -195,6 +195,7 @@ pub struct BddEquivResult {
     pub counterexample: Option<BTreeMap<String, Option<bool>>>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DenyIfValue {
     True,
@@ -325,6 +326,7 @@ fn bit_var_order(signals: &BTreeSet<PolicyAtom>, limits: PolicyLimits) -> Result
 ///
 /// The lowered expression is true iff `evaluate(expr, ctx)` returns `Allow` under the
 /// veto-first, fail-closed semantics.
+#[cfg(test)]
 fn lower_to_presence_bits(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
     fn lower_main(
         expr: &PolicyExpr,
@@ -1149,7 +1151,8 @@ mod tests {
         }
 
         // 2-of-3: allow iff at least two are Some(true). Missing counts as deny.
-        let cases: &[([(&str, Option<bool>); 3], bool)] = &[
+        type ThresholdCase = ([(&'static str, Option<bool>); 3], bool);
+        let cases: &[ThresholdCase] = &[
             (
                 [("a", Some(true)), ("b", Some(true)), ("c", Some(false))],
                 true,

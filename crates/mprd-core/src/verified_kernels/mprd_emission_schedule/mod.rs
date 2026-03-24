@@ -1,5 +1,6 @@
 //! mprd_emission_schedule kernel module.
 //! Generated from IR hash: abe51e03fe2f3abc
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

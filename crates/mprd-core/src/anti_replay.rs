@@ -527,7 +527,7 @@ type RedisTlsStream = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
 
 enum RedisConnection {
     Plain(TcpStream),
-    Tls(RedisTlsStream),
+    Tls(Box<RedisTlsStream>),
 }
 
 impl std::fmt::Debug for RedisConnection {
@@ -773,7 +773,7 @@ impl RedisDistributedNonceStore {
             MprdError::ExecutionError("Redis DNS resolution returned no addresses".into())
         })?;
 
-        let stream = TcpStream::connect_timeout(&sock, self.io_timeout)
+        let stream = TcpStream::connect_timeout(sock, self.io_timeout)
             .map_err(|e| MprdError::ExecutionError(format!("Failed to connect to Redis: {}", e)))?;
         stream
             .set_read_timeout(Some(self.io_timeout))
@@ -792,7 +792,7 @@ impl RedisDistributedNonceStore {
             let tls = rustls::ClientConnection::new(config, server_name).map_err(|e| {
                 MprdError::ExecutionError(format!("Redis TLS configuration failed: {}", e))
             })?;
-            RedisConnection::Tls(rustls::StreamOwned::new(tls, stream))
+            RedisConnection::Tls(Box::new(rustls::StreamOwned::new(tls, stream)))
         } else {
             RedisConnection::Plain(stream)
         };
@@ -1084,7 +1084,7 @@ impl<S: DistributedNonceStore> NonceValidator for DistributedNonceTracker<S> {
             .is_claimed(&token.policy_hash, &token.nonce_or_tx_hash)?
         {
             return Err(MprdError::NonceReplay {
-                nonce: token.nonce_or_tx_hash.clone(),
+                nonce: token.nonce_or_tx_hash,
             });
         }
 
@@ -1132,7 +1132,7 @@ impl<S: DistributedNonceStore> NonceValidator for DistributedNonceTracker<S> {
 
         if !claimed {
             return Err(MprdError::NonceReplay {
-                nonce: token.nonce_or_tx_hash.clone(),
+                nonce: token.nonce_or_tx_hash,
             });
         }
 
@@ -1157,7 +1157,7 @@ impl<S: DistributedNonceStore> NonceValidator for DistributedNonceTracker<S> {
 
         if !claimed {
             return Err(MprdError::NonceReplay {
-                nonce: token.nonce_or_tx_hash.clone(),
+                nonce: token.nonce_or_tx_hash,
             });
         }
 
@@ -1227,7 +1227,7 @@ impl PersistentNonceStore for FileNonceStore {
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::AlreadyExists {
                     MprdError::NonceReplay {
-                        nonce: nonce.clone(),
+                        nonce: *nonce,
                     }
                 } else {
                     MprdError::ExecutionError(format!("Failed to create nonce file: {e}"))
@@ -1408,7 +1408,7 @@ impl<S: PersistentNonceStore> NonceValidator for PersistentNonceTracker<S> {
             .exists(&token.policy_hash, &token.nonce_or_tx_hash)?
         {
             return Err(MprdError::NonceReplay {
-                nonce: token.nonce_or_tx_hash.clone(),
+                nonce: token.nonce_or_tx_hash,
             });
         }
 
@@ -1452,7 +1452,7 @@ impl<S: PersistentNonceStore> NonceValidator for PersistentNonceTracker<S> {
             .exists(&token.policy_hash, &token.nonce_or_tx_hash)?
         {
             return Err(MprdError::NonceReplay {
-                nonce: token.nonce_or_tx_hash.clone(),
+                nonce: token.nonce_or_tx_hash,
             });
         }
 
@@ -1576,7 +1576,7 @@ impl NonceValidator for InMemoryNonceTracker {
         // Correctness relies on re-checking inside `mark_used` under a write lock.
         // This keeps the overall executor flow fail-closed even under concurrency.
         // SECURITY: Handle poisoned lock gracefully.
-        let key = (token.policy_hash.clone(), token.nonce_or_tx_hash.clone());
+        let key = (token.policy_hash, token.nonce_or_tx_hash);
         let used = self
             .used
             .read()
@@ -1584,7 +1584,7 @@ impl NonceValidator for InMemoryNonceTracker {
 
         if used.contains_key(&key) {
             return Err(MprdError::NonceReplay {
-                nonce: token.nonce_or_tx_hash.clone(),
+                nonce: token.nonce_or_tx_hash,
             });
         }
 
@@ -1603,7 +1603,7 @@ impl NonceValidator for InMemoryNonceTracker {
     }
 
     fn mark_used(&self, token: &DecisionToken) -> Result<()> {
-        let key = (token.policy_hash.clone(), token.nonce_or_tx_hash.clone());
+        let key = (token.policy_hash, token.nonce_or_tx_hash);
         let entry = NonceEntry {
             used_at_ms: Self::current_time_ms()?,
         };
@@ -1618,7 +1618,7 @@ impl NonceValidator for InMemoryNonceTracker {
         // If a concurrent caller validated the same token, this prevents a double-spend.
         if used.contains_key(&key) {
             return Err(MprdError::NonceReplay {
-                nonce: token.nonce_or_tx_hash.clone(),
+                nonce: token.nonce_or_tx_hash,
             });
         }
 
@@ -2048,10 +2048,10 @@ mod tests {
 
     fn dummy_proof_for(token: &DecisionToken) -> ProofBundle {
         ProofBundle {
-            policy_hash: token.policy_hash.clone(),
-            state_hash: token.state_hash.clone(),
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
             candidate_set_hash: Hash32([4u8; 32]),
-            chosen_action_hash: token.chosen_action_hash.clone(),
+            chosen_action_hash: token.chosen_action_hash,
             limits_hash: Hash32([5u8; 32]),
             limits_bytes: vec![],
             chosen_action_preimage: vec![],
@@ -2135,8 +2135,8 @@ mod tests {
         let limits_bytes = vec![];
         let limits_hash = crate::limits::limits_hash_v1(&limits_bytes);
         ProofBundle {
-            policy_hash: token.policy_hash.clone(),
-            state_hash: token.state_hash.clone(),
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
             candidate_set_hash: Hash32([4u8; 32]),
             chosen_action_hash,
             limits_hash,
@@ -2585,11 +2585,11 @@ mod tests {
             impl NonceTrackerModel {
                 fn mark_used(&mut self, policy: &Hash32, nonce: &Hash32) -> bool {
                     // Returns true if insert succeeded (was not present)
-                    self.used.insert((policy.clone(), nonce.clone()))
+                    self.used.insert((*policy, *nonce))
                 }
 
                 fn is_used(&self, policy: &Hash32, nonce: &Hash32) -> bool {
-                    self.used.contains(&(policy.clone(), nonce.clone()))
+                    self.used.contains(&(*policy, *nonce))
                 }
             }
 
@@ -2602,7 +2602,7 @@ mod tests {
                 let nonce_hash = Hash32([nonce_byte; 32]);
 
                 let mut token = dummy_token(nonce_byte, now);
-                token.policy_hash = policy_hash.clone();
+                token.policy_hash = policy_hash;
 
                 // INVARIANT 1: validate() should succeed iff model says nonce is not used
                 let model_says_unused = !model.is_used(&policy_hash, &nonce_hash);
@@ -2653,8 +2653,8 @@ mod tests {
             // (We can't directly compare internals, but we can verify via validate calls)
             for (policy_hash, nonce_hash) in &model.used {
                 let mut token = dummy_token(nonce_hash.0[0], now);
-                token.policy_hash = policy_hash.clone();
-                token.nonce_or_tx_hash = nonce_hash.clone();
+                token.policy_hash = *policy_hash;
+                token.nonce_or_tx_hash = *nonce_hash;
 
                 prop_assert!(
                     tracker.validate(&token).is_err(),
@@ -2681,11 +2681,11 @@ mod tests {
             impl FileNonceModel {
                 fn store(&mut self, policy: &Hash32, nonce: &Hash32) -> bool {
                     // Returns true if insert succeeded (was not present)
-                    self.stored.insert((policy.clone(), nonce.clone()))
+                    self.stored.insert((*policy, *nonce))
                 }
 
                 fn exists(&self, policy: &Hash32, nonce: &Hash32) -> bool {
-                    self.stored.contains(&(policy.clone(), nonce.clone()))
+                    self.stored.contains(&(*policy, *nonce))
                 }
             }
 

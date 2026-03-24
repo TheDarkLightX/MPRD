@@ -1,5 +1,6 @@
 //! ui_trust_anchor_fingerprints_only kernel module.
 //! Generated from IR hash: 78e9b32639a5ab22
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

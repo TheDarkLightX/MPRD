@@ -274,16 +274,16 @@ fn robust_mpb_attestor_generates_binding_commitment() {
     let decision = mprd_core::Decision {
         chosen_index: 0,
         chosen_action: candidate,
-        policy_hash: policy_hash.clone(),
+        policy_hash,
         decision_commitment: dummy_hash(4),
     };
 
     let token = mprd_core::DecisionToken {
         policy_hash,
         policy_ref: dummy_policy_ref(),
-        state_hash: state.state_hash.clone(),
+        state_hash: state.state_hash,
         state_ref: state.state_ref.clone(),
-        chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+        chosen_action_hash: decision.chosen_action.candidate_hash,
         nonce_or_tx_hash: dummy_hash(5),
         timestamp_ms: 0,
         signature: vec![],
@@ -336,16 +336,16 @@ fn robust_mpb_verifier_validates_binding_commitment() {
     let decision = mprd_core::Decision {
         chosen_index: 0,
         chosen_action: candidate,
-        policy_hash: policy_hash.clone(),
+        policy_hash,
         decision_commitment: dummy_hash(4),
     };
 
     let token = mprd_core::DecisionToken {
         policy_hash,
         policy_ref: dummy_policy_ref(),
-        state_hash: state.state_hash.clone(),
+        state_hash: state.state_hash,
         state_ref: state.state_ref.clone(),
-        chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+        chosen_action_hash: decision.chosen_action.candidate_hash,
         nonce_or_tx_hash: dummy_hash(9),
         timestamp_ms: 0,
         signature: vec![],
@@ -393,16 +393,16 @@ fn robust_mpb_verifier_rejects_tampered_binding() {
     let decision = mprd_core::Decision {
         chosen_index: 0,
         chosen_action: candidate,
-        policy_hash: policy_hash.clone(),
+        policy_hash,
         decision_commitment: dummy_hash(4),
     };
 
     let mut token = mprd_core::DecisionToken {
         policy_hash,
         policy_ref: dummy_policy_ref(),
-        state_hash: state.state_hash.clone(),
+        state_hash: state.state_hash,
         state_ref: state.state_ref.clone(),
-        chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+        chosen_action_hash: decision.chosen_action.candidate_hash,
         nonce_or_tx_hash: dummy_hash(9),
         timestamp_ms: 0,
         signature: vec![],
@@ -551,7 +551,7 @@ fn full_pipeline_with_robust_b_full() {
     let config = ModeConfig::mode_b_full(image_id);
     let mut store: HashMap<mprd_core::PolicyHash, MpbPolicyArtifactV1> = HashMap::new();
     store.insert(
-        policy_hash.clone(),
+        policy_hash,
         MpbPolicyArtifactV1 {
             bytecode: policy_bytecode,
             variables: vec![],
@@ -633,16 +633,16 @@ fn registry_bound_verifier_rejects_wrong_image_id_routing() {
     let decision = mprd_core::Decision {
         chosen_index: 0,
         chosen_action: chosen_action.clone(),
-        policy_hash: policy_hash.clone(),
+        policy_hash,
         decision_commitment: Hash32([0u8; 32]),
     };
 
     let token = mprd_core::DecisionToken {
-        policy_hash: policy_hash.clone(),
+        policy_hash,
         policy_ref: dummy_policy_ref(),
-        state_hash: state.state_hash.clone(),
+        state_hash: state.state_hash,
         state_ref: state.state_ref.clone(),
-        chosen_action_hash: chosen_action.candidate_hash.clone(),
+        chosen_action_hash: chosen_action.candidate_hash,
         nonce_or_tx_hash: dummy_hash(5),
         timestamp_ms: 0,
         signature: vec![],
@@ -658,7 +658,7 @@ fn registry_bound_verifier_rejects_wrong_image_id_routing() {
     let config = ModeConfig::mode_b_full(mpb_image_id);
     let mut store: HashMap<mprd_core::PolicyHash, MpbPolicyArtifactV1> = HashMap::new();
     store.insert(
-        policy_hash.clone(),
+        policy_hash,
         MpbPolicyArtifactV1 {
             bytecode: policy_bytecode,
             variables: vec![],
@@ -697,9 +697,9 @@ fn registry_bound_verifier_rejects_wrong_image_id_routing() {
 
     let registry_state = RegistryStateV1 {
         policy_epoch: token.policy_ref.policy_epoch,
-        registry_root: token.policy_ref.registry_root.clone(),
+        registry_root: token.policy_ref.registry_root,
         authorized_policies: vec![AuthorizedPolicyV1 {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
             policy_exec_version_id: policy_exec_version_id_v1(),
             policy_source_kind_id: None,
@@ -745,7 +745,7 @@ fn registry_bound_verifier_rejects_unauthorized_policy_hash() {
     let config = ModeConfig::mode_b_full(mpb_image_id);
     let mut store: HashMap<mprd_core::PolicyHash, MpbPolicyArtifactV1> = HashMap::new();
     store.insert(
-        policy_hash.clone(),
+        policy_hash,
         MpbPolicyArtifactV1 {
             bytecode: policy_bytecode,
             variables: vec![],
@@ -804,7 +804,7 @@ fn registry_bound_verifier_rejects_unauthorized_policy_hash() {
 
     let registry_state = RegistryStateV1 {
         policy_epoch: token.policy_ref.policy_epoch,
-        registry_root: token.policy_ref.registry_root.clone(),
+        registry_root: token.policy_ref.registry_root,
         authorized_policies: vec![], // deny-by-default
         guest_image_manifest: manifest,
     };
@@ -849,15 +849,15 @@ fn verifier_rejects_exec_kind_mismatch_even_with_valid_receipt() {
     let decision = mprd_core::Decision {
         chosen_index: 0,
         chosen_action: chosen_action.clone(),
-        policy_hash: policy_hash.clone(),
+        policy_hash,
         decision_commitment: Hash32([0u8; 32]),
     };
     let token = mprd_core::DecisionToken {
-        policy_hash: policy_hash.clone(),
+        policy_hash,
         policy_ref: dummy_policy_ref(),
-        state_hash: state.state_hash.clone(),
+        state_hash: state.state_hash,
         state_ref: state.state_ref.clone(),
-        chosen_action_hash: chosen_action.candidate_hash.clone(),
+        chosen_action_hash: chosen_action.candidate_hash,
         nonce_or_tx_hash: dummy_hash(5),
         timestamp_ms: 0,
         signature: vec![],
@@ -871,7 +871,7 @@ fn verifier_rejects_exec_kind_mismatch_even_with_valid_receipt() {
     let config = ModeConfig::mode_b_full(mpb_image_id);
     let mut store: HashMap<mprd_core::PolicyHash, MpbPolicyArtifactV1> = HashMap::new();
     store.insert(
-        policy_hash.clone(),
+        policy_hash,
         MpbPolicyArtifactV1 {
             bytecode: policy_bytecode,
             variables: vec![],
@@ -938,7 +938,7 @@ fn mpb_v1_out_of_fuel_denies_without_executor_side_effects() {
     let config = ModeConfig::mode_b_full(image_id);
     let mut store: HashMap<mprd_core::PolicyHash, MpbPolicyArtifactV1> = HashMap::new();
     store.insert(
-        policy_hash.clone(),
+        policy_hash,
         MpbPolicyArtifactV1 {
             bytecode,
             variables: vec![],
@@ -1006,7 +1006,7 @@ fn mpb_v1_invalid_bytecode_denies_without_executor_side_effects() {
     let config = ModeConfig::mode_b_full(image_id);
     let mut store: HashMap<mprd_core::PolicyHash, MpbPolicyArtifactV1> = HashMap::new();
     store.insert(
-        policy_hash.clone(),
+        policy_hash,
         MpbPolicyArtifactV1 {
             bytecode,
             variables: vec![],
@@ -1095,11 +1095,11 @@ fn robust_private_attestor_emits_mode_c_metadata() {
     };
 
     let token = mprd_core::DecisionToken {
-        policy_hash: decision.policy_hash.clone(),
+        policy_hash: decision.policy_hash,
         policy_ref: dummy_policy_ref(),
-        state_hash: state.state_hash.clone(),
+        state_hash: state.state_hash,
         state_ref: state.state_ref.clone(),
-        chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+        chosen_action_hash: decision.chosen_action.candidate_hash,
         nonce_or_tx_hash: dummy_hash(5),
         timestamp_ms: 0,
         signature: vec![],
@@ -1183,11 +1183,11 @@ fn robust_private_verifier_rejects_tampered_encrypted_state() {
     };
 
     let token = mprd_core::DecisionToken {
-        policy_hash: decision.policy_hash.clone(),
+        policy_hash: decision.policy_hash,
         policy_ref: dummy_policy_ref(),
-        state_hash: state.state_hash.clone(),
+        state_hash: state.state_hash,
         state_ref: state.state_ref.clone(),
-        chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+        chosen_action_hash: decision.chosen_action.candidate_hash,
         nonce_or_tx_hash: dummy_hash(5),
         timestamp_ms: 0,
         signature: vec![],

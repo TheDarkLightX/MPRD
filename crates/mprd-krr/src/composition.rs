@@ -42,7 +42,7 @@ pub struct CompositionVerifier {
     /// Path to Tau binary.
     tau_binary: std::path::PathBuf,
     /// Timeout for Tau calls.
-    timeout: Duration,
+    _timeout: Duration,
 }
 
 /// Validate that a WFF string is safe to pass to Tau.
@@ -108,7 +108,7 @@ impl CompositionVerifier {
     pub fn new(tau_binary: impl Into<std::path::PathBuf>) -> Self {
         CompositionVerifier {
             tau_binary: tau_binary.into(),
-            timeout: Duration::from_millis(500),
+            _timeout: Duration::from_millis(500),
         }
     }
 
@@ -116,7 +116,7 @@ impl CompositionVerifier {
     pub fn with_timeout(tau_binary: impl Into<std::path::PathBuf>, timeout: Duration) -> Self {
         CompositionVerifier {
             tau_binary: tau_binary.into(),
-            timeout,
+            _timeout: timeout,
         }
     }
 

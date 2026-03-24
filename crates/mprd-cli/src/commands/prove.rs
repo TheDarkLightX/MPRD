@@ -364,7 +364,7 @@ pub fn run(cmd: ProveCommand) -> Result<()> {
         let mut decision = Decision {
             chosen_index,
             chosen_action,
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             decision_commitment: Hash32([0u8; 32]),
         };
         decision.decision_commitment = mprd_core::hash::hash_decision(&decision);
@@ -383,11 +383,11 @@ pub fn run(cmd: ProveCommand) -> Result<()> {
         let timestamp_ms = timestamp_ms.unwrap_or_else(now_ms);
 
         let mut token = DecisionToken {
-            policy_hash: decision.policy_hash.clone(),
+            policy_hash: decision.policy_hash,
             policy_ref: policy_ref.clone(),
-            state_hash: state.state_hash.clone(),
+            state_hash: state.state_hash,
             state_ref: state.state_ref.clone(),
-            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash,
             nonce_or_tx_hash,
             timestamp_ms,
             signature: Vec::new(),
@@ -465,7 +465,7 @@ pub fn run(cmd: ProveCommand) -> Result<()> {
     let mut decision = Decision {
         chosen_index,
         chosen_action,
-        policy_hash: policy_hash.clone(),
+        policy_hash,
         decision_commitment: Hash32([0u8; 32]),
     };
     decision.decision_commitment = mprd_core::hash::hash_decision(&decision);
@@ -521,7 +521,7 @@ pub fn run(cmd: ProveCommand) -> Result<()> {
     }
     let mut policy_store = HashMap::new();
     policy_store.insert(
-        policy_hash.clone(),
+        policy_hash,
         MpbPolicyArtifactV1 {
             bytecode: allow_all_bytecode,
             variables: vec![],
@@ -537,14 +537,14 @@ pub fn run(cmd: ProveCommand) -> Result<()> {
     // NOTE: demo-only token. In production, `nonce_or_tx_hash` MUST be derived from the triggering
     // request (or chain tx hash) and tokens MUST be signed.
     let mut token = DecisionToken {
-        policy_hash: decision.policy_hash.clone(),
+        policy_hash: decision.policy_hash,
         policy_ref: PolicyRef {
             policy_epoch: 0,
             registry_root: Hash32([0u8; 32]),
         },
-        state_hash: state.state_hash.clone(),
+        state_hash: state.state_hash,
         state_ref: state.state_ref.clone(),
-        chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+        chosen_action_hash: decision.chosen_action.candidate_hash,
         nonce_or_tx_hash: Hash32([0u8; 32]),
         timestamp_ms: 0,
         signature: Vec::new(),

@@ -1,5 +1,6 @@
 //! slashing_escrow kernel module.
 //! Generated from IR hash: 2dd84841443faea8
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

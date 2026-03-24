@@ -10,7 +10,7 @@ use mprd_core::policy_algebra::{
     policy_menu_entries_v1, policy_semantic_hash_robdd_v1, PolicyLimits,
 };
 
-const MAX_POLICY_ALGEBRA_BYTES: usize = 1 * 1024 * 1024;
+const MAX_POLICY_ALGEBRA_BYTES: usize = 1024 * 1024;
 
 pub fn menu_list(format: String) -> Result<()> {
     let limits = PolicyLimits::DEFAULT;
