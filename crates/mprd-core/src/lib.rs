@@ -24,8 +24,8 @@ pub mod registry;
 pub mod selectors;
 pub mod state_provenance;
 pub mod tau;
-pub mod tau_testnet;
 pub mod tau_net_output_attestation;
+pub mod tau_testnet;
 pub mod tokenomics_v6;
 pub mod validation;
 pub mod verified_kernels;
@@ -427,8 +427,9 @@ fn decode_policy_input_bool_v1(raw: &[u8]) -> Result<bool> {
         return Ok(true);
     }
 
-    let s = std::str::from_utf8(raw)
-        .map_err(|_| MprdError::InvalidInput("governance policy input must be valid utf-8".into()))?;
+    let s = std::str::from_utf8(raw).map_err(|_| {
+        MprdError::InvalidInput("governance policy input must be valid utf-8".into())
+    })?;
     match s {
         "0" | "false" | "False" | "FALSE" | "F" => Ok(false),
         "1" | "true" | "True" | "TRUE" | "T" => Ok(true),
@@ -609,7 +610,9 @@ pub fn execution_boundary_witness_v1(
 }
 
 /// Upgrade a verified bundle into an execution-ready bundle carrying the concrete boundary witness.
-pub fn prepare_execution_ready<'a>(verified: VerifiedBundle<'a>) -> Result<ExecutionReadyBundle<'a>> {
+pub fn prepare_execution_ready<'a>(
+    verified: VerifiedBundle<'a>,
+) -> Result<ExecutionReadyBundle<'a>> {
     let boundary = execution_boundary_witness_v1(&verified)?;
     Ok(ExecutionReadyBundle { verified, boundary })
 }
@@ -1012,9 +1015,8 @@ mod tests {
             score: Score(7),
             candidate_hash: dummy_hash(0),
         };
-        candidate.candidate_hash = hash::hash_candidate_preimage_v1(&hash::candidate_hash_preimage(
-            &candidate,
-        ));
+        candidate.candidate_hash =
+            hash::hash_candidate_preimage_v1(&hash::candidate_hash_preimage(&candidate));
         candidate
     }
 
@@ -1031,7 +1033,10 @@ mod tests {
         };
         let enc = |b: bool| if b { b"1".to_vec() } else { b"0".to_vec() };
         HashMap::from([
-            (GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1.into(), enc(is_policy_tweak)),
+            (
+                GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1.into(),
+                enc(is_policy_tweak),
+            ),
             (
                 GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1.into(),
                 enc(is_safety_change),
@@ -1288,7 +1293,9 @@ mod tests {
         };
 
         let err = prepare_attestation_ready(&token, &decision, &state).unwrap_err();
-        assert!(matches!(err, MprdError::InvalidInput(message) if message == "token chosen_action_hash drifted from selected decision before attestation"));
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "token chosen_action_hash drifted from selected decision before attestation")
+        );
     }
 
     #[test]
@@ -1330,7 +1337,9 @@ mod tests {
         };
 
         let err = prepare_attestation_ready(&token, &decision, &state).unwrap_err();
-        assert!(matches!(err, MprdError::InvalidInput(message) if message == "governance admission requires link_ok"));
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "governance admission requires link_ok")
+        );
     }
 
     #[test]
@@ -1354,7 +1363,9 @@ mod tests {
         };
 
         let err = governance_admission_witness_v1(&state).unwrap_err();
-        assert!(matches!(err, MprdError::InvalidInput(message) if message == "governance prepared lane is not one-hot"));
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "governance prepared lane is not one-hot")
+        );
     }
 
     #[test]
@@ -1378,7 +1389,9 @@ mod tests {
         };
 
         let err = governance_admission_witness_v1(&state).unwrap_err();
-        assert!(matches!(err, MprdError::InvalidInput(message) if message == "governance prepared lane is not one-hot"));
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "governance prepared lane is not one-hot")
+        );
     }
 
     #[test]
@@ -1402,7 +1415,9 @@ mod tests {
         };
 
         let err = governance_admission_witness_v1(&state).unwrap_err();
-        assert!(matches!(err, MprdError::InvalidInput(message) if message == "unsupported governance policy input bool encoding:  1 "));
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "unsupported governance policy input bool encoding:  1 ")
+        );
     }
 
     #[test]
@@ -1434,8 +1449,7 @@ mod tests {
 
         verify_decision_policy_authority_v1(&authority, &decision)
             .expect("aligned decision should pass");
-        verify_token_policy_authority_v1(&authority, &token)
-            .expect("aligned token should pass");
+        verify_token_policy_authority_v1(&authority, &token).expect("aligned token should pass");
     }
 
     #[test]
@@ -1463,7 +1477,9 @@ mod tests {
 
         let err = verify_token_policy_authority_v1(&authority, &token)
             .expect_err("policy_ref drift must fail closed");
-        assert!(matches!(err, MprdError::InvalidInput(message) if message == "token policy_ref drifted from authorized policy context"));
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "token policy_ref drifted from authorized policy context")
+        );
     }
 
     #[test]
@@ -1499,6 +1515,9 @@ mod tests {
         assert_eq!(binding.policy_ref(), &policy_ref);
         assert_eq!(binding.state_hash(), &state.state_hash);
         assert_eq!(binding.state_ref(), &state.state_ref);
-        assert_eq!(binding.chosen_action_hash(), &crate::hash::hash_candidate(&candidate));
+        assert_eq!(
+            binding.chosen_action_hash(),
+            &crate::hash::hash_candidate(&candidate)
+        );
     }
 }

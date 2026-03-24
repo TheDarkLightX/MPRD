@@ -15,9 +15,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::{MprdError, Result};
 
+use super::simplex_ample_set;
 use super::simplex_planner::{self, OracleCache};
 use super::simplex_por_oracle::{self, Transfer};
-use super::simplex_ample_set;
 use super::simplex_symmetry_key;
 
 /// Planning mode / dedup strategy.
@@ -48,7 +48,12 @@ pub struct SimplexCeoConfig {
 }
 
 impl SimplexCeoConfig {
-    pub fn validate_shapes(&self, x0: &[u32], caps: &[u32], weights_for_symmetry: &[u32]) -> Result<()> {
+    pub fn validate_shapes(
+        &self,
+        x0: &[u32],
+        caps: &[u32],
+        weights_for_symmetry: &[u32],
+    ) -> Result<()> {
         let k = x0.len();
         if k == 0 || caps.len() != k || weights_for_symmetry.len() != k {
             return Err(MprdError::InvalidInput(
@@ -139,7 +144,9 @@ fn sum_u32(xs: &[u32]) -> u64 {
 }
 
 fn lex_trace_key(k: usize, tr: &[Transfer]) -> Vec<u32> {
-    tr.iter().map(|&a| simplex_planner::action_key(k, a)).collect()
+    tr.iter()
+        .map(|&a| simplex_planner::action_key(k, a))
+        .collect()
 }
 
 /// Deterministic bounded-horizon planner for simplex transfer menus.
@@ -222,11 +229,7 @@ pub fn plan_best(
                     let x2 = tmp.clone();
 
                     let tr2 = simplex_planner::canonicalize_append_insert_cached(
-                        caps,
-                        &x_prefix,
-                        &tr,
-                        a,
-                        &mut cache,
+                        caps, &x_prefix, &tr, a, &mut cache,
                     )?;
                     let key = simplex_planner::trace_key_hash(&tr2, k);
                     if !seen.insert(key) {
@@ -235,7 +238,9 @@ pub fn plan_best(
                     let depth = tr2.len();
                     let score = objective(&x2);
                     let first = tr2.first().copied();
-                    let first_key = first.map(|f| simplex_planner::action_key(k, f)).unwrap_or(0);
+                    let first_key = first
+                        .map(|f| simplex_planner::action_key(k, f))
+                        .unwrap_or(0);
                     let candidate = (score, depth, first_key, x2.clone(), first, x2.clone());
 
                     match &best {
@@ -263,10 +268,8 @@ pub fn plan_best(
 
             // key -> min depth (fail-closed: if key can't be computed, use raw state as key)
             let mut seen: BTreeMap<Vec<Vec<u32>>, usize> = BTreeMap::new();
-            let k0 =
-                simplex_symmetry_key::symmetry_key(x0, caps, weights_for_symmetry).unwrap_or_else(
-                    || vec![x0.to_vec()],
-                );
+            let k0 = simplex_symmetry_key::symmetry_key(x0, caps, weights_for_symmetry)
+                .unwrap_or_else(|| vec![x0.to_vec()]);
             seen.insert(k0, 0);
 
             let mut expanded = 0usize;
@@ -322,7 +325,8 @@ pub fn plan_best(
         }
         SimplexCeoMode::AmplePorDfsC2 => {
             return Err(MprdError::InvalidInput(
-                "simplex_ceo::plan_best: AmplePorDfsC2 is only supported for plan_best_linear".into(),
+                "simplex_ceo::plan_best: AmplePorDfsC2 is only supported for plan_best_linear"
+                    .into(),
             ));
         }
     }
@@ -481,7 +485,9 @@ mod tests {
                 for i in 0..k {
                     score += w[i] * x2[i] as i64;
                 }
-                let fk = first2.map(|f| simplex_planner::action_key(k, f)).unwrap_or(0);
+                let fk = first2
+                    .map(|f| simplex_planner::action_key(k, f))
+                    .unwrap_or(0);
                 let b_fk = best_first
                     .map(|f| simplex_planner::action_key(k, f))
                     .unwrap_or(0);
@@ -608,4 +614,3 @@ mod tests {
         assert!(r.is_err());
     }
 }
-

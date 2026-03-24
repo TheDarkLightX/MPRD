@@ -68,6 +68,16 @@ fn dummy_policy_ref() -> PolicyRef {
     }
 }
 
+fn http_call_params(path: &str) -> HashMap<String, Value> {
+    HashMap::from([
+        ("http_method".into(), Value::String("GET".into())),
+        (
+            "http_url".into(),
+            Value::String(format!("https://example.com/{path}")),
+        ),
+    ])
+}
+
 fn should_skip_due_to_missing_risc0_methods() -> bool {
     if !MPRD_GUEST_ELF.is_empty() && !MPRD_MPB_GUEST_ELF.is_empty() {
         return false;
@@ -465,11 +475,7 @@ fn full_pipeline_with_robust_b_lite() {
     let state_provider =
         SimpleStateProvider::new(HashMap::from([("balance".into(), Value::UInt(10000))]));
 
-    let proposer = SimpleProposer::single(
-        "ACTION",
-        HashMap::from([("param".into(), Value::Int(42))]),
-        100,
-    );
+    let proposer = SimpleProposer::single("http_call", http_call_params("robust-b-lite"), 100);
 
     let selector = DefaultSelector;
     let policy_bytecode = mprd_core::mpb::BytecodeBuilder::new()
@@ -524,11 +530,7 @@ fn full_pipeline_with_robust_b_full() {
     let state_provider =
         SimpleStateProvider::new(HashMap::from([("balance".into(), Value::UInt(10000))]));
 
-    let proposer = SimpleProposer::single(
-        "ACTION",
-        HashMap::from([("param".into(), Value::Int(42))]),
-        100,
-    );
+    let proposer = SimpleProposer::single("http_call", http_call_params("robust-b-full"), 100);
 
     let policy_engine = AllowAllPolicyEngine;
     let selector = DefaultSelector;
@@ -614,8 +616,8 @@ fn registry_bound_verifier_rejects_wrong_image_id_routing() {
     state.state_hash = mprd_core::hash::hash_state(&state);
 
     let mut chosen_action = CandidateAction {
-        action_type: "ACTION".into(),
-        params: HashMap::from([("param".into(), Value::Int(42))]),
+        action_type: "http_call".into(),
+        params: http_call_params("registry-bound-routing"),
         score: Score(100),
         candidate_hash: Hash32([0u8; 32]),
     };
@@ -723,8 +725,8 @@ fn registry_bound_verifier_rejects_unauthorized_policy_hash() {
     let state_provider =
         SimpleStateProvider::new(HashMap::from([("balance".into(), Value::UInt(10000))]));
     let proposer = SimpleProposer::single(
-        "ACTION",
-        HashMap::from([("param".into(), Value::Int(42))]),
+        "http_call",
+        http_call_params("registry-bound-unauthorized"),
         100,
     );
     let policy_engine = AllowAllPolicyEngine;
@@ -830,8 +832,8 @@ fn verifier_rejects_exec_kind_mismatch_even_with_valid_receipt() {
     state.state_hash = mprd_core::hash::hash_state(&state);
 
     let mut chosen_action = CandidateAction {
-        action_type: "ACTION".into(),
-        params: HashMap::new(),
+        action_type: "http_call".into(),
+        params: http_call_params("exec-kind-mismatch"),
         score: Score(1),
         candidate_hash: Hash32([0u8; 32]),
     };
@@ -907,11 +909,7 @@ fn mpb_v1_out_of_fuel_denies_without_executor_side_effects() {
     let state_provider =
         SimpleStateProvider::new(HashMap::from([("balance".into(), Value::UInt(10000))]));
 
-    let proposer = SimpleProposer::single(
-        "ACTION",
-        HashMap::from([("param".into(), Value::Int(42))]),
-        100,
-    );
+    let proposer = SimpleProposer::single("http_call", http_call_params("out-of-fuel"), 100);
 
     let policy_engine = AllowAllPolicyEngine;
     let selector = DefaultSelector;
@@ -990,11 +988,7 @@ fn mpb_v1_invalid_bytecode_denies_without_executor_side_effects() {
     let state_provider =
         SimpleStateProvider::new(HashMap::from([("balance".into(), Value::UInt(10000))]));
 
-    let proposer = SimpleProposer::single(
-        "ACTION",
-        HashMap::from([("param".into(), Value::Int(42))]),
-        100,
-    );
+    let proposer = SimpleProposer::single("http_call", http_call_params("invalid-bytecode"), 100);
 
     let policy_engine = AllowAllPolicyEngine;
     let selector = DefaultSelector;

@@ -562,8 +562,8 @@ mod tests {
             state_epoch: 7,
             state_attestation_hash: Hash32([0x55; 32]),
         };
-        let witness = state_provenance_witness_v1(&state_ref, &[state_ref.state_source_id])
-            .expect("witness");
+        let witness =
+            state_provenance_witness_v1(&state_ref, &[state_ref.state_source_id]).expect("witness");
         assert_eq!(witness.state_ref(), &state_ref);
     }
 
@@ -572,7 +572,9 @@ mod tests {
         let state_ref = StateRef::unknown();
         let err = state_provenance_witness_v1(&state_ref, &[state_source_id_signed_snapshot_v1()])
             .expect_err("missing provenance must fail closed");
-        assert!(matches!(err, MprdError::InvalidInput(message) if message == "missing state provenance (state_ref)"));
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "missing state provenance (state_ref)")
+        );
     }
 
     #[test]
@@ -584,7 +586,9 @@ mod tests {
         };
         let err = state_provenance_witness_v1(&state_ref, &[state_source_id_signed_snapshot_v1()])
             .expect_err("unallowlisted provenance must fail closed");
-        assert!(matches!(err, MprdError::InvalidInput(message) if message == "unallowlisted state provenance scheme (state_source_id)"));
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "unallowlisted state provenance scheme (state_source_id)")
+        );
     }
 
     #[test]
@@ -640,7 +644,9 @@ mod tests {
         };
         let err = verify_token_state_binding_v1(&witness, &token)
             .expect_err("state hash drift must fail closed");
-        assert!(matches!(err, MprdError::InvalidInput(message) if message == "token state_hash drifted from observed state snapshot"));
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "token state_hash drifted from observed state snapshot")
+        );
     }
 
     #[test]
@@ -675,7 +681,9 @@ mod tests {
         };
         let err = verify_token_state_binding_v1(&witness, &token)
             .expect_err("state ref drift must fail closed");
-        assert!(matches!(err, MprdError::InvalidInput(message) if message == "token state_ref drifted from observed state snapshot"));
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "token state_ref drifted from observed state snapshot")
+        );
     }
 
     #[test]
@@ -710,7 +718,9 @@ mod tests {
         };
         let err = verify_token_state_binding_v1(&witness, &token)
             .expect_err("dual drift must fail closed");
-        assert!(matches!(err, MprdError::InvalidInput(message) if message == "token state_hash drifted from observed state snapshot"));
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "token state_hash drifted from observed state snapshot")
+        );
     }
 
     // =========================================================================

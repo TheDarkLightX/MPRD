@@ -2143,14 +2143,17 @@ mod tests {
 
         let multi = MultiAttestor::new(config, attestors).expect("Should create");
 
+        let mut chosen_action = CandidateAction {
+            action_type: "TEST".into(),
+            params: HashMap::new(),
+            score: Score(10),
+            candidate_hash: Hash32([0u8; 32]),
+        };
+        chosen_action.candidate_hash = mprd_core::hash::hash_candidate(&chosen_action);
+
         let decision = Decision {
             chosen_index: 0,
-            chosen_action: CandidateAction {
-                action_type: "TEST".into(),
-                params: HashMap::new(),
-                score: Score(10),
-                candidate_hash: dummy_hash(1),
-            },
+            chosen_action,
             policy_hash: dummy_hash(2),
             decision_commitment: dummy_hash(3),
         };

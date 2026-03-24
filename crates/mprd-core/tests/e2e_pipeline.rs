@@ -31,6 +31,17 @@ fn dummy_policy_ref() -> PolicyRef {
     }
 }
 
+fn candidate(action_type: &str, params: HashMap<String, Value>, score: Score) -> CandidateAction {
+    let mut candidate = CandidateAction {
+        action_type: action_type.into(),
+        params,
+        score,
+        candidate_hash: Hash32([0u8; 32]),
+    };
+    candidate.candidate_hash = mprd_core::hash::hash_candidate(&candidate);
+    candidate
+}
+
 /// Simple allow-all policy engine for testing.
 struct AllowAllPolicyEngine;
 
@@ -110,18 +121,8 @@ fn e2e_basic_pipeline_selects_highest_score() {
 
     // Candidates
     let candidates = vec![
-        CandidateAction {
-            action_type: "LOW_SCORE".into(),
-            params: HashMap::new(),
-            score: Score(10),
-            candidate_hash: dummy_hash(2),
-        },
-        CandidateAction {
-            action_type: "HIGH_SCORE".into(),
-            params: HashMap::new(),
-            score: Score(100),
-            candidate_hash: dummy_hash(3),
-        },
+        candidate("LOW_SCORE", HashMap::new(), Score(10)),
+        candidate("HIGH_SCORE", HashMap::new(), Score(100)),
     ];
 
     // Evaluate
@@ -181,18 +182,16 @@ fn e2e_risk_threshold_blocks_high_risk() {
 
     // Two candidates: one safe, one risky
     let candidates = vec![
-        CandidateAction {
-            action_type: "RISKY".into(),
-            params: HashMap::from([("risk".into(), Value::Int(100))]),
-            score: Score(1000), // High score but too risky
-            candidate_hash: dummy_hash(12),
-        },
-        CandidateAction {
-            action_type: "SAFE".into(),
-            params: HashMap::from([("risk".into(), Value::Int(10))]),
-            score: Score(50),
-            candidate_hash: dummy_hash(13),
-        },
+        candidate(
+            "RISKY",
+            HashMap::from([("risk".into(), Value::Int(100))]),
+            Score(1000),
+        ), // High score but too risky
+        candidate(
+            "SAFE",
+            HashMap::from([("risk".into(), Value::Int(10))]),
+            Score(50),
+        ),
     ];
 
     // Evaluate
@@ -233,12 +232,7 @@ fn e2e_crypto_tokens_verify_correctly() {
         state_ref: mprd_core::StateRef::unknown(),
     };
 
-    let candidates = vec![CandidateAction {
-        action_type: "ACTION".into(),
-        params: HashMap::new(),
-        score: Score(100),
-        candidate_hash: dummy_hash(22),
-    }];
+    let candidates = vec![candidate("ACTION", HashMap::new(), Score(100))];
 
     let verdicts = vec![RuleVerdict {
         allowed: true,
@@ -281,12 +275,7 @@ fn e2e_wrong_key_signature_rejected() {
         state_ref: mprd_core::StateRef::unknown(),
     };
 
-    let candidates = vec![CandidateAction {
-        action_type: "ACTION".into(),
-        params: HashMap::new(),
-        score: Score(100),
-        candidate_hash: dummy_hash(32),
-    }];
+    let candidates = vec![candidate("ACTION", HashMap::new(), Score(100))];
 
     let verdicts = vec![RuleVerdict {
         allowed: true,
@@ -363,12 +352,11 @@ fn e2e_no_allowed_candidates_returns_error() {
         state_ref: mprd_core::StateRef::unknown(),
     };
 
-    let candidates = vec![CandidateAction {
-        action_type: "RISKY".into(),
-        params: HashMap::from([("risk".into(), Value::Int(100))]),
-        score: Score(100),
-        candidate_hash: dummy_hash(52),
-    }];
+    let candidates = vec![candidate(
+        "RISKY",
+        HashMap::from([("risk".into(), Value::Int(100))]),
+        Score(100),
+    )];
 
     let verdicts = policy_engine
         .evaluate(&policy_hash, &state, &candidates)
@@ -409,15 +397,14 @@ fn e2e_full_pipeline_with_signature_verification() {
         state_ref: mprd_core::StateRef::unknown(),
     };
 
-    let candidates = vec![CandidateAction {
-        action_type: "TRANSFER".into(),
-        params: HashMap::from([
+    let candidates = vec![candidate(
+        "TRANSFER",
+        HashMap::from([
             ("amount".into(), Value::UInt(100)),
             ("to".into(), Value::String("bob".into())),
         ]),
-        score: Score(100),
-        candidate_hash: dummy_hash(62),
-    }];
+        Score(100),
+    )];
 
     // Full pipeline
     let verdicts = policy_engine

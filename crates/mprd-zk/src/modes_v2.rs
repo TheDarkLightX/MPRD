@@ -437,6 +437,14 @@ impl RobustMpbAttestor {
 }
 
 impl ZkAttestor for RobustMpbAttestor {
+    fn attest_ready(
+        &self,
+        ready: &mprd_core::AttestationReadyBundle<'_>,
+        candidates: &[CandidateAction],
+    ) -> Result<ProofBundle> {
+        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+    }
+
     #[instrument(skip(self, decision, state, candidates), fields(mode = "B-Lite"))]
     fn attest(
         &self,
@@ -974,6 +982,14 @@ impl RobustRisc0Attestor {
 }
 
 impl ZkAttestor for RobustRisc0Attestor {
+    fn attest_ready(
+        &self,
+        ready: &mprd_core::AttestationReadyBundle<'_>,
+        candidates: &[CandidateAction],
+    ) -> Result<ProofBundle> {
+        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+    }
+
     #[instrument(skip(self, decision, state, candidates), fields(mode = "B-Full"))]
     fn attest(
         &self,
@@ -1294,6 +1310,14 @@ impl RobustPrivateAttestor {
 }
 
 impl ZkAttestor for RobustPrivateAttestor {
+    fn attest_ready(
+        &self,
+        ready: &mprd_core::AttestationReadyBundle<'_>,
+        candidates: &[CandidateAction],
+    ) -> Result<ProofBundle> {
+        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+    }
+
     #[instrument(skip(self, decision, state, candidates), fields(mode = "C"))]
     fn attest(
         &self,

@@ -15,8 +15,8 @@ use crate::{
     hash::candidate_hash_preimage,
     hash::{hash_candidate, hash_state},
     CandidateAction, DecisionToken, ExecutionResult, ExecutorAdapter, Hash32, NonceHash,
-    ProofBundle, Proposer, Result, Score, StateProvider, StateSnapshot, Value,
-    VerificationStatus, ZkAttestor, ZkLocalVerifier,
+    ProofBundle, Proposer, Result, Score, StateProvider, StateSnapshot, Value, VerificationStatus,
+    ZkAttestor, ZkLocalVerifier,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -976,10 +976,8 @@ impl ExecutorAdapter for AntiReplayBoxedExecutor {
         // - Effect:
         //   - If the nonce was not claimed before execution, mark it used only on success.
         //   - If the nonce was claimed before execution (low-trust multi-node), do not re-claim.
-        let replay = crate::anti_replay::replay_clearance_witness_v1(
-            token,
-            self.nonce_validator.as_ref(),
-        )?;
+        let replay =
+            crate::anti_replay::replay_clearance_witness_v1(token, self.nonce_validator.as_ref())?;
         let result = self.inner.execute(verified)?;
         crate::anti_replay::finalize_replay_clearance_v1(
             token,
@@ -992,10 +990,8 @@ impl ExecutorAdapter for AntiReplayBoxedExecutor {
 
     fn execute_ready(&self, ready: &crate::ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
         let token = ready.token();
-        let replay = crate::anti_replay::replay_clearance_witness_v1(
-            token,
-            self.nonce_validator.as_ref(),
-        )?;
+        let replay =
+            crate::anti_replay::replay_clearance_witness_v1(token, self.nonce_validator.as_ref())?;
         let result = self.inner.execute_ready(ready)?;
         crate::anti_replay::finalize_replay_clearance_v1(
             token,
@@ -1367,7 +1363,9 @@ mod tests {
             Some(&"true".into())
         );
         assert_eq!(
-            proof.attestation_metadata.get("governance_profile_safety_ok"),
+            proof
+                .attestation_metadata
+                .get("governance_profile_safety_ok"),
             Some(&"false".into())
         );
         assert_eq!(

@@ -373,7 +373,11 @@ pub fn plan_best_linear_dfs_c2(
 }
 
 /// Compute the set of reachable states within horizon `h` using full branching.
-pub fn reachable_full(x0: &[u32], caps: &[u32], h: usize) -> Result<std::collections::BTreeSet<Vec<u32>>> {
+pub fn reachable_full(
+    x0: &[u32],
+    caps: &[u32],
+    h: usize,
+) -> Result<std::collections::BTreeSet<Vec<u32>>> {
     let k = x0.len();
     if k == 0 || caps.len() != k {
         return Err(MprdError::InvalidInput(
@@ -649,7 +653,9 @@ mod tests {
             for i in 0..x.len() {
                 s += w[i] * x[i] as i64;
             }
-            let fk = first0.map(|f| simplex_planner::action_key(x.len(), f)).unwrap_or(0);
+            let fk = first0
+                .map(|f| simplex_planner::action_key(x.len(), f))
+                .unwrap_or(0);
             let b_fk = best_first
                 .map(|f| simplex_planner::action_key(x.len(), f))
                 .unwrap_or(0);
@@ -694,7 +700,8 @@ mod tests {
     fn min_plus_dependents_is_plausible_but_not_assumed_sound() {
         // This test is intentionally weak: it only checks a tiny instance and documents that
         // we are not promoting soundness without broader evidence.
-        let ce = find_reachability_counterexample(AmpleStrategy::MinPlusDependentsOfMin, 4, 10, 3).unwrap();
+        let ce = find_reachability_counterexample(AmpleStrategy::MinPlusDependentsOfMin, 4, 10, 3)
+            .unwrap();
         // Allow either outcome; we just want determinism and no panics.
         let _ = ce;
     }
@@ -796,7 +803,8 @@ mod tests {
         let k = x0.len();
         let acts = super::all_transfers(k);
         // state -> (min_depth, min_first_key_at_min_depth)
-        let mut best: std::collections::BTreeMap<Vec<u32>, (usize, u64)> = std::collections::BTreeMap::new();
+        let mut best: std::collections::BTreeMap<Vec<u32>, (usize, u64)> =
+            std::collections::BTreeMap::new();
         let mut q = std::collections::VecDeque::new();
         q.push_back((x0.to_vec(), 0usize, 0u64));
         best.insert(x0.to_vec(), (0, 0));
@@ -945,7 +953,8 @@ mod tests {
         let k = x0.len();
         let acts = super::all_transfers(k);
         // state -> (best depth encountered so far, best first key at that depth)
-        let mut reached: std::collections::BTreeMap<Vec<u32>, (usize, u64)> = std::collections::BTreeMap::new();
+        let mut reached: std::collections::BTreeMap<Vec<u32>, (usize, u64)> =
+            std::collections::BTreeMap::new();
         reached.insert(x0.to_vec(), (0, 0));
 
         let mut best_seen_depth = std::collections::BTreeMap::<Vec<u32>, usize>::new();
@@ -1241,6 +1250,4 @@ mod tests {
             }
         }
     }
-
 }
-

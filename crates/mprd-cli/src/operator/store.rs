@@ -342,9 +342,7 @@ impl OperatorStore {
             .map_err(|e| anyhow::anyhow!("failed to decode MPB-lite artifact from receipt: {e}"))?;
         mprd_zk::mpb_lite::verify_artifact_header(&artifact)
             .map_err(|e| anyhow::anyhow!("invalid MPB-lite artifact in receipt: {e}"))?;
-        let preimage = mprd_zk::mpb_lite::chosen_action_preimage_from_family(&artifact)
-            .map_err(|e| anyhow::anyhow!("failed to derive chosen action from receipt: {e}"))?;
-        Ok(preimage.to_vec())
+        Ok(artifact.chosen_action_preimage)
     }
 
     fn can_deduplicate_chosen_action_preimage(proof: &ProofBundle) -> bool {
@@ -352,7 +350,10 @@ impl OperatorStore {
             .attestation_metadata
             .get("proof_backend")
             .map(|s| s.as_str());
-        if backend != Some("mpb_lite_v2") && backend != Some("mpb_lite_v3") {
+        if backend != Some("mpb_lite_v1")
+            && backend != Some("mpb_lite_v2")
+            && backend != Some("mpb_lite_v3")
+        {
             return false;
         }
         match Self::derive_chosen_action_preimage_from_receipt_bytes(&proof.risc0_receipt) {
@@ -554,10 +555,7 @@ impl OperatorStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => return Err(e.into()),
         };
-        let mut items: Vec<api::AutoAction> = match serde_json::from_slice(&bytes) {
-            Ok(v) => v,
-            Err(_) => Vec::new(),
-        };
+        let mut items: Vec<api::AutoAction> = serde_json::from_slice(&bytes).unwrap_or_default();
         if items.len() > limit {
             items.truncate(limit);
         }
@@ -1188,6 +1186,7 @@ mod tests {
     };
     use mprd_zk::{ModeConfig, RobustMpbAttestor};
     use proptest::prelude::*;
+    use serde::Serialize;
     use std::collections::HashMap;
     use std::sync::{Mutex, MutexGuard};
     use tempfile::TempDir;
@@ -1221,6 +1220,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[derive(Debug, Serialize)]
+    struct MpbLiteArtifactV2Compat {
+        version: u32,
+        mpb_register_mapping_id: mprd_risc0_shared::Id32,
+        policy_variables: Vec<mprd_risc0_shared::MpbVarBindingV1>,
+        state_preimage: Vec<u8>,
+        candidate_preimages: Vec<Vec<u8>>,
+        chosen_index: u32,
+        mpb_proof_bundle: mprd_proof::MpbProofBundle,
+        limits_bytes: Vec<u8>,
+        chosen_action_preimage: Vec<u8>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct MpbLiteArtifactV3Compat {
+        version: u32,
+        mpb_register_mapping_id: mprd_risc0_shared::Id32,
+        policy_variables: Vec<mprd_risc0_shared::MpbVarBindingV1>,
+        state_preimage: Vec<u8>,
+        candidate_preimages: Vec<Vec<u8>>,
+        chosen_index: u32,
+        mpb_proof_bundle: mprd_proof::MpbProofBundle,
+        limits_bytes: Vec<u8>,
     }
 
     fn sample_decision_inputs(
@@ -1356,6 +1380,45 @@ mod tests {
         }];
 
         (token, proof, state, candidates, verdicts, decision)
+    }
+
+    fn rewrite_receipt_as_mpb_lite_v2_compat(store: &OperatorStore, id: &str, proof: &ProofBundle) {
+        let artifact: mprd_zk::MpbLiteArtifactV1 =
+            mprd_zk::bounded_deser::deserialize_mpb_artifact(&proof.risc0_receipt)
+                .expect("decode v1 artifact");
+        let compat = MpbLiteArtifactV2Compat {
+            version: mprd_zk::mpb_lite::MPB_LITE_ARTIFACT_VERSION_V2,
+            mpb_register_mapping_id: artifact.mpb_register_mapping_id,
+            policy_variables: artifact.policy_variables,
+            state_preimage: artifact.state_preimage,
+            candidate_preimages: vec![proof.chosen_action_preimage.clone()],
+            chosen_index: artifact.chosen_index,
+            mpb_proof_bundle: artifact.mpb_proof_bundle,
+            limits_bytes: artifact.limits_bytes,
+            chosen_action_preimage: proof.chosen_action_preimage.clone(),
+        };
+        let artifact_bytes = bincode::serialize(&compat).expect("serialize v2 compat artifact");
+        let receipt_path = store.decision_dir(id).join("receipt.bin");
+        std::fs::write(&receipt_path, artifact_bytes).expect("rewrite receipt");
+    }
+
+    fn rewrite_receipt_as_mpb_lite_v3_compat(store: &OperatorStore, id: &str, proof: &ProofBundle) {
+        let artifact: mprd_zk::MpbLiteArtifactV1 =
+            mprd_zk::bounded_deser::deserialize_mpb_artifact(&proof.risc0_receipt)
+                .expect("decode v1 artifact");
+        let compat = MpbLiteArtifactV3Compat {
+            version: mprd_zk::mpb_lite::MPB_LITE_ARTIFACT_VERSION_V3,
+            mpb_register_mapping_id: artifact.mpb_register_mapping_id,
+            policy_variables: artifact.policy_variables,
+            state_preimage: artifact.state_preimage,
+            candidate_preimages: vec![proof.chosen_action_preimage.clone()],
+            chosen_index: artifact.chosen_index,
+            mpb_proof_bundle: artifact.mpb_proof_bundle,
+            limits_bytes: artifact.limits_bytes,
+        };
+        let artifact_bytes = bincode::serialize(&compat).expect("serialize v3 compat artifact");
+        let receipt_path = store.decision_dir(id).join("receipt.bin");
+        std::fs::write(&receipt_path, artifact_bytes).expect("rewrite receipt");
     }
 
     #[test]
@@ -1564,7 +1627,7 @@ mod tests {
         let decision = Decision {
             chosen_index: 0,
             chosen_action: candidate.clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             decision_commitment: Hash32([4u8; 32]),
         };
         let verdicts = vec![RuleVerdict {
@@ -1575,12 +1638,12 @@ mod tests {
         let state = StateSnapshot {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
         };
         let proof = ProofBundle {
-            policy_hash: policy_hash.clone(),
-            state_hash: state_hash.clone(),
+            policy_hash,
+            state_hash,
             candidate_set_hash: Hash32([5u8; 32]),
             chosen_action_hash: Hash32([6u8; 32]),
             limits_hash: Hash32([7u8; 32]),
@@ -1591,12 +1654,12 @@ mod tests {
         };
 
         let old_token = DecisionToken {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: Hash32([9u8; 32]),
             },
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
             chosen_action_hash: Hash32([6u8; 32]),
             nonce_or_tx_hash: Hash32([10u8; 32]),
@@ -1605,12 +1668,12 @@ mod tests {
         };
 
         let new_token = DecisionToken {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: Hash32([9u8; 32]),
             },
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
             chosen_action_hash: Hash32([6u8; 32]),
             nonce_or_tx_hash: Hash32([11u8; 32]),
@@ -1673,7 +1736,7 @@ mod tests {
         let decision = Decision {
             chosen_index: 0,
             chosen_action: candidate.clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             decision_commitment: Hash32([4u8; 32]),
         };
         let verdicts = vec![RuleVerdict {
@@ -1684,12 +1747,12 @@ mod tests {
         let state = StateSnapshot {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
         };
         let proof = ProofBundle {
-            policy_hash: policy_hash.clone(),
-            state_hash: state_hash.clone(),
+            policy_hash,
+            state_hash,
             candidate_set_hash: Hash32([5u8; 32]),
             chosen_action_hash: Hash32([6u8; 32]),
             limits_hash: Hash32([7u8; 32]),
@@ -1700,12 +1763,12 @@ mod tests {
         };
 
         let token = DecisionToken {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: Hash32([9u8; 32]),
             },
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
             chosen_action_hash: Hash32([6u8; 32]),
             nonce_or_tx_hash: Hash32([10u8; 32]),
@@ -1787,6 +1850,46 @@ mod tests {
     }
 
     #[test]
+    fn blobs_for_proof_derives_preimage_from_mpb_lite_v2_receipt_family() {
+        let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+
+        let tmp = TempDir::new().expect("tempdir");
+        let store = OperatorStore::new(tmp.path()).expect("store");
+        let (token, proof, state, candidates, verdicts, decision) =
+            sample_mpb_lite_decision_inputs();
+
+        let id = store
+            .write_verified_decision(&token, &proof, &state, &candidates, &verdicts, &decision)
+            .expect("write decision");
+        let record = store.read_record(&id).expect("read record");
+        rewrite_receipt_as_mpb_lite_v2_compat(&store, &id, &proof);
+
+        let (_receipt, _limits, preimage) = store.blobs_for_proof(&id, &record).expect("blobs");
+        assert_eq!(preimage, proof.chosen_action_preimage);
+    }
+
+    #[test]
+    fn chosen_action_preimage_for_record_derives_from_mpb_lite_v3_receipt_family() {
+        let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+
+        let tmp = TempDir::new().expect("tempdir");
+        let store = OperatorStore::new(tmp.path()).expect("store");
+        let (token, proof, state, candidates, verdicts, decision) =
+            sample_mpb_lite_decision_inputs();
+
+        let id = store
+            .write_verified_decision(&token, &proof, &state, &candidates, &verdicts, &decision)
+            .expect("write decision");
+        let record = store.read_record(&id).expect("read record");
+        rewrite_receipt_as_mpb_lite_v3_compat(&store, &id, &proof);
+
+        let preimage = store
+            .chosen_action_preimage_for_record(&id, &record)
+            .expect("preimage");
+        assert_eq!(preimage, proof.chosen_action_preimage);
+    }
+
+    #[test]
     fn read_record_backfills_missing_chosen_preimage_storage_mode_from_legacy_path() {
         let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
 
@@ -1838,7 +1941,7 @@ mod tests {
         let decision = Decision {
             chosen_index: 0,
             chosen_action: candidate.clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             decision_commitment: Hash32([4u8; 32]),
         };
         let verdicts = vec![RuleVerdict {
@@ -1849,12 +1952,12 @@ mod tests {
         let state = StateSnapshot {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
         };
         let proof = ProofBundle {
-            policy_hash: policy_hash.clone(),
-            state_hash: state_hash.clone(),
+            policy_hash,
+            state_hash,
             candidate_set_hash: Hash32([5u8; 32]),
             chosen_action_hash: Hash32([6u8; 32]),
             limits_hash: Hash32([7u8; 32]),
@@ -1865,12 +1968,12 @@ mod tests {
         };
 
         let token = DecisionToken {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: Hash32([9u8; 32]),
             },
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
             chosen_action_hash: Hash32([6u8; 32]),
             nonce_or_tx_hash: Hash32([10u8; 32]),
@@ -1915,7 +2018,7 @@ mod tests {
         let decision = Decision {
             chosen_index: 0,
             chosen_action: candidate.clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             decision_commitment: Hash32([4u8; 32]),
         };
         let verdicts = vec![RuleVerdict {
@@ -1926,12 +2029,12 @@ mod tests {
         let state = StateSnapshot {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
         };
         let proof = ProofBundle {
-            policy_hash: policy_hash.clone(),
-            state_hash: state_hash.clone(),
+            policy_hash,
+            state_hash,
             candidate_set_hash: Hash32([5u8; 32]),
             chosen_action_hash: Hash32([6u8; 32]),
             limits_hash: Hash32([7u8; 32]),
@@ -1942,12 +2045,12 @@ mod tests {
         };
 
         let token = DecisionToken {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: Hash32([9u8; 32]),
             },
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
             chosen_action_hash: Hash32([6u8; 32]),
             nonce_or_tx_hash: Hash32([10u8; 32]),
@@ -1993,7 +2096,7 @@ mod tests {
         let decision = Decision {
             chosen_index: 0,
             chosen_action: candidate.clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             decision_commitment: Hash32([4u8; 32]),
         };
         let verdicts = vec![RuleVerdict {
@@ -2004,12 +2107,12 @@ mod tests {
         let state = StateSnapshot {
             fields: HashMap::new(),
             policy_inputs: HashMap::new(),
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
         };
         let proof = ProofBundle {
-            policy_hash: policy_hash.clone(),
-            state_hash: state_hash.clone(),
+            policy_hash,
+            state_hash,
             candidate_set_hash: Hash32([5u8; 32]),
             chosen_action_hash: Hash32([6u8; 32]),
             limits_hash: Hash32([7u8; 32]),
@@ -2020,12 +2123,12 @@ mod tests {
         };
 
         let token = DecisionToken {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: Hash32([9u8; 32]),
             },
-            state_hash: state_hash.clone(),
+            state_hash,
             state_ref: StateRef::unknown(),
             chosen_action_hash: Hash32([6u8; 32]),
             nonce_or_tx_hash: Hash32([10u8; 32]),

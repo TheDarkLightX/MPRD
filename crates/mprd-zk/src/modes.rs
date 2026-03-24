@@ -243,6 +243,14 @@ impl MpbTrustlessAttestor {
 }
 
 impl ZkAttestor for MpbTrustlessAttestor {
+    fn attest_ready(
+        &self,
+        ready: &mprd_core::AttestationReadyBundle<'_>,
+        candidates: &[CandidateAction],
+    ) -> Result<ProofBundle> {
+        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+    }
+
     fn attest(
         &self,
         _token: &DecisionToken,
@@ -362,6 +370,14 @@ impl Risc0TrustlessAttestor {
 }
 
 impl ZkAttestor for Risc0TrustlessAttestor {
+    fn attest_ready(
+        &self,
+        ready: &mprd_core::AttestationReadyBundle<'_>,
+        candidates: &[CandidateAction],
+    ) -> Result<ProofBundle> {
+        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+    }
+
     fn attest(
         &self,
         _token: &DecisionToken,
@@ -521,6 +537,14 @@ impl PrivateAttestor {
 }
 
 impl ZkAttestor for PrivateAttestor {
+    fn attest_ready(
+        &self,
+        ready: &mprd_core::AttestationReadyBundle<'_>,
+        candidates: &[CandidateAction],
+    ) -> Result<ProofBundle> {
+        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+    }
+
     fn attest(
         &self,
         _token: &DecisionToken,
@@ -600,6 +624,14 @@ pub fn create_verifier(config: &ModeConfig) -> Box<dyn ZkLocalVerifier> {
 struct LegacyLocalTrustedAttestorDisabled;
 
 impl ZkAttestor for LegacyLocalTrustedAttestorDisabled {
+    fn attest_ready(
+        &self,
+        ready: &mprd_core::AttestationReadyBundle<'_>,
+        candidates: &[CandidateAction],
+    ) -> Result<ProofBundle> {
+        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+    }
+
     fn attest(
         &self,
         _token: &DecisionToken,
