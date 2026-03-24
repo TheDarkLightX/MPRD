@@ -38,12 +38,6 @@ These gates are necessary, but not sufficient, for RC1.
 - Global at-most-once execution across crash and partition scenarios is not yet a shipped end-to-end theorem.
   - Current state: strong replay barrier packet series exists, but this still needs tighter runtime and deployment closure.
 
-### Tier 0: Test Evidence
-
-- Fuzzing is present but not release-complete.
-  - Current state: real `cargo-fuzz` targets exist, the tracked smoke runner is `tools/fuzz_smoke_rc1.sh`, and the tracked workflow is `.github/workflows/fuzz-smoke.yml`.
-  - Missing: a successful summary artifact from that tracked campaign on the candidate commit for the RC1 cut.
-
 ### Tier 1: Operational / Policy Admission
 
 - Owner namespace, node assignment, activation epoch, and certification-tier admission are not first-class yet.

@@ -84,9 +84,9 @@ The tracked GitHub workflow is:
 
 - `.github/workflows/fuzz-smoke.yml`
 
-An initial merged-baseline receipt is checked in at:
+A current tracked smoke receipt is checked in at:
 
 - `docs/receipts/rc1_fuzz_smoke_20260324.json`
 
-This narrows the RC1 fuzzing blocker from “no tracked evidence path” to “run the tracked campaign
-on the candidate commit and keep the summary artifact for that cut”.
+For future RC1 candidate cuts, rerun the same tracked campaign on the candidate commit and keep the
+new summary artifact with that cut.

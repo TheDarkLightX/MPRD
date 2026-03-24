@@ -1,6 +1,6 @@
 {
-  "generated_at_utc": "2026-03-24T19:21:46.726196Z",
-  "git_head": "0fd5e3da5641fcef733d9d4c66fdd2ba475a9843",
+  "generated_at_utc": "2026-03-24T19:27:14.920023Z",
+  "git_head": "84f39a2fbf0907ca0619de7df776682790e873e6",
   "include_asde": false,
   "overall_status": "passed",
   "schema": "mprd/rc1-fuzz-smoke-summary/v1",
@@ -15,7 +15,7 @@
       "target": "limits_bytes_v1"
     },
     {
-      "duration_s": 3,
+      "duration_s": 2,
       "feature_flags": [
         "--no-default-features"
       ],
@@ -24,7 +24,7 @@
       "target": "candidate_preimage_v1"
     },
     {
-      "duration_s": 3,
+      "duration_s": 5,
       "feature_flags": [
         "--no-default-features"
       ],
@@ -33,7 +33,7 @@
       "target": "anti_replay_state_machine"
     },
     {
-      "duration_s": 2,
+      "duration_s": 3,
       "feature_flags": [
         "--no-default-features"
       ],
@@ -62,7 +62,7 @@
       "target": "mpb_artifact_deser"
     },
     {
-      "duration_s": 3,
+      "duration_s": 2,
       "feature_flags": [
         "--features",
         "zk"
