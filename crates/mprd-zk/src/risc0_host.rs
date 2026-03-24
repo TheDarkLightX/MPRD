@@ -556,8 +556,8 @@ impl Risc0TauCompiledAttestor {
         let compiled_policy_bytes =
             self.policy_provider
                 .get(&token.policy_hash)
-                .ok_or_else(|| MprdError::PolicyNotFound {
-                    hash: token.policy_hash.clone(),
+                .ok_or(MprdError::PolicyNotFound {
+                    hash: token.policy_hash,
                 })?;
 
         if compiled_policy_bytes.len() > MAX_TCV_COMPILED_POLICY_BYTES_V1 {
@@ -795,12 +795,12 @@ impl Risc0MpbAttestor {
             ));
         }
 
-        let policy = self
-            .mpb_policy_provider
-            .get(&token.policy_hash)
-            .ok_or_else(|| MprdError::PolicyNotFound {
-                hash: token.policy_hash.clone(),
-            })?;
+        let policy =
+            self.mpb_policy_provider
+                .get(&token.policy_hash)
+                .ok_or(MprdError::PolicyNotFound {
+                    hash: token.policy_hash,
+                })?;
 
         // Canonicalize variable bindings (fail closed if malformed).
         let mut vars = policy.variables;
@@ -1310,11 +1310,11 @@ mod tests {
 
         let candidates = vec![decision.chosen_action.clone()]; // Only 1 candidate
         let token = DecisionToken {
-            policy_hash: decision.policy_hash.clone(),
+            policy_hash: decision.policy_hash,
             policy_ref: dummy_policy_ref(),
-            state_hash: state.state_hash.clone(),
+            state_hash: state.state_hash,
             state_ref: state.state_ref.clone(),
-            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash,
             nonce_or_tx_hash: dummy_hash(9),
             timestamp_ms: 0,
             signature: vec![],
@@ -1358,11 +1358,11 @@ mod tests {
 
         let candidates = vec![decision.chosen_action.clone()];
         let token = DecisionToken {
-            policy_hash: decision.policy_hash.clone(),
+            policy_hash: decision.policy_hash,
             policy_ref: dummy_policy_ref(),
-            state_hash: state.state_hash.clone(),
+            state_hash: state.state_hash,
             state_ref: state.state_ref.clone(),
-            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash,
             nonce_or_tx_hash: dummy_hash(9),
             timestamp_ms: 0,
             signature: vec![],
@@ -1432,11 +1432,11 @@ mod tests {
         };
 
         let token = DecisionToken {
-            policy_hash: decision.policy_hash.clone(),
+            policy_hash: decision.policy_hash,
             policy_ref: dummy_policy_ref(),
-            state_hash: state.state_hash.clone(),
+            state_hash: state.state_hash,
             state_ref: state.state_ref.clone(),
-            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash,
             nonce_or_tx_hash: dummy_hash(9),
             timestamp_ms: 0,
             signature: vec![],
@@ -1481,7 +1481,7 @@ mod tests {
         // Provider returns a policy artifact that does NOT hash to token.policy_hash.
         let mut store: HashMap<PolicyHash, MpbPolicyArtifactV1> = HashMap::new();
         store.insert(
-            token.policy_hash.clone(),
+            token.policy_hash,
             MpbPolicyArtifactV1 {
                 bytecode: vec![0xFF],
                 variables: vec![],

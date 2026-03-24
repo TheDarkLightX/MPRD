@@ -1,5 +1,6 @@
 //! Invariant checker for executor_circuit_breaker.
 
+#![allow(clippy::absurd_extreme_comparisons, unused_comparisons)]
 use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.

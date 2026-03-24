@@ -279,10 +279,10 @@ impl ZkAttestor for MpbTrustlessAttestor {
         );
 
         Ok(ProofBundle {
-            policy_hash: decision.policy_hash.clone(),
-            state_hash: state.state_hash.clone(),
+            policy_hash: decision.policy_hash,
+            state_hash: state.state_hash,
             candidate_set_hash,
-            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash,
             limits_hash: mprd_core::limits::limits_hash_v1(&[]),
             limits_bytes: vec![],
             chosen_action_preimage: mprd_core::hash::candidate_hash_preimage(
@@ -664,6 +664,7 @@ fn compute_candidate_set_hash(candidates: &[CandidateAction]) -> Hash32 {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use mprd_core::PolicyRef;
@@ -680,6 +681,7 @@ mod tests {
         }
     }
 
+    #[allow(deprecated)]
     #[test]
     fn mode_config_defaults() {
         let mode_a = ModeConfig::mode_a();
@@ -690,6 +692,7 @@ mod tests {
         assert_eq!(mode_b_lite.mpb_spot_checks, 64);
     }
 
+    #[allow(deprecated)]
     #[test]
     fn mode_b_full_sets_expected_fields() {
         let image_id = [7u8; 32];
@@ -702,6 +705,7 @@ mod tests {
         assert_eq!(cfg.encryption_key_id, None);
     }
 
+    #[allow(deprecated)]
     #[test]
     fn mode_c_sets_expected_fields() {
         let image_id = [9u8; 32];
@@ -714,6 +718,7 @@ mod tests {
         assert_eq!(cfg.encryption_key_id.as_deref(), Some("k1"));
     }
 
+    #[allow(deprecated)]
     #[test]
     fn legacy_factory_fails_closed_for_local_trusted() {
         let config = ModeConfig::mode_a();
@@ -740,11 +745,11 @@ mod tests {
         };
 
         let token_for_attest = DecisionToken {
-            policy_hash: decision.policy_hash.clone(),
+            policy_hash: decision.policy_hash,
             policy_ref: dummy_policy_ref(),
-            state_hash: state.state_hash.clone(),
+            state_hash: state.state_hash,
             state_ref: state.state_ref.clone(),
-            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash,
             nonce_or_tx_hash: dummy_hash(9),
             timestamp_ms: 0,
             signature: vec![],
@@ -779,6 +784,7 @@ mod tests {
         ));
     }
 
+    #[allow(deprecated)]
     #[test]
     fn mpb_attestor_creates_proof() {
         let attestor = MpbTrustlessAttestor::default_config();
@@ -803,11 +809,11 @@ mod tests {
         };
 
         let token = DecisionToken {
-            policy_hash: decision.policy_hash.clone(),
+            policy_hash: decision.policy_hash,
             policy_ref: dummy_policy_ref(),
-            state_hash: state.state_hash.clone(),
+            state_hash: state.state_hash,
             state_ref: state.state_ref.clone(),
-            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash,
             nonce_or_tx_hash: dummy_hash(9),
             timestamp_ms: 0,
             signature: vec![],
@@ -823,6 +829,7 @@ mod tests {
         );
     }
 
+    #[allow(deprecated)]
     #[test]
     fn mpb_verifier_checks_consistency() {
         let verifier = MpbTrustlessVerifier::default_config();
@@ -856,6 +863,7 @@ mod tests {
         assert_eq!(verifier.verify(&token, &proof), VerificationStatus::Success);
     }
 
+    #[allow(deprecated)]
     #[test]
     fn mpb_verifier_rejects_mismatch() {
         let verifier = MpbTrustlessVerifier::default_config();
@@ -892,6 +900,7 @@ mod tests {
         ));
     }
 
+    #[allow(deprecated)]
     #[test]
     fn risc0_attestor_requires_config() {
         let config = ModeConfig::mode_b_full([0u8; 32]);

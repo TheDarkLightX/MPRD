@@ -1,5 +1,6 @@
 //! Invariant checker for mprd_v6_auction_escrow_carry.
 
+#![allow(clippy::absurd_extreme_comparisons, unused_comparisons)]
 use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.

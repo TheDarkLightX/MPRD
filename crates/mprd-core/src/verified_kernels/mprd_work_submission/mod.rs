@@ -1,5 +1,6 @@
 //! mprd_work_submission kernel module.
 //! Generated from IR hash: eb9eb49614b1d9a8
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

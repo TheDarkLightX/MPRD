@@ -1,5 +1,6 @@
 //! mprd_proof_market_slot kernel module.
 //! Generated from IR hash: 1328e716948d0767
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

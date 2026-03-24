@@ -1,5 +1,6 @@
 //! mprd_v6_fee_lanes_bcr_caps kernel module.
 //! Generated from IR hash: 9f0e3cc6a28eba67
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

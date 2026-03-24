@@ -1,5 +1,6 @@
 //! tau_attestation_replay_guard kernel module.
 //! Generated from IR hash: 9652e0520d8186cc
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

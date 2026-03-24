@@ -114,7 +114,7 @@ impl PolicyStorage for LocalPolicyStorage {
 
         // Update cache
         if let Ok(mut cache) = self.cache.write() {
-            cache.insert(hash.clone(), policy_bytes.to_vec());
+            cache.insert(hash, policy_bytes.to_vec());
         }
 
         Ok(hash)
@@ -153,7 +153,7 @@ impl PolicyStorage for LocalPolicyStorage {
 
         // Update cache
         if let Ok(mut cache) = self.cache.write() {
-            cache.insert(hash.clone(), bytes.clone());
+            cache.insert(*hash, bytes.clone());
         }
 
         Ok(Some(bytes))
@@ -328,7 +328,7 @@ impl PolicyStorage for IpfsPolicyStorage {
         match self.ipfs_add(policy_bytes) {
             Ok(cid) => {
                 if let Ok(mut mapping) = self.hash_to_cid.write() {
-                    mapping.insert(hash.clone(), cid);
+                    mapping.insert(hash, cid);
                 }
             }
             Err(e) => {
@@ -417,7 +417,7 @@ impl PolicyStorage for InMemoryPolicyStorage {
             .write()
             .map_err(|_| MprdError::ConfigError("Policy storage lock poisoned".into()))?;
 
-        policies.insert(hash.clone(), policy_bytes.to_vec());
+        policies.insert(hash, policy_bytes.to_vec());
         Ok(hash)
     }
 

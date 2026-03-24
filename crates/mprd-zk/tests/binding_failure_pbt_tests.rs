@@ -71,16 +71,16 @@ fn make_valid_mpb_v1_proof(
     let decision = Decision {
         chosen_index: 0,
         chosen_action: chosen_action.clone(),
-        policy_hash: policy_hash.clone(),
+        policy_hash,
         decision_commitment: Hash32([0u8; 32]),
     };
 
     let token = DecisionToken {
-        policy_hash: policy_hash.clone(),
+        policy_hash,
         policy_ref: dummy_policy_ref(),
-        state_hash: state.state_hash.clone(),
+        state_hash: state.state_hash,
         state_ref: state.state_ref.clone(),
-        chosen_action_hash: chosen_action.candidate_hash.clone(),
+        chosen_action_hash: chosen_action.candidate_hash,
         nonce_or_tx_hash: dummy_hash(5),
         timestamp_ms: 0,
         signature: vec![],
@@ -90,7 +90,7 @@ fn make_valid_mpb_v1_proof(
 
     let mut store: HashMap<mprd_core::PolicyHash, MpbPolicyArtifactV1> = HashMap::new();
     store.insert(
-        policy_hash.clone(),
+        policy_hash,
         MpbPolicyArtifactV1 {
             bytecode: policy_bytecode,
             variables: vec![],

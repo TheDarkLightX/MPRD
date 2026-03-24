@@ -9,6 +9,7 @@
 //! - This module makes *no* global soundness claim by default.
 //! - Any pruning rule must be validated by (a) bounded exhaustive checks and/or (b) Lean proofs.
 //! - Fail-closed rule: if independence cannot be proved, treat actions as dependent (do not prune).
+#![allow(clippy::too_many_arguments)]
 
 use crate::{MprdError, Result};
 
@@ -265,13 +266,10 @@ pub fn plan_best_linear_dfs_c2(
         }
 
         // Prune revisits if we already have an equal-or-better (depth, first_key) for this state.
-        match best_seen.get(x) {
-            Some(&(d0, fk0)) => {
-                if depth > d0 || (depth == d0 && first_key >= fk0) {
-                    return Ok(());
-                }
+        if let Some(&(d0, fk0)) = best_seen.get(x) {
+            if depth > d0 || (depth == d0 && first_key >= fk0) {
+                return Ok(());
             }
-            None => {}
         }
         best_seen.insert(x.clone(), (depth, first_key));
 
@@ -1221,10 +1219,6 @@ mod tests {
             assert_eq!(x0, vec![3, 3, 0]);
             assert_eq!(w.len(), 3);
             assert_ne!(full, por);
-        } else {
-            // If we *didn't* find a CE on this tiny grid, that's positive evidence,
-            // but not a promotion to "sound" without broader proof.
-            assert!(true);
         }
     }
 

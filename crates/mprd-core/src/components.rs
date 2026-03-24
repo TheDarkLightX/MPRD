@@ -378,10 +378,10 @@ impl ZkAttestor for StubZkAttestor {
         }
 
         Ok(ProofBundle {
-            policy_hash: decision.policy_hash.clone(),
-            state_hash: state.state_hash.clone(),
+            policy_hash: decision.policy_hash,
+            state_hash: state.state_hash,
             candidate_set_hash,
-            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash,
             limits_hash: crate::limits::limits_hash_v1(&[]),
             limits_bytes: vec![],
             chosen_action_preimage,
@@ -488,9 +488,9 @@ impl ExecutorAdapter for LoggingExecutorAdapter {
     fn execute(&self, verified: &crate::VerifiedBundle<'_>) -> Result<ExecutionResult> {
         let token = verified.token();
         let action = ExecutedAction {
-            policy_hash: token.policy_hash.clone(),
-            state_hash: token.state_hash.clone(),
-            action_hash: token.chosen_action_hash.clone(),
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            action_hash: token.chosen_action_hash,
             timestamp_ms: token.timestamp_ms,
         };
 
@@ -762,6 +762,7 @@ impl CircuitBreakerGate {
 }
 
 impl CircuitBreakerBoxedExecutor {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(
         inner: Box<dyn ExecutorAdapter + Send + Sync>,
         tick_ms: u64,
@@ -782,6 +783,7 @@ impl CircuitBreakerBoxedExecutor {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     fn new_with_clock(
         inner: Box<dyn ExecutorAdapter + Send + Sync>,
         tick_ms: u64,
@@ -1262,11 +1264,11 @@ mod tests {
 
         let candidates = vec![decision.chosen_action.clone()];
         let token = DecisionToken {
-            policy_hash: decision.policy_hash.clone(),
+            policy_hash: decision.policy_hash,
             policy_ref: dummy_policy_ref(),
-            state_hash: state.state_hash.clone(),
+            state_hash: state.state_hash,
             state_ref: state.state_ref.clone(),
-            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash,
             nonce_or_tx_hash: dummy_hash(9),
             timestamp_ms: 0,
             signature: vec![],
@@ -1438,10 +1440,10 @@ mod tests {
             .unwrap();
 
         let proof = ProofBundle {
-            policy_hash: token.policy_hash.clone(),
-            state_hash: token.state_hash.clone(),
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
             candidate_set_hash: dummy_hash(6),
-            chosen_action_hash: token.chosen_action_hash.clone(),
+            chosen_action_hash: token.chosen_action_hash,
             limits_hash: dummy_hash(7),
             limits_bytes: vec![],
             chosen_action_preimage: vec![],
@@ -1487,10 +1489,10 @@ mod tests {
             .unwrap();
 
         let proof = ProofBundle {
-            policy_hash: token.policy_hash.clone(),
-            state_hash: token.state_hash.clone(),
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
             candidate_set_hash: dummy_hash(6),
-            chosen_action_hash: token.chosen_action_hash.clone(),
+            chosen_action_hash: token.chosen_action_hash,
             limits_hash: dummy_hash(7),
             limits_bytes: vec![],
             chosen_action_preimage: vec![],
@@ -1584,8 +1586,8 @@ mod tests {
         };
 
         let proof = ProofBundle {
-            policy_hash: token.policy_hash.clone(),
-            state_hash: token.state_hash.clone(),
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
             candidate_set_hash: dummy_hash(12),
             chosen_action_hash: action_hash,
             limits_hash,
@@ -1742,10 +1744,10 @@ mod tests {
         token.timestamp_ms = now_ms_for_tests();
 
         let proof = ProofBundle {
-            policy_hash: token.policy_hash.clone(),
-            state_hash: token.state_hash.clone(),
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
             candidate_set_hash: dummy_hash(6),
-            chosen_action_hash: token.chosen_action_hash.clone(),
+            chosen_action_hash: token.chosen_action_hash,
             limits_hash: dummy_hash(7),
             limits_bytes: vec![],
             chosen_action_preimage: vec![],
@@ -2040,7 +2042,7 @@ mod tests {
         let r2 = h2.join().expect("join");
 
         assert!(
-            matches!(r1, Ok(_)) || matches!(r2, Ok(_)),
+            r1.is_ok() || r2.is_ok(),
             "at least one execution should succeed"
         );
         assert!(

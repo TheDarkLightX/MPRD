@@ -1,5 +1,6 @@
 //! rate_limited_withdrawals kernel module.
 //! Generated from IR hash: 25db8c9a78e0e291
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

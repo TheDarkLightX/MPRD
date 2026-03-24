@@ -8,6 +8,25 @@
 //!
 //! Synthesis-as-Spec: For models with holes, a grammar/config defines the search space and the
 //! toolchain synthesizes a solution that still passes the same verification gates.
+//!
+//! These modules are generated artifacts. Keep workspace `clippy -D warnings` strict on
+//! handwritten code, but permit the stable set of codegen patterns we see here until the
+//! generator is taught to emit lint-clean Rust.
+#![allow(
+    unused_comparisons,
+    unused_imports,
+    unused_mut,
+    unused_parens,
+    clippy::bool_comparison,
+    clippy::collapsible_else_if,
+    clippy::clone_on_copy,
+    clippy::double_comparisons,
+    clippy::manual_clamp,
+    clippy::manual_range_contains,
+    clippy::needless_bool,
+    clippy::nonminimal_bool,
+    clippy::redundant_field_names
+)]
 
 #[cfg(kani)]
 pub mod kani_harnesses;

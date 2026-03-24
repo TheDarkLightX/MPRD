@@ -235,7 +235,7 @@ impl MpbPolicyProvider for RegistryBoundMpbPolicyProvider {
         let Ok(mut cache) = self.cache.lock() else {
             return None;
         };
-        cache.insert(policy_hash.clone(), artifact.clone());
+        cache.insert(*policy_hash, artifact.clone());
         Some(artifact)
     }
 }
@@ -273,9 +273,7 @@ impl RegistryBoundTauCompiledPolicyProvider {
         let bytes = self
             .store
             .get(policy_hash)?
-            .ok_or_else(|| MprdError::PolicyNotFound {
-                hash: policy_hash.clone(),
-            })?;
+            .ok_or(MprdError::PolicyNotFound { hash: *policy_hash })?;
         let computed = Hash32(tau_compiled_policy_hash_v1(&bytes));
         if computed != *policy_hash {
             return Err(MprdError::ZkError(
@@ -466,7 +464,7 @@ mod tests {
             Hash32(mprd_mpb::policy_hash_v1(&[0xFF], &refs))
         };
 
-        let signed = signed_registry_state(&signer, policy_ref.clone(), computed.clone());
+        let signed = signed_registry_state(&signer, policy_ref.clone(), computed);
         let provider = StaticRegistryProvider {
             state: signed.state,
         };
@@ -478,7 +476,7 @@ mod tests {
         );
 
         let store = Arc::new(InMemoryPolicyArtifactStore::default());
-        store.insert(computed.clone(), bytes).expect("insert");
+        store.insert(computed, bytes).expect("insert");
 
         let mpb = RegistryBoundMpbPolicyProvider::new(policy_ref, auth, store);
         let out = mpb.get(&computed).expect("expected policy");

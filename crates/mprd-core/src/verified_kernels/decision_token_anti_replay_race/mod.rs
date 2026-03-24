@@ -1,5 +1,6 @@
 //! decision_token_anti_replay_race kernel module.
 //! Generated from IR hash: 6530e41646cd5ea7
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

@@ -1305,7 +1305,7 @@ mod tests {
             let predicate_count = policy.predicates.len();
             let mut s = seed ^ 0xDEAD_BEEF_CAFE_BABE;
 
-            let n = 1 + prng_range(&mut s, 64) as u32;
+            let n = 1 + prng_range(&mut s, 64);
             let mask = if n == 64 { u64::MAX } else { (1u64 << n) - 1 };
 
             let mut predicate_bits = vec![0u64; predicate_count];
@@ -1471,7 +1471,7 @@ mod tests {
         let mut out_bits = 0u64;
         for _ in 0..iters {
             out_bits =
-                tcv_eval_circuit_bitset_v1_validated(&policy, &predicate_bits, mask, &temporal);
+                tcv_eval_circuit_bitset_v1_validated(&policy, &predicate_bits, mask, temporal);
         }
         let bitset_us = t0.elapsed().as_micros();
 
@@ -1485,7 +1485,7 @@ mod tests {
                     predicate_results[p] = ((bits >> i) & 1) == 1;
                 }
                 let scalar =
-                    tcv_eval_circuit_scalar_v1_validated(&policy, &predicate_results, &temporal);
+                    tcv_eval_circuit_scalar_v1_validated(&policy, &predicate_results, temporal);
                 if scalar {
                     out_bits_scalar |= 1u64 << i;
                 }

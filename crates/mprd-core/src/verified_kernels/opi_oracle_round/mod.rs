@@ -1,5 +1,6 @@
 //! opi_oracle_round kernel module.
 //! Generated from IR hash: 06eda247754a995f
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

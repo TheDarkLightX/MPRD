@@ -1,5 +1,6 @@
 //! nonce_manager_lifecycle kernel module.
 //! Generated from IR hash: 1d5f87eed0163ecd
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

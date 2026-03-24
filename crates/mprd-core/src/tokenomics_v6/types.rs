@@ -184,6 +184,7 @@ impl ParamsV6 {
     /// - `burn_surplus_bps + auction_surplus_bps <= 10_000` (can't allocate more than 100%).
     /// - `share_rate_k > 0` (share-rate ratchet must be well-defined).
     /// - `payout_lock_epochs > 0` (auction payouts must have an unlock epoch).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         burn_surplus_bps: Bps,
         auction_surplus_bps: Bps,

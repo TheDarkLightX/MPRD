@@ -1228,14 +1228,14 @@ mod tests {
         let candidates = vec![action.clone()];
 
         let token = DecisionToken {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: Hash32([9u8; 32]),
             },
-            state_hash: state.state_hash.clone(),
+            state_hash: state.state_hash,
             state_ref: state.state_ref.clone(),
-            chosen_action_hash: action.candidate_hash.clone(),
+            chosen_action_hash: action.candidate_hash,
             nonce_or_tx_hash: Hash32([8u8; 32]),
             timestamp_ms: 0,
             signature: Vec::new(),
@@ -1244,7 +1244,7 @@ mod tests {
         let decision = Decision {
             chosen_index: 0,
             chosen_action: action.clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             decision_commitment: Hash32([1u8; 32]),
         };
 

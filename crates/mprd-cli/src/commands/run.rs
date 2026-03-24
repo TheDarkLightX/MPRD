@@ -33,6 +33,7 @@ fn json_to_value(v: serde_json::Value) -> Option<Value> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     policy_hex: String,
     state_path: PathBuf,

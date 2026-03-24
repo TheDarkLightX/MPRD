@@ -58,7 +58,7 @@ impl InMemoryTauOutputAttestationStore {
             .inner
             .write()
             .map_err(|_| MprdError::ExecutionError("attestation store poisoned".into()))?;
-        g.insert(h.clone(), bytes);
+        g.insert(h, bytes);
         Ok(h)
     }
 }
@@ -176,7 +176,7 @@ impl TauOutputReplayGuard for InMemoryTauOutputReplayGuard {
 
         g.insert(
             (*tau_instance_id, *spec_id),
-            (output_epoch, attestation_hash.clone()),
+            (output_epoch, *attestation_hash),
         );
         Ok(())
     }
@@ -987,7 +987,7 @@ mod tests {
             spec_id,
             1,
             1,
-            schema.output_schema_hash.clone(),
+            schema.output_schema_hash,
             vec![
                 ("b".to_string(), Value::UInt(2)),
                 ("a".to_string(), Value::UInt(1)),
@@ -1000,7 +1000,7 @@ mod tests {
             spec_id,
             1,
             1,
-            schema.output_schema_hash.clone(),
+            schema.output_schema_hash,
             vec![
                 ("a".to_string(), Value::UInt(1)),
                 ("a".to_string(), Value::UInt(2)),
@@ -1027,7 +1027,7 @@ mod tests {
             spec_id,
             7,
             42,
-            schema.output_schema_hash.clone(),
+            schema.output_schema_hash,
             vec![("x".to_string(), Value::UInt(5))],
         );
         let h = a.attestation_hash_v1().expect("hash");
@@ -1071,7 +1071,7 @@ mod tests {
             spec_id,
             9,
             10,
-            schema.output_schema_hash.clone(),
+            schema.output_schema_hash,
             vec![
                 ("confidence_score".to_string(), Value::UInt(95)),
                 ("recommendation_value".to_string(), Value::UInt(100)),
@@ -1125,7 +1125,7 @@ mod tests {
             spec_id,
             1,
             1,
-            schema.output_schema_hash.clone(),
+            schema.output_schema_hash,
             vec![("x".to_string(), Value::UInt(5))],
         );
         let h = a.attestation_hash_v1().expect("hash");

@@ -1,5 +1,6 @@
 //! Invariant checker for decision_token_anti_replay_race.
 
+#![allow(clippy::absurd_extreme_comparisons, unused_comparisons)]
 use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.

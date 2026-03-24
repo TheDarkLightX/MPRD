@@ -1,5 +1,6 @@
 //! mprd_reward_pool kernel module.
 //! Generated from IR hash: d29e7399c5af093a
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

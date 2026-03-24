@@ -1,5 +1,6 @@
 //! executor_action_preimage_binding kernel module.
 //! Generated from IR hash: 80489420f425564a
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

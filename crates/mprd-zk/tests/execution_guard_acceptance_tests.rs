@@ -89,7 +89,7 @@ fn b_full_executor_does_not_run_on_verification_failure() {
 
     let mut store: HashMap<mprd_core::PolicyHash, MpbPolicyArtifactV1> = HashMap::new();
     store.insert(
-        policy_hash.clone(),
+        policy_hash,
         MpbPolicyArtifactV1 {
             bytecode: policy_bytecode,
             variables: vec![],

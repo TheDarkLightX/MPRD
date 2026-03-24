@@ -221,8 +221,8 @@ impl PolicyRegistry for InMemoryPolicyRegistry {
         })?;
         inner.gate = st;
 
-        let hash = spec.policy_hash.clone();
-        inner.specs.insert(hash.clone(), spec);
+        let hash = spec.policy_hash;
+        inner.specs.insert(hash, spec);
         Ok(hash)
     }
 
@@ -274,7 +274,7 @@ q
     fn register_and_retrieve_policy() {
         let registry = InMemoryPolicyRegistry::new();
         let spec = TauSpec::new(SAMPLE_POLICY);
-        let hash = spec.policy_hash.clone();
+        let hash = spec.policy_hash;
 
         let registered_hash = registry.register(spec).expect("register should succeed");
         assert_eq!(registered_hash, hash);
@@ -314,7 +314,7 @@ q
     fn contains_check() {
         let registry = InMemoryPolicyRegistry::new();
         let spec = TauSpec::new(SAMPLE_POLICY);
-        let hash = spec.policy_hash.clone();
+        let hash = spec.policy_hash;
 
         assert!(!registry.contains(&hash));
         registry.register(spec).unwrap();

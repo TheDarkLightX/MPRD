@@ -17,6 +17,7 @@ pub struct PidProposeOutputV6 {
     pub new_drip_rate_bps: u16,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn pid_propose_v6(
     cur_burn_surplus_bps: u16,
     cur_auction_surplus_bps: u16,

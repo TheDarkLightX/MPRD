@@ -108,7 +108,7 @@ impl GovernanceState {
         }
 
         let computed = compute_committee_hash(tx.new_threshold, &tx.new_members)?;
-        self.committee_hash = computed.clone();
+        self.committee_hash = computed;
         self.committee_seq = tx.committee_seq;
         Ok(computed)
     }
@@ -127,7 +127,7 @@ impl GovernanceState {
         }
 
         let new_hash = compute_rules_hash(&tx.rules_text);
-        self.rules_hash = new_hash.clone();
+        self.rules_hash = new_hash;
         self.rules_seq = tx.update_seq;
         Ok(new_hash)
     }
@@ -1039,10 +1039,10 @@ impl MultiAttestor {
                     results.push(AttestorResult {
                         attestor_id,
                         proof: ProofBundle {
-                            policy_hash: decision.policy_hash.clone(),
-                            state_hash: state.state_hash.clone(),
+                            policy_hash: decision.policy_hash,
+                            state_hash: state.state_hash,
                             candidate_set_hash: Hash32([0u8; 32]),
-                            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                            chosen_action_hash: decision.chosen_action.candidate_hash,
                             limits_hash: Hash32([0u8; 32]),
                             limits_bytes: vec![],
                             chosen_action_preimage: vec![],
@@ -1114,11 +1114,11 @@ impl MultiAttestor {
         metadata.insert("aggregated_commitment".into(), hex::encode(commitment.0));
 
         Some(ProofBundle {
-            policy_hash: first.policy_hash.clone(),
-            state_hash: first.state_hash.clone(),
-            candidate_set_hash: first.candidate_set_hash.clone(),
-            chosen_action_hash: first.chosen_action_hash.clone(),
-            limits_hash: first.limits_hash.clone(),
+            policy_hash: first.policy_hash,
+            state_hash: first.state_hash,
+            candidate_set_hash: first.candidate_set_hash,
+            chosen_action_hash: first.chosen_action_hash,
+            limits_hash: first.limits_hash,
             limits_bytes: first.limits_bytes.clone(),
             chosen_action_preimage: first.chosen_action_preimage.clone(),
             risc0_receipt: first.risc0_receipt.clone(), // Use first receipt
@@ -1437,7 +1437,7 @@ impl DistributedPolicyStore for IpfsPolicyStore {
             .hash_to_cid
             .write()
             .map_err(|_| MprdError::ZkError("IPFS mapping lock poisoned".into()))?;
-        mapping.insert(hash.clone(), cid);
+        mapping.insert(hash, cid);
         self.persist_mapping(&mapping)?;
 
         Ok(hash)
@@ -1721,7 +1721,7 @@ impl DistributedPolicyStore for MultiGatewayIpfsPolicyStore {
             .hash_to_cid
             .write()
             .map_err(|_| MprdError::ZkError("IPFS mapping lock poisoned".into()))?;
-        mapping.insert(hash.clone(), cid);
+        mapping.insert(hash, cid);
         self.persist_mapping(&mapping)?;
 
         Ok(hash)
@@ -1934,7 +1934,7 @@ mod tests {
         assert!(state.apply_rules_update(&wrong_prev, true).is_err());
 
         let wrong_seq = RulesUpdateTx {
-            prev_rules_hash: state.rules_hash.clone(),
+            prev_rules_hash: state.rules_hash,
             rules_text: "rule_v3".into(),
             update_seq: 11,
         };
@@ -1950,12 +1950,12 @@ mod tests {
         let mut state = GovernanceState {
             rules_hash: dummy_hash(9),
             rules_seq: 0,
-            committee_hash: initial_hash.clone(),
+            committee_hash: initial_hash,
             committee_seq: 3,
         };
 
         let tx_ok = CommitteeUpdateTx {
-            prev_committee_hash: initial_hash.clone(),
+            prev_committee_hash: initial_hash,
             new_threshold: 2,
             new_members: vec![vec![3u8; 48], vec![4u8; 48]],
             committee_seq: 4,
@@ -1976,7 +1976,7 @@ mod tests {
         assert!(state.apply_committee_update(&tx_wrong_prev, true).is_err());
 
         let tx_wrong_seq = CommitteeUpdateTx {
-            prev_committee_hash: state.committee_hash.clone(),
+            prev_committee_hash: state.committee_hash,
             new_threshold: 1,
             new_members: vec![vec![6u8; 48]],
             committee_seq: 7,
@@ -2039,7 +2039,7 @@ mod tests {
 
         let mut mapping = HashMap::new();
         let hash = dummy_hash(1);
-        mapping.insert(hash.clone(), "cid-test".to_string());
+        mapping.insert(hash, "cid-test".to_string());
 
         store
             .persist_mapping(&mapping)
@@ -2166,11 +2166,11 @@ mod tests {
         };
 
         let token = DecisionToken {
-            policy_hash: decision.policy_hash.clone(),
+            policy_hash: decision.policy_hash,
             policy_ref: dummy_policy_ref(),
-            state_hash: state.state_hash.clone(),
+            state_hash: state.state_hash,
             state_ref: state.state_ref.clone(),
-            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash,
             nonce_or_tx_hash: dummy_hash(9),
             timestamp_ms: 0,
             signature: vec![],
@@ -2758,9 +2758,9 @@ mod tests {
             let initial_committee_hash = compute_committee_hash(1, &initial_members).unwrap();
 
             let mut sut = GovernanceState {
-                rules_hash: initial_rules_hash.clone(),
+                rules_hash: initial_rules_hash,
                 rules_seq: 0,
-                committee_hash: initial_committee_hash.clone(),
+                committee_hash: initial_committee_hash,
                 committee_seq: 0,
             };
 
@@ -2777,7 +2777,7 @@ mod tests {
                     // Rules update
                     let rules_text = format!("rule_v{}", data_byte);
                     let tx = RulesUpdateTx {
-                        prev_rules_hash: sut.rules_hash.clone(),
+                        prev_rules_hash: sut.rules_hash,
                         rules_text: rules_text.clone(),
                         update_seq: sut.rules_seq + 1,
                     };
@@ -2796,7 +2796,7 @@ mod tests {
                         // INVARIANT: seq is monotonically increasing
                         prop_assert_eq!(sut.rules_seq, model.rules_seq);
                         // INVARIANT: hash matches
-                        prop_assert_eq!(sut.rules_hash.clone(), model.rules_hash.clone());
+                        prop_assert_eq!(sut.rules_hash, model.rules_hash);
                     }
                 } else {
                     // Committee update
@@ -2804,14 +2804,14 @@ mod tests {
                     let new_committee_hash = compute_committee_hash(1, &new_members).unwrap();
 
                     let tx = CommitteeUpdateTx {
-                        prev_committee_hash: sut.committee_hash.clone(),
+                        prev_committee_hash: sut.committee_hash,
                         new_threshold: 1,
                         new_members,
                         committee_seq: sut.committee_seq + 1,
                     };
 
                     let sut_result = sut.apply_committee_update(&tx, threshold_ok);
-                    let model_success = model.apply_committee_update(new_committee_hash.clone(), threshold_ok);
+                    let model_success = model.apply_committee_update(new_committee_hash, threshold_ok);
 
                     // INVARIANT: SUT and model agree on success/failure
                     prop_assert_eq!(
@@ -2824,7 +2824,7 @@ mod tests {
                         // INVARIANT: seq is monotonically increasing
                         prop_assert_eq!(sut.committee_seq, model.committee_seq);
                         // INVARIANT: hash matches
-                        prop_assert_eq!(sut.committee_hash.clone(), model.committee_hash.clone());
+                        prop_assert_eq!(sut.committee_hash, model.committee_hash);
                     }
                 }
 

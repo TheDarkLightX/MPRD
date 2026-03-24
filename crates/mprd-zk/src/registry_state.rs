@@ -961,7 +961,7 @@ mod tests {
             policy_epoch: 7,
             registry_root: dummy_hash(9),
             authorized_policies: vec![AuthorizedPolicyV1 {
-                policy_hash: policy_hash.clone(),
+                policy_hash,
                 policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
                 policy_exec_version_id: policy_exec_version_id_v1(),
                 policy_source_kind_id: None,
@@ -1264,7 +1264,7 @@ mod tests {
             policy_epoch: 1,
             registry_root: dummy_hash(9),
             authorized_policies: vec![AuthorizedPolicyV1 {
-                policy_hash: policy_hash.clone(),
+                policy_hash,
                 policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
                 policy_exec_version_id: policy_exec_version_id_v1(),
                 policy_source_kind_id: None,

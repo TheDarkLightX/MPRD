@@ -113,7 +113,7 @@ impl Selector for ParetoSelector {
             });
 
             if !is_dominated {
-                pareto_front.push((*i, *c, *risk, hash.clone()));
+                pareto_front.push((*i, *c, *risk, *hash));
             }
         }
 
@@ -127,7 +127,7 @@ impl Selector for ParetoSelector {
         Ok(Decision {
             chosen_index: *chosen_index,
             chosen_action: (*chosen_action).clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash: *policy_hash,
             decision_commitment: Hash32([0u8; 32]), // Set by caller or Decision::new
         })
     }
@@ -207,7 +207,7 @@ impl Selector for EpsilonConstraintSelector {
         Ok(Decision {
             chosen_index: *chosen_index,
             chosen_action: (*chosen_action).clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash: *policy_hash,
             decision_commitment: Hash32([0u8; 32]),
         })
     }
@@ -345,7 +345,7 @@ impl Selector for MinimaxRegretSelector {
                     })
                     .max()
                     .unwrap_or(0);
-                (*i, *c, max_regret, hash.clone())
+                (*i, *c, max_regret, *hash)
             })
             .collect();
 
@@ -362,7 +362,7 @@ impl Selector for MinimaxRegretSelector {
         Ok(Decision {
             chosen_index: *chosen_index,
             chosen_action: (*chosen_action).clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash: *policy_hash,
             decision_commitment: Hash32([0u8; 32]),
         })
     }

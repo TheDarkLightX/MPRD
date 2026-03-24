@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 mod commands;
 mod operator;
+#[cfg(test)]
+mod test_support;
 
 /// MPRD: Model Proposes, Rules Decide
 ///

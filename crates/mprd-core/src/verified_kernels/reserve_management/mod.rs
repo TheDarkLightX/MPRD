@@ -1,5 +1,6 @@
 //! reserve_management kernel module.
 //! Generated from IR hash: 15084fdc29fbdc88
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

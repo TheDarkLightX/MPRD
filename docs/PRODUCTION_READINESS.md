@@ -2,6 +2,10 @@
 
 `internal/specs/production_readiness_checklist.md` is the master checklist, but `/internal` is gitignored; this file tracks current repo status in a git-tracked location.
 
+For the narrower question "what still blocks an honest RC1 claim right now?", see
+[RC1_BLOCKERS.md](RC1_BLOCKERS.md). This file tracks implementation
+status; the RC1 board separates automated green gates from still-open Tier-0 release blockers.
+
 ## Implemented (MUSTs)
 
 - **Fail-closed ZK journal pinning (B-Full/C)**: `crates/mprd-risc0-shared/src/lib.rs`

@@ -185,7 +185,7 @@ impl ExecutorAdapter for HttpExecutor {
             request = request.header("Idempotency-Key", hex::encode(token.nonce_or_tx_hash.0));
 
             match request.send() {
-                Ok(mut response) => {
+                Ok(response) => {
                     let status = response.status();
                     if status.is_success() {
                         // Check Content-Length before reading body (DoS prevention fast path).

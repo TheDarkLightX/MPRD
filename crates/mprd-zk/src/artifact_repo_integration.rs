@@ -281,7 +281,7 @@ mod tests {
         // Build and sign registry state (v2).
         let state = RegistryStateV1 {
             policy_epoch,
-            registry_root: registry_root.clone(),
+            registry_root,
             authorized_policies: vec![],
             guest_image_manifest: manifest.clone(),
         };
