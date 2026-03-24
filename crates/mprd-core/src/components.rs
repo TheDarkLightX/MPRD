@@ -14,9 +14,9 @@ use crate::verified_kernels::executor_circuit_breaker;
 use crate::{
     hash::candidate_hash_preimage,
     hash::{hash_candidate, hash_state},
-    CandidateAction, Decision, DecisionToken, ExecutionResult, ExecutorAdapter, Hash32, NonceHash,
-    ProofBundle, Proposer, Result, Score, StateProvider, StateSnapshot, Value, VerificationStatus,
-    ZkAttestor, ZkLocalVerifier,
+    CandidateAction, DecisionToken, ExecutionResult, ExecutorAdapter, Hash32, NonceHash,
+    ProofBundle, Proposer, Result, Score, StateProvider, StateSnapshot, Value,
+    VerificationStatus, ZkAttestor, ZkLocalVerifier,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -321,15 +321,16 @@ impl Default for StubZkAttestor {
 }
 
 impl ZkAttestor for StubZkAttestor {
-    fn attest(
+    fn attest_ready(
         &self,
-        token: &DecisionToken,
-        decision: &Decision,
-        state: &StateSnapshot,
+        ready: &crate::AttestationReadyBundle<'_>,
         candidates: &[CandidateAction],
     ) -> Result<ProofBundle> {
         use crate::hash::hash_candidate_set;
 
+        let token = ready.token();
+        let decision = ready.decision();
+        let state = ready.state();
         let candidate_set_hash = hash_candidate_set(candidates);
         let chosen_action_preimage = candidate_hash_preimage(&decision.chosen_action);
 
@@ -1177,7 +1178,7 @@ pub fn wrap_executor_with_guards(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PolicyRef;
+    use crate::{Decision, PolicyRef};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 

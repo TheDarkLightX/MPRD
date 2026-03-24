@@ -260,6 +260,28 @@ impl<'a> ExecutionReadyBundle<'a> {
     }
 }
 
+/// A token/decision/state packet admitted for attestation after fail-closed identity checks.
+#[derive(Clone, Copy, Debug)]
+pub struct AttestationReadyBundle<'a> {
+    token: &'a DecisionToken,
+    decision: &'a Decision,
+    state: &'a StateSnapshot,
+}
+
+impl<'a> AttestationReadyBundle<'a> {
+    pub fn token(&self) -> &'a DecisionToken {
+        self.token
+    }
+
+    pub fn decision(&self) -> &'a Decision {
+        self.decision
+    }
+
+    pub fn state(&self) -> &'a StateSnapshot {
+        self.state
+    }
+}
+
 /// Concrete policy authority witness carried on the RC1 path.
 ///
 /// This binds the exact `(policy_hash, policy_ref)` pair the orchestrator was authorized to use
@@ -426,6 +448,41 @@ pub fn prepare_execution_ready<'a>(verified: VerifiedBundle<'a>) -> Result<Execu
     Ok(ExecutionReadyBundle { verified, boundary })
 }
 
+/// Upgrade token, decision, and state inputs into an attestation-ready bundle after checking that
+/// they still agree on the selected action and observed state identity.
+pub fn prepare_attestation_ready<'a>(
+    token: &'a DecisionToken,
+    decision: &'a Decision,
+    state: &'a StateSnapshot,
+) -> Result<AttestationReadyBundle<'a>> {
+    if token.policy_hash != decision.policy_hash {
+        return Err(MprdError::InvalidInput(
+            "token policy_hash drifted from selected decision before attestation".into(),
+        ));
+    }
+    if token.state_hash != state.state_hash {
+        return Err(MprdError::InvalidInput(
+            "token state_hash drifted from observed snapshot before attestation".into(),
+        ));
+    }
+    if token.state_ref != state.state_ref {
+        return Err(MprdError::InvalidInput(
+            "token state_ref drifted from observed snapshot before attestation".into(),
+        ));
+    }
+    if token.chosen_action_hash != hash::hash_candidate(&decision.chosen_action) {
+        return Err(MprdError::InvalidInput(
+            "token chosen_action_hash drifted from selected decision before attestation".into(),
+        ));
+    }
+
+    Ok(AttestationReadyBundle {
+        token,
+        decision,
+        state,
+    })
+}
+
 /// Unified error type for MPRD core operations.
 #[derive(Debug, Error)]
 pub enum MprdError {
@@ -540,6 +597,16 @@ pub trait Selector {
 
 /// Produces a ZK proof bundle (Risc0) for a given decision.
 pub trait ZkAttestor {
+    /// Preferred RC1 path: attest from an already-validated token/decision/state packet.
+    ///
+    /// Postconditions:
+    /// - Returned bundle commitments are consistent with the admitted attestation inputs.
+    fn attest_ready(
+        &self,
+        ready: &AttestationReadyBundle<'_>,
+        candidates: &[CandidateAction],
+    ) -> Result<ProofBundle>;
+
     /// Preconditions:
     /// - `token` was produced by the configured `DecisionTokenFactory` for `decision` and `state`.
     /// - `decision` was produced by a compliant `Selector`.
@@ -553,7 +620,10 @@ pub trait ZkAttestor {
         decision: &Decision,
         state: &StateSnapshot,
         candidates: &[CandidateAction],
-    ) -> Result<ProofBundle>;
+    ) -> Result<ProofBundle> {
+        let ready = prepare_attestation_ready(token, decision, state)?;
+        self.attest_ready(&ready, candidates)
+    }
 }
 
 /// Verification outcome for ZK proofs.
@@ -845,6 +915,82 @@ mod tests {
 
         let err = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).unwrap_err();
         assert!(matches!(err, MprdError::ExecutionError(_)));
+    }
+
+    #[test]
+    fn prepare_attestation_ready_accepts_aligned_inputs() {
+        let candidate = valid_http_call_candidate();
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash: dummy_hash(16),
+            decision_commitment: dummy_hash(17),
+        };
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(18),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(19),
+                state_epoch: 2,
+                state_attestation_hash: dummy_hash(20),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: decision.policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 1,
+                registry_root: dummy_hash(21),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: hash::hash_candidate(&decision.chosen_action),
+            nonce_or_tx_hash: dummy_hash(22),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+
+        let ready = prepare_attestation_ready(&token, &decision, &state).expect("ready");
+        assert_eq!(ready.token(), &token);
+        assert_eq!(ready.decision(), &decision);
+        assert_eq!(ready.state(), &state);
+    }
+
+    #[test]
+    fn prepare_attestation_ready_rejects_chosen_action_hash_drift() {
+        let candidate = valid_http_call_candidate();
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate,
+            policy_hash: dummy_hash(23),
+            decision_commitment: dummy_hash(24),
+        };
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(25),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(26),
+                state_epoch: 3,
+                state_attestation_hash: dummy_hash(27),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: decision.policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 1,
+                registry_root: dummy_hash(28),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: dummy_hash(29),
+            nonce_or_tx_hash: dummy_hash(30),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+
+        let err = prepare_attestation_ready(&token, &decision, &state).unwrap_err();
+        assert!(matches!(err, MprdError::InvalidInput(message) if message == "token chosen_action_hash drifted from selected decision before attestation"));
     }
 
     #[test]

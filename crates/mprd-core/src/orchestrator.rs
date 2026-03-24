@@ -307,17 +307,13 @@ where
     debug!(nonce = %hex::encode(&token.nonce_or_tx_hash.0[..8]), "Token created");
 
     // 6. Attest with ZK
+    let attest_ready = crate::prepare_attestation_ready(&token, &decision, &state)
+        .inspect_err(|e| record_stage_failure(inputs.metrics, "attest_input", e))?;
     debug!("Generating attestation");
     let proof: ProofBundle = if let Some(m) = inputs.metrics {
-        metrics::timed_attest(m, || {
-            inputs
-                .attestor
-                .attest(&token, &decision, &state, &candidates)
-        })
+        metrics::timed_attest(m, || inputs.attestor.attest_ready(&attest_ready, &candidates))
     } else {
-        inputs
-            .attestor
-            .attest(&token, &decision, &state, &candidates)
+        inputs.attestor.attest_ready(&attest_ready, &candidates)
     }
     .inspect_err(|e| record_stage_failure(inputs.metrics, "attest", e))?;
     debug!("Attestation complete");
@@ -781,19 +777,44 @@ mod tests {
         }
     }
 
+    struct LoggedChosenActionHashDriftTokenFactory {
+        log: CallLog,
+    }
+
+    impl DecisionTokenFactory for LoggedChosenActionHashDriftTokenFactory {
+        fn create_from_binding(
+            &self,
+            binding: &crate::DecisionTokenBindingWitnessV1,
+            nonce_or_tx_hash: Option<crate::NonceHash>,
+        ) -> Result<DecisionToken> {
+            push_call(&self.log, "token");
+            Ok(DecisionToken {
+                policy_hash: *binding.policy_hash(),
+                policy_ref: binding.policy_ref().clone(),
+                state_hash: *binding.state_hash(),
+                state_ref: binding.state_ref().clone(),
+                chosen_action_hash: dummy_hash(97),
+                nonce_or_tx_hash: nonce_or_tx_hash.unwrap_or_else(|| dummy_hash(3)),
+                timestamp_ms: 0,
+                signature: vec![],
+            })
+        }
+    }
+
     struct LoggedAttestor {
         log: CallLog,
     }
 
     impl ZkAttestor for LoggedAttestor {
-        fn attest(
+        fn attest_ready(
             &self,
-            token: &DecisionToken,
-            decision: &Decision,
-            state: &StateSnapshot,
+            ready: &crate::AttestationReadyBundle<'_>,
             _candidates: &[CandidateAction],
         ) -> Result<ProofBundle> {
             push_call(&self.log, "attest");
+            let token = ready.token();
+            let decision = ready.decision();
+            let state = ready.state();
             let mut metadata = HashMap::new();
             metadata.insert(
                 "nonce_or_tx_hash".into(),
@@ -979,13 +1000,14 @@ mod tests {
     struct DummyAttestor;
 
     impl ZkAttestor for DummyAttestor {
-        fn attest(
+        fn attest_ready(
             &self,
-            token: &DecisionToken,
-            decision: &Decision,
-            state: &StateSnapshot,
+            ready: &crate::AttestationReadyBundle<'_>,
             _candidates: &[CandidateAction],
         ) -> Result<ProofBundle> {
+            let token = ready.token();
+            let decision = ready.decision();
+            let state = ready.state();
             let mut metadata = HashMap::new();
             metadata.insert(
                 "nonce_or_tx_hash".into(),
@@ -1010,13 +1032,14 @@ mod tests {
     struct MissingChosenActionPreimageAttestor;
 
     impl ZkAttestor for MissingChosenActionPreimageAttestor {
-        fn attest(
+        fn attest_ready(
             &self,
-            token: &DecisionToken,
-            decision: &Decision,
-            state: &StateSnapshot,
+            ready: &crate::AttestationReadyBundle<'_>,
             _candidates: &[CandidateAction],
         ) -> Result<ProofBundle> {
+            let token = ready.token();
+            let decision = ready.decision();
+            let state = ready.state();
             let mut metadata = HashMap::new();
             metadata.insert(
                 "nonce_or_tx_hash".into(),
@@ -2146,6 +2169,64 @@ mod tests {
         });
 
         assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "token state_ref drifted from observed state snapshot"));
+        let calls = call_log_snapshot(&log);
+        assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
+        assert_pipeline_temporal_spec(&calls);
+    }
+
+    #[test]
+    fn run_once_fails_closed_when_token_factory_drifts_chosen_action_hash_from_selected_decision() {
+        let log = new_call_log();
+        let state_provider = LoggedStateProvider {
+            log: log.clone(),
+            state: StateSnapshot {
+                fields: HashMap::new(),
+                policy_inputs: HashMap::new(),
+                state_hash: dummy_hash(1),
+                state_ref: crate::StateRef::unknown(),
+            },
+        };
+        let proposer = LoggedProposer {
+            log: log.clone(),
+            candidates: vec![CandidateAction {
+                action_type: "noop".into(),
+                params: HashMap::new(),
+                score: Score(1),
+                candidate_hash: dummy_hash(2),
+            }],
+        };
+        let policy_engine = LoggedPolicyEngine { log: log.clone() };
+        let selector = LoggedSelector { log: log.clone() };
+        let token_factory = LoggedChosenActionHashDriftTokenFactory { log: log.clone() };
+        let attestor = LoggedAttestor { log: log.clone() };
+        let verifier = LoggedVerifier {
+            log: log.clone(),
+            status: VerificationStatus::Success,
+        };
+        let executor = LoggedExecutor { log: log.clone() };
+        let policy_hash = dummy_hash(9);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: dummy_hash(8),
+        };
+
+        let result = run_once(RunOnceInputs {
+            state_provider: &state_provider,
+            proposer: &proposer,
+            policy_engine: &policy_engine,
+            selector: &selector,
+            token_factory: &token_factory,
+            attestor: &attestor,
+            verifier: &verifier,
+            executor: &executor,
+            policy_hash: &policy_hash,
+            policy_ref,
+            nonce_or_tx_hash: None,
+            metrics: None,
+            audit_recorder: None,
+        });
+
+        assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "token chosen_action_hash drifted from selected decision before attestation"));
         let calls = call_log_snapshot(&log);
         assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
         assert_pipeline_temporal_spec(&calls);
