@@ -7,6 +7,7 @@ claim RC1. For current release status and missing evidence requirements, see
 [RC1_BLOCKERS.md](RC1_BLOCKERS.md).
 
 For unit-test and property-test best practices, see `docs/TESTING.md`.
+For the tracked Tier-0 boundary inventory, see [TIER0_BOUNDARY_MATRIX.md](TIER0_BOUNDARY_MATRIX.md).
 
 ## Why fuzzing helps (and when to use it)
 
@@ -64,3 +65,28 @@ Notes:
 
 - The targets rely on bounded deserialization to avoid allocation DoS during fuzzing.
 - For stateful / economic logic targets (ASDE), prefer longer runs and preserve the discovered corpus as regression material.
+
+## Tracked RC1 smoke campaign
+
+The pinned runner is:
+
+```bash
+tools/fuzz_smoke_rc1.sh --time-per-target 10
+```
+
+Optional slower economic extension:
+
+```bash
+tools/fuzz_smoke_rc1.sh --time-per-target 10 --include-asde
+```
+
+The tracked GitHub workflow is:
+
+- `.github/workflows/fuzz-smoke.yml`
+
+An initial merged-baseline receipt is checked in at:
+
+- `docs/receipts/rc1_fuzz_smoke_20260324.json`
+
+This narrows the RC1 fuzzing blocker from “no tracked evidence path” to “run the tracked campaign
+on the candidate commit and keep the summary artifact for that cut”.

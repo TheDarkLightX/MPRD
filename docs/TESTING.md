@@ -9,6 +9,7 @@ This repo treats “safe to change” as a primary objective. Tests are written 
 Related docs:
 - `docs/FUZZING.md` (coverage-guided fuzzing + stateful PBT pointers)
 - `docs/SECURITY_FUZZING.md` (internal fuzzing workflow)
+- `docs/TIER0_BOUNDARY_MATRIX.md` (explicit RC1 boundary-value inventory for critical surfaces)
 
 ## Unit tests (Rust): practical rules
 

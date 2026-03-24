@@ -1,0 +1,63 @@
+name: Fuzz Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      time_per_target:
+        description: Seconds to fuzz each target
+        required: false
+        default: "10"
+      include_asde:
+        description: Include slower ASDE economic fuzz targets
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly toolchain
+        run: rustup toolchain install nightly --profile minimal
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked --version 0.13.1
+
+      - name: Run RC1 fuzz smoke campaign
+        env:
+          TIME_PER_TARGET: ${{ inputs.time_per_target }}
+          INCLUDE_ASDE: ${{ inputs.include_asde }}
+        run: |
+          time_arg="${TIME_PER_TARGET:-10}"
+          if [[ -z "${time_arg}" ]]; then
+            time_arg="10"
+          fi
+
+          extra_args=()
+          if [[ "${INCLUDE_ASDE:-false}" == "true" ]]; then
+            extra_args+=(--include-asde)
+          fi
+
+          tools/fuzz_smoke_rc1.sh \
+            --time-per-target "${time_arg}" \
+            "${extra_args[@]}" \
+            --summary fuzz/artifacts/rc1_fuzz_smoke_summary.json
+
+      - name: Upload fuzz smoke summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc1-fuzz-smoke-summary
+          path: fuzz/artifacts/rc1_fuzz_smoke_summary.json
+
+      - name: Upload fuzz crash artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc1-fuzz-artifacts
+          path: fuzz/artifacts
+          if-no-files-found: ignore

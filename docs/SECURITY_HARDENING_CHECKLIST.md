@@ -88,6 +88,7 @@ This checklist is intended to be used as a **production security gate** for MPRD
   - receipt/journal decoding (host-side)
   - Status: `docs/FUZZING.md`
   - Status: ✅ fuzz targets present under `fuzz/`
+  - Tracked smoke campaign: `tools/fuzz_smoke_rc1.sh`, workflow `.github/workflows/fuzz-smoke.yml`
 
 ## 9) Code quality gates (best practices)
 

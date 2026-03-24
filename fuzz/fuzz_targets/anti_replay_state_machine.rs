@@ -2,7 +2,10 @@
 
 use libfuzzer_sys::fuzz_target;
 use mprd_core::anti_replay::{AntiReplayConfig, AntiReplayExecutor, DistributedNonceStore, DistributedNonceTracker};
-use mprd_core::{DecisionToken, ExecutionResult, ExecutorAdapter, Hash32, MprdError, PolicyRef, ProofBundle, Result, StateRef};
+use mprd_core::{
+    DecisionToken, ExecutionResult, ExecutorAdapter, Hash32, MprdError, PolicyRef, ProofBundle,
+    Result, StateRef, VerificationStatus, ZkLocalVerifier,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -60,7 +63,8 @@ impl RecordingParityExecutor {
 }
 
 impl ExecutorAdapter for RecordingParityExecutor {
-    fn execute(&self, token: &DecisionToken, _proof: &ProofBundle) -> Result<ExecutionResult> {
+    fn execute(&self, verified: &mprd_core::VerifiedBundle<'_>) -> Result<ExecutionResult> {
+        let token = verified.token();
         let b = token.nonce_or_tx_hash.0[0];
         let mut map = self.calls_by_nonce_byte.lock().map_err(|_| {
             MprdError::ExecutionError("recording executor lock poisoned".into())
@@ -73,6 +77,14 @@ impl ExecutorAdapter for RecordingParityExecutor {
             success,
             message: None,
         })
+    }
+}
+
+struct AllowAllVerifier;
+
+impl ZkLocalVerifier for AllowAllVerifier {
+    fn verify(&self, _token: &DecisionToken, _proof: &ProofBundle) -> VerificationStatus {
+        VerificationStatus::Success
     }
 }
 
@@ -153,6 +165,7 @@ fuzz_target!(|data: &[u8]| {
     let (mode, steps) = parse_steps(data);
 
     let inner = RecordingParityExecutor::default();
+    let verifier = AllowAllVerifier;
 
     // This target focuses on nonce-claim/idempotency semantics. Use permissive timestamp bounds so
     // inputs don't get filtered out as expired/future and so failures remain reproducible.
@@ -174,9 +187,11 @@ fuzz_target!(|data: &[u8]| {
             for step in steps {
                 let token = token_for(step.nonce_byte, base_ms + step.timestamp_ms);
                 let proof = proof_for(&token);
+                let verified =
+                    mprd_core::verify_for_execution(&verifier, &token, &proof).expect("verified");
 
                 let expect_replay = succeeded.contains(&step.nonce_byte);
-                let result = exec.execute(&token, &proof);
+                let result = exec.execute(&verified);
 
                 if expect_replay {
                     // If the nonce was successfully used before, any further attempt must fail
@@ -219,10 +234,12 @@ fuzz_target!(|data: &[u8]| {
             for step in steps {
                 let token = token_for(step.nonce_byte, base_ms + step.timestamp_ms);
                 let proof = proof_for(&token);
+                let verified =
+                    mprd_core::verify_for_execution(&verifier, &token, &proof).expect("verified");
                 let executor = if step.node == 0 { &exec0 } else { &exec1 };
 
                 let expect_replay = claimed.contains(&step.nonce_byte);
-                let result = executor.execute(&token, &proof);
+                let result = executor.execute(&verified);
                 if expect_replay {
                     // For a claimed nonce, any failure is acceptable (fail-closed). The key
                     // security property is: it must not reach side effects.

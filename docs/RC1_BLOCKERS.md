@@ -41,11 +41,8 @@ These gates are necessary, but not sufficient, for RC1.
 ### Tier 0: Test Evidence
 
 - Fuzzing is present but not release-complete.
-  - Current state: real `cargo-fuzz` targets exist and are documented.
-  - Missing: tracked release receipts or a pinned CI/manual campaign proving current coverage was actually run for the RC1 cut.
-- Boundary value analysis is still partial.
-  - Current state: BVA guidance exists and many property tests use edge-focused generators.
-  - Missing: an explicit Tier-0 boundary matrix showing critical execution, parsing, replay, governance, and policy surfaces are covered.
+  - Current state: real `cargo-fuzz` targets exist, the tracked smoke runner is `tools/fuzz_smoke_rc1.sh`, and the tracked workflow is `.github/workflows/fuzz-smoke.yml`.
+  - Missing: a successful summary artifact from that tracked campaign on the candidate commit for the RC1 cut.
 
 ### Tier 1: Operational / Policy Admission
 
@@ -64,5 +61,6 @@ MPRD should not be described as "RC1" until:
 
 - [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)
 - [FUZZING.md](FUZZING.md)
+- [TIER0_BOUNDARY_MATRIX.md](TIER0_BOUNDARY_MATRIX.md)
 - [SECURITY_HARDENING_CHECKLIST.md](SECURITY_HARDENING_CHECKLIST.md)
 - [PARALLELIZATION_AND_NETWORK_RESILIENCE.md](PARALLELIZATION_AND_NETWORK_RESILIENCE.md)
