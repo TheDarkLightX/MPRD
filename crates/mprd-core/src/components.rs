@@ -9,7 +9,6 @@ use crate::anti_replay::{
     SharedFsDistributedNonceStore,
 };
 use crate::orchestrator::DecisionTokenFactory;
-use crate::verified_kernels::executor_action_preimage_binding;
 use crate::verified_kernels::executor_circuit_breaker;
 use crate::{
     hash::candidate_hash_preimage,
@@ -631,90 +630,15 @@ impl ExecutionGuardBoxedExecutor {
     pub fn new(inner: Box<dyn ExecutorAdapter + Send + Sync>) -> Self {
         Self { inner }
     }
-
-    fn evaluate_gate_state(
-        verified: &crate::VerifiedBundle<'_>,
-    ) -> executor_action_preimage_binding::State {
-        let token = verified.token();
-        let proof = verified.proof();
-
-        let preimage_present = !proof.chosen_action_preimage.is_empty();
-
-        let limits_binding_ok =
-            crate::limits::verify_limits_binding_v1(&proof.limits_hash, &proof.limits_bytes)
-                .and_then(|_| crate::limits::parse_limits_v1(&proof.limits_bytes).map(|_| ()))
-                .is_ok();
-
-        let action_hash_matches = if preimage_present {
-            let h = crate::hash::hash_candidate_preimage_v1(&proof.chosen_action_preimage);
-            h == token.chosen_action_hash && h == proof.chosen_action_hash
-        } else {
-            false
-        };
-
-        let schema_valid = if preimage_present {
-            match crate::validation::decode_candidate_preimage_v1(&proof.chosen_action_preimage) {
-                Ok((action_type, params, _score)) => {
-                    crate::validation::validate_action_schema_v1(&action_type, &params).is_ok()
-                }
-                Err(_) => false,
-            }
-        } else {
-            false
-        };
-
-        executor_action_preimage_binding::State {
-            preimage_present,
-            limits_binding_ok,
-            action_hash_matches,
-            schema_valid,
-            result: executor_action_preimage_binding::ModelResult::Pending,
-        }
-    }
-
-    fn enforce(verified: &crate::VerifiedBundle<'_>) -> Result<()> {
-        let computed = Self::evaluate_gate_state(verified);
-        executor_action_preimage_binding::check_invariants(&computed).map_err(|e| {
-            crate::MprdError::BoundedValueExceeded(format!(
-                "executor_action_preimage_binding invariants failed: {e}"
-            ))
-        })?;
-
-        let cmd = if computed.preimage_present
-            && computed.limits_binding_ok
-            && computed.action_hash_matches
-            && computed.schema_valid
-        {
-            executor_action_preimage_binding::Command::Execute
-        } else {
-            executor_action_preimage_binding::Command::Reject
-        };
-
-        let (post, _) = executor_action_preimage_binding::step(&computed, cmd).map_err(|e| {
-            crate::MprdError::InvalidInput(format!(
-                "execution guard rejected (preimage/limits/schema): {e}"
-            ))
-        })?;
-
-        match post.result {
-            executor_action_preimage_binding::ModelResult::Executed => Ok(()),
-            executor_action_preimage_binding::ModelResult::Rejected => {
-                Err(crate::MprdError::InvalidInput(
-                    "execution guard rejected (preimage/limits/schema)".into(),
-                ))
-            }
-            executor_action_preimage_binding::ModelResult::Pending => Err(
-                crate::MprdError::ExecutionError("execution guard returned pending result".into()),
-            ),
-        }
-    }
 }
 
 impl ExecutorAdapter for ExecutionGuardBoxedExecutor {
     fn execute(&self, verified: &crate::VerifiedBundle<'_>) -> Result<ExecutionResult> {
-        // SECURITY: enforce committed transcript binding at the executor boundary.
-        Self::enforce(verified)?;
-        self.inner.execute(verified)
+        // SECURITY: upgrade raw verified input onto the witness-native execution path before
+        // delegating, so the executor boundary is enforced by constructor-gated witnesses rather
+        // than ad hoc booleans.
+        let ready = crate::prepare_execution_ready(*verified)?;
+        self.inner.execute_ready(&ready)
     }
 
     fn execute_ready(&self, ready: &crate::ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
@@ -1672,6 +1596,46 @@ mod tests {
         };
 
         (token, proof)
+    }
+
+    #[test]
+    fn execution_guard_boxed_executor_execute_upgrades_to_ready_path() {
+        let (token, proof) = noop_token_and_proof(dummy_hash(0x40));
+        let raw_calls = Arc::new(AtomicUsize::new(0));
+        let ready_calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(ReadyOnlyExecutor {
+            raw_calls: raw_calls.clone(),
+            ready_calls: ready_calls.clone(),
+        });
+        let executor = ExecutionGuardBoxedExecutor::new(inner);
+
+        let verified = crate::VerifiedBundle::new(&token, &proof);
+        let result = executor.execute(&verified);
+        assert!(result.is_ok());
+        assert_eq!(raw_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(ready_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn execution_guard_boxed_executor_execute_rejects_invalid_limits_before_side_effects() {
+        let (token, mut proof) = noop_token_and_proof(dummy_hash(0x41));
+        proof.limits_hash = dummy_hash(0x42);
+
+        let raw_calls = Arc::new(AtomicUsize::new(0));
+        let ready_calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(ReadyOnlyExecutor {
+            raw_calls: raw_calls.clone(),
+            ready_calls: ready_calls.clone(),
+        });
+        let executor = ExecutionGuardBoxedExecutor::new(inner);
+
+        let verified = crate::VerifiedBundle::new(&token, &proof);
+        let err = executor.execute(&verified).unwrap_err();
+        assert!(
+            matches!(err, crate::MprdError::InvalidInput(message) if message == "limits_bytes hash mismatch")
+        );
+        assert_eq!(raw_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(ready_calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]
