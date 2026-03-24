@@ -227,11 +227,16 @@ impl<'a> VerifiedBundle<'a> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutionBoundaryWitnessV1 {
     chosen_action_preimage: Vec<u8>,
+    limits_binding: limits::LimitsBindingWitnessV1,
 }
 
 impl ExecutionBoundaryWitnessV1 {
     pub fn chosen_action_preimage(&self) -> &[u8] {
         &self.chosen_action_preimage
+    }
+
+    pub fn limits_binding(&self) -> &limits::LimitsBindingWitnessV1 {
+        &self.limits_binding
     }
 }
 
@@ -583,11 +588,11 @@ pub fn execution_boundary_witness_v1(
     let token = verified.token();
     let proof = verified.proof();
 
-    limits::verify_limits_binding_v1(&proof.limits_hash, &proof.limits_bytes)?;
-    let _ = limits::parse_limits_v1(&proof.limits_bytes)?;
+    let limits_binding =
+        limits::limits_binding_witness_v1(&proof.limits_hash, &proof.limits_bytes)?;
 
     if proof.chosen_action_preimage.is_empty() {
-        return Err(MprdError::ExecutionError(
+        return Err(MprdError::InvalidInput(
             "missing chosen_action_preimage (execution boundary requires committed action bytes)"
                 .into(),
         ));
@@ -595,7 +600,7 @@ pub fn execution_boundary_witness_v1(
 
     let h = hash::hash_candidate_preimage_v1(&proof.chosen_action_preimage);
     if h != token.chosen_action_hash || h != proof.chosen_action_hash {
-        return Err(MprdError::ExecutionError(
+        return Err(MprdError::InvalidInput(
             "chosen_action_preimage hash mismatch".into(),
         ));
     }
@@ -606,6 +611,7 @@ pub fn execution_boundary_witness_v1(
 
     Ok(ExecutionBoundaryWitnessV1 {
         chosen_action_preimage: proof.chosen_action_preimage.clone(),
+        limits_binding,
     })
 }
 
@@ -1087,6 +1093,10 @@ mod tests {
             ready.boundary().chosen_action_preimage(),
             proof.chosen_action_preimage.as_slice()
         );
+        assert_eq!(
+            ready.boundary().limits_binding().limits(),
+            &limits::LimitsV1::default()
+        );
     }
 
     #[test]
@@ -1118,7 +1128,7 @@ mod tests {
         };
 
         let err = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).unwrap_err();
-        assert!(matches!(err, MprdError::ExecutionError(_)));
+        assert!(matches!(err, MprdError::InvalidInput(_)));
     }
 
     #[test]

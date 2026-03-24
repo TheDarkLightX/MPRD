@@ -18,6 +18,19 @@ pub struct LimitsV1 {
     pub mode_c_encryption_ctx_hash: Option<Hash32>,
 }
 
+/// Concrete witness that `limits_hash` admits exactly these canonical limits bytes.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LimitsBindingWitnessV1 {
+    limits: LimitsV1,
+}
+
+impl LimitsBindingWitnessV1 {
+    pub fn limits(&self) -> &LimitsV1 {
+        &self.limits
+    }
+}
+
 /// Domain separation tag for Mode C encryption binding context (v1).
 pub const MODE_C_ENCRYPTION_CTX_DOMAIN_V1: &[u8] = b"MPRD_MODE_C_ENCRYPTION_CTX_V1";
 
@@ -99,6 +112,16 @@ pub fn verify_limits_binding_v1(limits_hash: &Hash32, limits_bytes: &[u8]) -> Re
         return Err(MprdError::InvalidInput("limits_bytes hash mismatch".into()));
     }
     Ok(())
+}
+
+/// Construct a concrete limits-binding witness after fail-closed hash and parse checks.
+pub fn limits_binding_witness_v1(
+    limits_hash: &Hash32,
+    limits_bytes: &[u8],
+) -> Result<LimitsBindingWitnessV1> {
+    verify_limits_binding_v1(limits_hash, limits_bytes)?;
+    let limits = parse_limits_v1(limits_bytes)?;
+    Ok(LimitsBindingWitnessV1 { limits })
 }
 
 /// Compute a deterministic Mode C encryption context hash (v1).
@@ -190,10 +213,10 @@ mod tests {
         }
 
         #[test]
-        fn verify_limits_binding_accepts_self_hash(bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
-            let h = limits_hash_v1(&bytes);
-            verify_limits_binding_v1(&h, &bytes).expect("self binding");
-        }
+    fn verify_limits_binding_accepts_self_hash(bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
+        let h = limits_hash_v1(&bytes);
+        verify_limits_binding_v1(&h, &bytes).expect("self binding");
+    }
 
         #[test]
         fn verify_limits_binding_rejects_modified_hash(
@@ -212,5 +235,23 @@ mod tests {
             let parsed = parse_limits_v1(&bytes).expect("parse");
             prop_assert_eq!(parsed.mode_c_encryption_ctx_hash, Some(ctx));
         }
+    }
+
+    #[test]
+    fn limits_binding_witness_accepts_self_hash_and_exposes_parsed_limits() {
+        let mut bytes = vec![tags::MPB_FUEL_LIMIT];
+        bytes.extend_from_slice(&7u32.to_le_bytes());
+        let hash = limits_hash_v1(&bytes);
+        let witness = limits_binding_witness_v1(&hash, &bytes).expect("witness");
+        assert_eq!(witness.limits().mpb_fuel_limit, Some(7));
+    }
+
+    #[test]
+    fn limits_binding_witness_rejects_hash_mismatch() {
+        let bytes = vec![tags::MPB_FUEL_LIMIT, 1, 0, 0, 0];
+        let err = limits_binding_witness_v1(&Hash32([0x44; 32]), &bytes).unwrap_err();
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "limits_bytes hash mismatch")
+        );
     }
 }
