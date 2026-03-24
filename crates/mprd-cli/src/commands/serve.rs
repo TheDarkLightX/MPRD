@@ -482,7 +482,7 @@ async fn run_handler(
                 verifier: &verifier,
                 executor: &executor,
                 policy_hash: &target_policy.policy_hash,
-                policy_ref: policy_ref,
+                policy_ref,
                 nonce_or_tx_hash: None, // Generated internally if None
                 metrics: None,
                 audit_recorder: Some(&audit),
@@ -922,7 +922,7 @@ async fn api_autopilot_mode(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let from = current.mode.clone();
+    let from = current.mode;
     let updated = state
         .store
         .set_autopilot_mode(req.mode)

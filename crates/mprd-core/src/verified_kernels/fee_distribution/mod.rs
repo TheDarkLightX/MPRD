@@ -1,5 +1,6 @@
 //! fee_distribution kernel module.
 //! Generated from IR hash: 164fe74e2800ce63
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

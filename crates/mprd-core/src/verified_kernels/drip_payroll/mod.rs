@@ -1,5 +1,6 @@
 //! drip_payroll kernel module.
 //! Generated from IR hash: e5fb4d8192c1e051
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

@@ -1,5 +1,6 @@
 //! decision_token_timestamp_freshness kernel module.
 //! Generated from IR hash: 8c3ade6f705a7ae2
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

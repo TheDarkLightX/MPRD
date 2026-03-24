@@ -2,6 +2,7 @@ use super::{build_app, AppState};
 use crate::operator::api as op_api;
 use crate::operator::auth::ApiKeyConfig;
 use crate::operator::store::OperatorStore;
+use crate::test_support::EnvGuard;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use mprd_core::{
@@ -13,40 +14,9 @@ use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::sync::{Arc, RwLock};
 use std::task::{Context, Poll};
 use tower::ServiceExt;
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-struct EnvGuard {
-    prev: Vec<(&'static str, Option<String>)>,
-    _lock: MutexGuard<'static, ()>,
-}
-
-impl EnvGuard {
-    fn set_many(vars: &[(&'static str, &str)]) -> Self {
-        let lock = ENV_LOCK.lock().expect("env lock");
-        let mut prev = Vec::with_capacity(vars.len());
-        for (key, value) in vars {
-            prev.push((*key, std::env::var(key).ok()));
-            std::env::set_var(key, value);
-        }
-        Self { prev, _lock: lock }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (key, prev) in self.prev.drain(..) {
-            if let Some(prev) = prev {
-                std::env::set_var(key, prev);
-            } else {
-                std::env::remove_var(key);
-            }
-        }
-    }
-}
 
 fn test_state(tmp: &tempfile::TempDir) -> AppState {
     let policy_dir = tmp.path().join("policies");
@@ -175,15 +145,15 @@ fn write_simple_decision_with_policy(
     let nonce_or_tx_hash = Hash32([4u8; 32]);
 
     let token = DecisionToken {
-        policy_hash: policy_hash.clone(),
+        policy_hash,
         policy_ref: PolicyRef {
             policy_epoch: 1,
             registry_root: Hash32([9u8; 32]),
         },
-        state_hash: state_hash.clone(),
+        state_hash,
         state_ref: StateRef::unknown(),
-        chosen_action_hash: chosen_action_hash.clone(),
-        nonce_or_tx_hash: nonce_or_tx_hash.clone(),
+        chosen_action_hash,
+        nonce_or_tx_hash,
         timestamp_ms,
         signature: vec![],
     };
@@ -198,7 +168,7 @@ fn write_simple_decision_with_policy(
     let decision = Decision {
         chosen_index: 0,
         chosen_action: candidate.clone(),
-        policy_hash: policy_hash.clone(),
+        policy_hash,
         decision_commitment: Hash32([6u8; 32]),
     };
 
@@ -211,12 +181,12 @@ fn write_simple_decision_with_policy(
     let state = StateSnapshot {
         fields: std::collections::HashMap::new(),
         policy_inputs: std::collections::HashMap::new(),
-        state_hash: state_hash.clone(),
+        state_hash,
         state_ref: StateRef::unknown(),
     };
 
     let proof = ProofBundle {
-        policy_hash: policy_hash.clone(),
+        policy_hash,
         state_hash,
         candidate_set_hash: Hash32([7u8; 32]),
         chosen_action_hash,
@@ -629,8 +599,7 @@ async fn decisions_filter_by_policy_hash() {
     let want_policy = Hash32([9u8; 32]);
     let other_policy = Hash32([8u8; 32]);
 
-    let _a =
-        write_simple_decision_with_policy(&store, 1_000, want_policy.clone(), true, Some(true));
+    let _a = write_simple_decision_with_policy(&store, 1_000, want_policy, true, Some(true));
     let _b = write_simple_decision_with_policy(&store, 2_000, other_policy, true, Some(true));
 
     let want_hex = hex::encode(want_policy.0);

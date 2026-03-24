@@ -1056,7 +1056,7 @@ mod tests {
 
             let mut inputs_scaled = inputs.clone();
             for item in inputs_scaled.iter_mut() {
-                item.weight = item.weight * 2;
+                item.weight *= 2;
             }
             let out2 =
                 capped_proportional_allocate_v1(&inputs_scaled, budget).expect("allocation ok");

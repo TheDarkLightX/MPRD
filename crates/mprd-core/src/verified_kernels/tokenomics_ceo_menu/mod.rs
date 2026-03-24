@@ -1,5 +1,6 @@
 //! tokenomics_ceo_menu kernel module.
 //! Generated from IR hash: ae4b29c5e59b31e9
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

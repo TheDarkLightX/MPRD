@@ -2,6 +2,10 @@
 
 This repo includes `cargo-fuzz` targets for the most security-sensitive byte-parsing paths.
 
+Important release-note boundary: fuzzing exists and is useful, but it is not yet sufficient by itself to
+claim RC1. For current release status and missing evidence requirements, see
+[RC1_BLOCKERS.md](RC1_BLOCKERS.md).
+
 For unit-test and property-test best practices, see `docs/TESTING.md`.
 
 ## Why fuzzing helps (and when to use it)

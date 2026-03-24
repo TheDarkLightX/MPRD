@@ -1682,7 +1682,7 @@ pub fn create_robust_attestor(config: &ModeConfig) -> Result<Box<dyn ZkAttestor>
             let mut store: HashMap<mprd_core::PolicyHash, crate::risc0_host::MpbPolicyArtifactV1> =
                 HashMap::new();
             store.insert(
-                policy_hash.clone(),
+                policy_hash,
                 crate::risc0_host::MpbPolicyArtifactV1 {
                     bytecode,
                     variables: vars,
@@ -1827,16 +1827,16 @@ mod tests {
         let decision = Decision {
             chosen_index: 0,
             chosen_action: candidate.clone(),
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             decision_commitment: dummy_hash(4),
         };
 
         let token = DecisionToken {
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             policy_ref: dummy_policy_ref(),
-            state_hash: state.state_hash.clone(),
+            state_hash: state.state_hash,
             state_ref: state.state_ref.clone(),
-            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash,
             nonce_or_tx_hash: dummy_hash(9),
             timestamp_ms: 0,
             signature: vec![],
@@ -1896,16 +1896,16 @@ mod tests {
         let decision = Decision {
             chosen_index: 0,
             chosen_action: candidate,
-            policy_hash: policy_hash.clone(),
+            policy_hash,
             decision_commitment: dummy_hash(4),
         };
 
         let token = DecisionToken {
             policy_hash,
             policy_ref: dummy_policy_ref(),
-            state_hash: state.state_hash.clone(),
+            state_hash: state.state_hash,
             state_ref: state.state_ref.clone(),
-            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            chosen_action_hash: decision.chosen_action.candidate_hash,
             nonce_or_tx_hash: dummy_hash(4),
             timestamp_ms: 0,
             signature: vec![],

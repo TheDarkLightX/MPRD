@@ -1,6 +1,7 @@
 //! Step function for executor_action_preimage_binding.
 //! This is the CBC kernel chokepoint.
 
+#![allow(clippy::absurd_extreme_comparisons, unused_comparisons)]
 use super::{command::Command, invariants::check_invariants, state::State, types::*};
 
 /// Effects produced by a transition (data, not side effects).

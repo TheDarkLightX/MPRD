@@ -10,6 +10,7 @@
 //! - can use:
 //!   - POR trace canonicalization (via certified oracle + canonicalizer), and/or
 //!   - symmetry quotienting for interchangeable buckets (via symmetry key)
+#![allow(clippy::too_many_arguments)]
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -19,6 +20,8 @@ use super::simplex_ample_set;
 use super::simplex_planner::{self, OracleCache};
 use super::simplex_por_oracle::{self, Transfer};
 use super::simplex_symmetry_key;
+
+type BestTracePorDecision = (i64, usize, u32, Vec<u32>, Option<Transfer>, Vec<u32>);
 
 /// Planning mode / dedup strategy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,12 +146,6 @@ fn sum_u32(xs: &[u32]) -> u64 {
     xs.iter().map(|&v| v as u64).sum()
 }
 
-fn lex_trace_key(k: usize, tr: &[Transfer]) -> Vec<u32> {
-    tr.iter()
-        .map(|&a| simplex_planner::action_key(k, a))
-        .collect()
-}
-
 /// Deterministic bounded-horizon planner for simplex transfer menus.
 ///
 /// - `objective` must be deterministic.
@@ -198,9 +195,9 @@ pub fn plan_best(
 
     // Best-so-far with deterministic tie-breakers.
     // (score desc, depth asc, first_action_key asc, target lex asc)
-    let mut best: Option<(i64, usize, u32, Vec<u32>, Option<Transfer>, Vec<u32>)> = None;
     let base_score = objective(x0);
-    best = Some((base_score, 0, 0, x0.to_vec(), None, x0.to_vec()));
+    let mut best: Option<BestTracePorDecision> =
+        Some((base_score, 0, 0, x0.to_vec(), None, x0.to_vec()));
 
     match mode {
         SimplexCeoMode::TracePor => {

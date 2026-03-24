@@ -384,10 +384,6 @@ mod simplex_bench {
         out[a.dst] = out[a.dst].saturating_add(1);
     }
 
-    fn action_key(k: usize, a: Action) -> u32 {
-        simplex_planner::action_key(k, a)
-    }
-
     /// Compact, deterministic rolling hash for an action trace.
     /// This is *not* cryptographic; it is for benchmarking storage/comparison costs.
     fn trace_key_hash(trace: &[Transfer], k: usize) -> u128 {
@@ -410,6 +406,7 @@ mod simplex_bench {
         black_box(h)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_trace_enum(
         k: usize,
         h: usize,
@@ -517,6 +514,7 @@ mod simplex_bench {
         (acc, expanded, generated, reached.len())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_state_bfs(
         k: usize,
         h: usize,
@@ -607,8 +605,8 @@ mod simplex_bench {
         let mut weights = vec![1u32; k];
         weights[0] = 7;
         weights[1] = 7;
-        for i in 2..k {
-            weights[i] = (i as u32) + 1;
+        for (i, weight) in weights.iter_mut().enumerate().skip(2) {
+            *weight = (i as u32) + 1;
         }
 
         // Full budget + long timeout so it finishes.
@@ -689,8 +687,8 @@ mod simplex_bench {
             weights[0] = 7;
             weights[1] = 7;
         }
-        for i in 2..k {
-            weights[i] = (i as u32) + 1;
+        for (i, weight) in weights.iter_mut().enumerate().skip(2) {
+            *weight = (i as u32) + 1;
         }
 
         // CEO decision-quality benchmark setup (linear objective).

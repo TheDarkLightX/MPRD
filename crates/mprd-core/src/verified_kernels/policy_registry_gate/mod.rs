@@ -1,5 +1,6 @@
 //! policy_registry_gate kernel module.
 //! Generated from IR hash: 77ffe7db0d63d30c
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

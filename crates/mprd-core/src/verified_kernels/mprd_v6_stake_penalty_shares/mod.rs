@@ -1,5 +1,6 @@
 //! mprd_v6_stake_penalty_shares kernel module.
 //! Generated from IR hash: 270a76fb9b62fd6c
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

@@ -1,5 +1,6 @@
 //! mprd_operator_mining_round kernel module.
 //! Generated from IR hash: c74b71cdaf21e05d
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

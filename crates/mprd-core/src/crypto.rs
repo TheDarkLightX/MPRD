@@ -350,7 +350,8 @@ mod tests {
         let token = make_token();
         let signature = signing_key.sign_token(&token);
 
-        let cases: &[(&str, fn(&mut DecisionToken))] = &[
+        type MutationCase = (&'static str, fn(&mut DecisionToken));
+        let cases: &[MutationCase] = &[
             ("policy_hash", flip_policy_hash),
             ("policy_epoch", bump_policy_epoch),
             ("registry_root", flip_registry_root),

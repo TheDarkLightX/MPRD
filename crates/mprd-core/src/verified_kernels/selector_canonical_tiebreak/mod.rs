@@ -1,5 +1,6 @@
 //! selector_canonical_tiebreak kernel module.
 //! Generated from IR hash: 9360e372b178f654
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

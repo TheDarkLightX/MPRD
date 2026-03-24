@@ -418,7 +418,7 @@ fn build_node_hash_to_atom_map(
 
     fn walk(
         expr: &PolicyExpr,
-        limits: PolicyLimits,
+        _limits: PolicyLimits,
         out: &mut BTreeMap<Hash32, String>,
     ) -> Result<()> {
         match expr {
@@ -430,16 +430,16 @@ fn build_node_hash_to_atom_map(
                 out.insert(policy_algebra::policy_hash_v1(expr), a.as_str().to_string());
                 Ok(())
             }
-            Not(p) => walk(p, limits, out),
+            Not(p) => walk(p, _limits, out),
             All(children) | Any(children) => {
                 for ch in children {
-                    walk(ch, limits, out)?;
+                    walk(ch, _limits, out)?;
                 }
                 Ok(())
             }
             Threshold { children, .. } => {
                 for ch in children {
-                    walk(ch, limits, out)?;
+                    walk(ch, _limits, out)?;
                 }
                 Ok(())
             }

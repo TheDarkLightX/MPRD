@@ -1,5 +1,6 @@
 //! artifact_commit_consistency_gate kernel module.
 //! Generated from IR hash: 1ffbd49cea5702be
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

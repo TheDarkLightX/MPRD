@@ -89,8 +89,8 @@ impl MpbPolicyEngine {
 
     /// Register a compiled policy.
     pub fn register(&mut self, policy: MpbPolicy) -> PolicyHash {
-        let hash = policy.policy_hash.clone();
-        self.policies.insert(hash.clone(), policy);
+        let hash = policy.policy_hash;
+        self.policies.insert(hash, policy);
         hash
     }
 
@@ -104,9 +104,7 @@ impl MpbPolicyEngine {
         let policy = self
             .policies
             .get(policy_hash)
-            .ok_or(MprdError::PolicyNotFound {
-                hash: policy_hash.clone(),
-            })?;
+            .ok_or(MprdError::PolicyNotFound { hash: *policy_hash })?;
 
         let registers = self.build_registers(policy, state, candidate);
 

@@ -8,7 +8,7 @@
 //! - Policy directory structure
 //! - Configuration sanity checks
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -20,16 +20,6 @@ pub enum CheckResult {
     Pass { message: String },
     Warn { message: String, suggestion: String },
     Fail { message: String, suggestion: String },
-}
-
-impl CheckResult {
-    fn is_failure(&self) -> bool {
-        matches!(self, CheckResult::Fail { .. })
-    }
-
-    fn is_warning(&self) -> bool {
-        matches!(self, CheckResult::Warn { .. })
-    }
 }
 
 /// Run all diagnostic checks.
@@ -349,8 +339,8 @@ mod tests {
             suggestion: "fix".into(),
         };
 
-        assert!(!pass.is_failure());
-        assert!(!warn.is_failure());
-        assert!(fail.is_failure());
+        assert!(!matches!(pass, CheckResult::Fail { .. }));
+        assert!(!matches!(warn, CheckResult::Fail { .. }));
+        assert!(matches!(fail, CheckResult::Fail { .. }));
     }
 }

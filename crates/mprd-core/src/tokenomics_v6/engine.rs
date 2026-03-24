@@ -87,25 +87,13 @@ pub struct EpochBudgetsV6 {
     pub unallocated: Agrs,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct EpochAgg {
     base_fees_gross: u64,
     tips_gross: u64,
     offset_total: u64,
     work_units_by_operator: BTreeMap<OperatorId, u64>,
     drip_applied: bool,
-}
-
-impl Default for EpochAgg {
-    fn default() -> Self {
-        Self {
-            base_fees_gross: 0,
-            tips_gross: 0,
-            offset_total: 0,
-            work_units_by_operator: BTreeMap::new(),
-            drip_applied: false,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -243,103 +231,103 @@ impl TokenomicsV6 {
         h.update(DOMAIN);
 
         // Params (CBC-validated at construction).
-        h.update(&self.params.burn_surplus_bps().get().to_le_bytes());
-        h.update(&self.params.auction_surplus_bps().get().to_le_bytes());
-        h.update(&self.params.ops_pay_bps().get().to_le_bytes());
-        h.update(&self.params.overhead_bps().get().to_le_bytes());
-        h.update(&self.params.drip_rate_bps().get().to_le_bytes());
-        h.update(&self.params.max_offset_per_tx_bps().get().to_le_bytes());
-        h.update(&self.params.max_offset_per_epoch_bps().get().to_le_bytes());
-        h.update(&self.params.ops_floor_fixed_agrs().get().to_le_bytes());
-        h.update(&self.params.reserve_target_agrs().get().to_le_bytes());
-        h.update(&self.params.carry_cap_agrs().get().to_le_bytes());
-        h.update(&self.params.share_rate_k().to_le_bytes());
-        h.update(&self.params.payout_lock_epochs().to_le_bytes());
+        h.update(self.params.burn_surplus_bps().get().to_le_bytes());
+        h.update(self.params.auction_surplus_bps().get().to_le_bytes());
+        h.update(self.params.ops_pay_bps().get().to_le_bytes());
+        h.update(self.params.overhead_bps().get().to_le_bytes());
+        h.update(self.params.drip_rate_bps().get().to_le_bytes());
+        h.update(self.params.max_offset_per_tx_bps().get().to_le_bytes());
+        h.update(self.params.max_offset_per_epoch_bps().get().to_le_bytes());
+        h.update(self.params.ops_floor_fixed_agrs().get().to_le_bytes());
+        h.update(self.params.reserve_target_agrs().get().to_le_bytes());
+        h.update(self.params.carry_cap_agrs().get().to_le_bytes());
+        h.update(self.params.share_rate_k().to_le_bytes());
+        h.update(self.params.payout_lock_epochs().to_le_bytes());
 
         // Safety bounds (DoS rails).
-        h.update(&(self.bounds.max_operators as u64).to_le_bytes());
-        h.update(&(self.bounds.max_stakes_per_operator as u64).to_le_bytes());
-        h.update(&(self.bounds.max_bids_per_epoch as u64).to_le_bytes());
-        h.update(&(self.bounds.max_locked_entries_per_operator as u64).to_le_bytes());
+        h.update((self.bounds.max_operators as u64).to_le_bytes());
+        h.update((self.bounds.max_stakes_per_operator as u64).to_le_bytes());
+        h.update((self.bounds.max_bids_per_epoch as u64).to_le_bytes());
+        h.update((self.bounds.max_locked_entries_per_operator as u64).to_le_bytes());
 
         // Epoch state.
-        h.update(&self.epoch.0.to_le_bytes());
-        h.update(&self.total_shares_issued.to_le_bytes());
-        h.update(&self.auction_carry.to_le_bytes());
+        h.update(self.epoch.0.to_le_bytes());
+        h.update(self.total_shares_issued.to_le_bytes());
+        h.update(self.auction_carry.to_le_bytes());
 
         // Epoch aggregates.
-        h.update(&self.epoch_agg.base_fees_gross.to_le_bytes());
-        h.update(&self.epoch_agg.tips_gross.to_le_bytes());
-        h.update(&self.epoch_agg.offset_total.to_le_bytes());
-        h.update(&[u8::from(self.epoch_agg.drip_applied)]);
-        h.update(&(self.epoch_agg.work_units_by_operator.len() as u64).to_le_bytes());
+        h.update(self.epoch_agg.base_fees_gross.to_le_bytes());
+        h.update(self.epoch_agg.tips_gross.to_le_bytes());
+        h.update(self.epoch_agg.offset_total.to_le_bytes());
+        h.update([u8::from(self.epoch_agg.drip_applied)]);
+        h.update((self.epoch_agg.work_units_by_operator.len() as u64).to_le_bytes());
         for (oid, wu) in &self.epoch_agg.work_units_by_operator {
-            h.update(&oid.0 .0);
-            h.update(&wu.to_le_bytes());
+            h.update(oid.0 .0);
+            h.update(wu.to_le_bytes());
         }
 
         // Cached budgets.
         match &self.budgets {
-            None => h.update(&[0u8]),
+            None => h.update([0u8]),
             Some(b) => {
-                h.update(&[1u8]);
-                h.update(&b.f_base_gross.get().to_le_bytes());
-                h.update(&b.f_tip.get().to_le_bytes());
-                h.update(&b.offset_total.get().to_le_bytes());
-                h.update(&b.f_net.get().to_le_bytes());
-                h.update(&b.ops_budget.get().to_le_bytes());
-                h.update(&b.ops_overhead.get().to_le_bytes());
-                h.update(&b.ops_payroll.get().to_le_bytes());
-                h.update(&b.reserve_budget.get().to_le_bytes());
-                h.update(&b.burn_surplus.get().to_le_bytes());
-                h.update(&b.auction_new.get().to_le_bytes());
-                h.update(&b.unallocated.get().to_le_bytes());
+                h.update([1u8]);
+                h.update(b.f_base_gross.get().to_le_bytes());
+                h.update(b.f_tip.get().to_le_bytes());
+                h.update(b.offset_total.get().to_le_bytes());
+                h.update(b.f_net.get().to_le_bytes());
+                h.update(b.ops_budget.get().to_le_bytes());
+                h.update(b.ops_overhead.get().to_le_bytes());
+                h.update(b.ops_payroll.get().to_le_bytes());
+                h.update(b.reserve_budget.get().to_le_bytes());
+                h.update(b.burn_surplus.get().to_le_bytes());
+                h.update(b.auction_new.get().to_le_bytes());
+                h.update(b.unallocated.get().to_le_bytes());
             }
         }
-        h.update(&[u8::from(self.payroll_settled)]);
-        h.update(&[u8::from(self.auction_settled)]);
+        h.update([u8::from(self.payroll_settled)]);
+        h.update([u8::from(self.auction_settled)]);
 
         // Bids (epoch-scoped).
-        h.update(&(self.bids.len() as u64).to_le_bytes());
+        h.update((self.bids.len() as u64).to_le_bytes());
         for bid in &self.bids {
-            h.update(&bid.bid_hash.0);
-            h.update(&bid.operator.0 .0);
-            h.update(&bid.qty_bcr.get().to_le_bytes());
-            h.update(&bid.min_price.get().to_le_bytes());
+            h.update(bid.bid_hash.0);
+            h.update(bid.operator.0 .0);
+            h.update(bid.qty_bcr.get().to_le_bytes());
+            h.update(bid.min_price.get().to_le_bytes());
         }
 
         // Totals.
-        h.update(&self.burned_total.to_le_bytes());
-        h.update(&self.reserve_balance.to_le_bytes());
-        h.update(&self.unallocated_balance.to_le_bytes());
+        h.update(self.burned_total.to_le_bytes());
+        h.update(self.reserve_balance.to_le_bytes());
+        h.update(self.unallocated_balance.to_le_bytes());
 
         // Operator accounts.
-        h.update(&(self.operators.len() as u64).to_le_bytes());
+        h.update((self.operators.len() as u64).to_le_bytes());
         for (oid, op) in &self.operators {
-            h.update(&oid.0 .0);
-            h.update(&op.agrs_balance.to_le_bytes());
-            h.update(&op.shares_active.to_le_bytes());
-            h.update(&op.bcr_balance.to_le_bytes());
-            h.update(&op.bcr_escrow.to_le_bytes());
-            h.update(&op.opi_bps.get().to_le_bytes());
+            h.update(oid.0 .0);
+            h.update(op.agrs_balance.to_le_bytes());
+            h.update(op.shares_active.to_le_bytes());
+            h.update(op.bcr_balance.to_le_bytes());
+            h.update(op.bcr_escrow.to_le_bytes());
+            h.update(op.opi_bps.get().to_le_bytes());
 
-            h.update(&(op.stakes.len() as u64).to_le_bytes());
+            h.update((op.stakes.len() as u64).to_le_bytes());
             for (sid, st) in &op.stakes {
-                h.update(&sid.0 .0);
-                h.update(&st.amount_agrs.to_le_bytes());
-                h.update(&st.lock_epochs.to_le_bytes());
-                h.update(&st.start_epoch.to_le_bytes());
-                h.update(&st.shares.to_le_bytes());
-                h.update(&[match st.status {
+                h.update(sid.0 .0);
+                h.update(st.amount_agrs.to_le_bytes());
+                h.update(st.lock_epochs.to_le_bytes());
+                h.update(st.start_epoch.to_le_bytes());
+                h.update(st.shares.to_le_bytes());
+                h.update([match st.status {
                     StakeStatus::Active => 1,
                     StakeStatus::Ended => 2,
                 }]);
             }
 
-            h.update(&(op.locked_agrs.len() as u64).to_le_bytes());
+            h.update((op.locked_agrs.len() as u64).to_le_bytes());
             for (k, v) in &op.locked_agrs {
-                h.update(&k.0.to_le_bytes());
-                h.update(&v.to_le_bytes());
+                h.update(k.0.to_le_bytes());
+                h.update(v.to_le_bytes());
             }
         }
 
@@ -448,7 +436,7 @@ impl TokenomicsV6 {
 
         // Shares accounting: per-operator shares_active matches sum of active stakes.
         let mut total_active_shares: u64 = 0;
-        for (_oid, op) in &self.operators {
+        for op in self.operators.values() {
             if op.stakes.len() > self.bounds.max_stakes_per_operator {
                 return Err(InvariantViolationV6::new(
                     InvariantIdV6::BoundsRespected,
@@ -1134,7 +1122,7 @@ impl TokenomicsV6 {
             locked_add.insert(w.operator, add_u64(prev, payout.get())?);
         }
 
-        for (oid, _amt) in &locked_add {
+        for oid in locked_add.keys() {
             let op = self
                 .operators
                 .get(oid)

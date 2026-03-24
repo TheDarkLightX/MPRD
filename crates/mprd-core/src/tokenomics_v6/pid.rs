@@ -13,19 +13,10 @@ pub struct PidBpsGains {
 }
 
 /// PID internal state (integrator + previous error).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct PidBpsState {
     pub e_prev: i64,
     pub i_acc: i64,
-}
-
-impl Default for PidBpsState {
-    fn default() -> Self {
-        Self {
-            e_prev: 0,
-            i_acc: 0,
-        }
-    }
 }
 
 /// Safety rails for a PID-controlled bps actuator.
@@ -129,21 +120,11 @@ pub struct TokenomicsPidProposalV6 {
 }
 
 /// Minimal PID controller state for v6 adjustable knobs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct TokenomicsPidStateV6 {
     pub burn: PidBpsState,
     pub auction: PidBpsState,
     pub drip: PidBpsState,
-}
-
-impl Default for TokenomicsPidStateV6 {
-    fn default() -> Self {
-        Self {
-            burn: PidBpsState::default(),
-            auction: PidBpsState::default(),
-            drip: PidBpsState::default(),
-        }
-    }
 }
 
 /// Stateless PID config for v6.

@@ -1,5 +1,6 @@
 //! Invariant checker for selector_canonical_tiebreak.
 
+#![allow(clippy::absurd_extreme_comparisons, unused_comparisons)]
 use super::{state::State, types::*};
 
 /// Check all invariants. Returns Err if any violated.

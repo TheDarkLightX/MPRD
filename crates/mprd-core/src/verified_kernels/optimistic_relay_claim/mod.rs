@@ -1,5 +1,6 @@
 //! optimistic_relay_claim kernel module.
 //! Generated from IR hash: b45b112559972098
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

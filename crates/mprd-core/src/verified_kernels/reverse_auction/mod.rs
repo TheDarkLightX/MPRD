@@ -1,5 +1,6 @@
 //! reverse_auction kernel module.
 //! Generated from IR hash: 1c67f953a74e728d
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

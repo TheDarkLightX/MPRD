@@ -397,9 +397,9 @@ mod tests {
         let nibbles = hash.to_nibbles();
 
         // Verify nibble extraction
-        for i in 0..64 {
-            assert!(nibbles[i] < 16, "nibble {} should be < 16", i);
-            assert_eq!(hash.nibble_at(i), Some(nibbles[i]));
+        for (i, nibble) in nibbles.iter().copied().enumerate() {
+            assert!(nibble < 16, "nibble {} should be < 16", i);
+            assert_eq!(hash.nibble_at(i), Some(nibble));
         }
         assert_eq!(hash.nibble_at(64), None);
     }

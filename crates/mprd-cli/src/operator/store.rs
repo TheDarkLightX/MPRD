@@ -1180,6 +1180,7 @@ impl OperatorStore {
 mod tests {
     use super::OperatorStore;
     use crate::operator::api as op_api;
+    use crate::test_support::EnvGuard;
     use mprd_core::{
         CandidateAction, Decision, DecisionToken, Hash32, PolicyRef, ProofBundle, RuleVerdict,
         Score, StateRef, StateSnapshot, ZkAttestor,
@@ -1188,39 +1189,7 @@ mod tests {
     use proptest::prelude::*;
     use serde::Serialize;
     use std::collections::HashMap;
-    use std::sync::{Mutex, MutexGuard};
     use tempfile::TempDir;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvGuard {
-        prev: Vec<(&'static str, Option<String>)>,
-        _lock: MutexGuard<'static, ()>,
-    }
-
-    impl EnvGuard {
-        fn set_many(vars: &[(&'static str, &str)]) -> Self {
-            let lock = ENV_LOCK.lock().expect("env lock");
-            let mut prev = Vec::with_capacity(vars.len());
-            for (key, value) in vars {
-                prev.push((*key, std::env::var(key).ok()));
-                std::env::set_var(key, value);
-            }
-            Self { prev, _lock: lock }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for (key, prev) in self.prev.drain(..) {
-                if let Some(prev) = prev {
-                    std::env::set_var(key, prev);
-                } else {
-                    std::env::remove_var(key);
-                }
-            }
-        }
-    }
 
     #[derive(Debug, Serialize)]
     struct MpbLiteArtifactV2Compat {

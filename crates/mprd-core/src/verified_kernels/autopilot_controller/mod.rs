@@ -1,5 +1,6 @@
 //! autopilot_controller kernel module.
 //! Generated from IR hash: 779e48bb60132318
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;

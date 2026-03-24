@@ -56,7 +56,7 @@ pub fn parse_emitted_tau_gate_allow_expr_v1(
         let mut started = false;
 
         // Process the start line and all subsequent lines until the rule's parens close.
-        for (cur_line_no, cur_line) in std::iter::once((line_no, trimmed)).chain(lines.by_ref()) {
+        for (_cur_line_no, cur_line) in std::iter::once((line_no, trimmed)).chain(lines.by_ref()) {
             // Strip Tau comment.
             let code = match cur_line.find('#') {
                 Some(i) => &cur_line[..i],

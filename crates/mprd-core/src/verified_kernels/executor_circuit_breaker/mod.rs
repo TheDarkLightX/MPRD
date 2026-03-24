@@ -1,5 +1,6 @@
 //! executor_circuit_breaker kernel module.
 //! Generated from IR hash: 2e37ba431252acc0
+#![allow(unused_comparisons)]
 
 pub mod command;
 pub mod invariants;
