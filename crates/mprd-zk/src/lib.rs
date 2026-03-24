@@ -175,7 +175,8 @@ pub fn create_registry_bound_mpb_v1_attestor_from_signed_registry_state<
     };
 
     let authorization: Arc<dyn crate::registry_state::PolicyAuthorizationProvider> = Arc::new(
-        RegistryStatePolicyAuthorizationProvider::new(provider, manifest_verifying_key),
+        RegistryStatePolicyAuthorizationProvider::new(provider, manifest_verifying_key)
+            .with_required_policy_source_mapping(true),
     );
 
     let attestor = crate::registry_bound_attestor::RegistryBoundRisc0MpbAttestor::new(
@@ -222,7 +223,8 @@ pub fn create_registry_bound_tau_compiled_v1_attestor_from_signed_registry_state
     };
 
     let authorization: Arc<dyn crate::registry_state::PolicyAuthorizationProvider> = Arc::new(
-        RegistryStatePolicyAuthorizationProvider::new(provider, manifest_verifying_key),
+        RegistryStatePolicyAuthorizationProvider::new(provider, manifest_verifying_key)
+            .with_required_policy_source_mapping(true),
     );
 
     let policy_provider = Arc::new(RegistryBoundTauCompiledPolicyProviderAdapter::new(
@@ -866,8 +868,15 @@ impl ZkLocalVerifier for Risc0ZkLocalVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::{GuestImageEntryV1, GuestImageManifestV1};
+    use crate::policy_fetch::InMemoryPolicyArtifactStore;
+    use crate::registry_state::{AuthorizedPolicyV1, RegistryStateV1, SignedRegistryStateV1};
     use mprd_core::Hash32;
     use mprd_core::PolicyRef;
+    use mprd_core::{CandidateAction, Score, Value};
+    use mprd_risc0_shared::{
+        policy_exec_kind_mpb_id_v1, policy_exec_kind_tau_compiled_id_v1, policy_exec_version_id_v1,
+    };
     use std::collections::HashMap;
 
     fn dummy_hash(byte: u8) -> Hash32 {
@@ -883,6 +892,51 @@ mod tests {
 
     fn dummy_config() -> Risc0Config {
         Risc0Config { method_elf: &[] }
+    }
+
+    fn signed_registry_state_without_source_mapping(
+        exec_kind_id: [u8; 32],
+        policy_hash: Hash32,
+    ) -> SignedRegistryStateV1 {
+        let signer = mprd_core::TokenSigningKey::from_seed(&[0x42; 32]);
+        let manifest = GuestImageManifestV1::sign(
+            &signer,
+            1,
+            vec![GuestImageEntryV1 {
+                policy_exec_kind_id: exec_kind_id,
+                policy_exec_version_id: policy_exec_version_id_v1(),
+                image_id: [0x77; 32],
+            }],
+        )
+        .expect("manifest");
+        let state = RegistryStateV1 {
+            policy_epoch: 1,
+            registry_root: dummy_hash(0x33),
+            authorized_policies: vec![AuthorizedPolicyV1 {
+                policy_hash,
+                policy_exec_kind_id: exec_kind_id,
+                policy_exec_version_id: policy_exec_version_id_v1(),
+                policy_source_kind_id: None,
+                policy_source_hash: None,
+            }],
+            guest_image_manifest: manifest,
+        };
+        SignedRegistryStateV1::sign(&signer, 123, state).expect("signed registry_state")
+    }
+
+    fn valid_http_call_candidate() -> CandidateAction {
+        CandidateAction {
+            action_type: "http_call".into(),
+            params: HashMap::from([
+                ("http_method".into(), Value::String("GET".into())),
+                (
+                    "http_url".into(),
+                    Value::String("https://example.com/health".into()),
+                ),
+            ]),
+            score: Score(1),
+            candidate_hash: dummy_hash(0x55),
+        }
     }
 
     #[test]
@@ -952,5 +1006,106 @@ mod tests {
 
         let status = verifier.verify(&token, &proof);
         assert!(matches!(status, VerificationStatus::Failure(_)));
+    }
+
+    #[test]
+    fn registry_bound_mpb_attestor_factory_requires_policy_source_mapping_by_default() {
+        let policy_hash = dummy_hash(0x21);
+        let signed =
+            signed_registry_state_without_source_mapping(policy_exec_kind_mpb_id_v1(), policy_hash);
+        let signer = mprd_core::TokenSigningKey::from_seed(&[0x42; 32]);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: dummy_hash(0x33),
+        };
+        let (_resolved_ref, attestor) =
+            create_registry_bound_mpb_v1_attestor_from_signed_registry_state(
+                signed,
+                signer.verifying_key(),
+                signer.verifying_key(),
+                InMemoryPolicyArtifactStore::default(),
+                100,
+            )
+            .expect("attestor");
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: valid_http_call_candidate(),
+            policy_hash,
+            decision_commitment: dummy_hash(0x22),
+        };
+        let token = DecisionToken {
+            policy_hash,
+            policy_ref,
+            state_hash: dummy_hash(0x23),
+            state_ref: mprd_core::StateRef::unknown(),
+            chosen_action_hash: dummy_hash(0x24),
+            nonce_or_tx_hash: dummy_hash(0x25),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: token.state_hash,
+            state_ref: token.state_ref.clone(),
+        };
+
+        let err = attestor
+            .attest(&token, &decision, &state, &[decision.chosen_action.clone()])
+            .unwrap_err();
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "authorized policy missing required policy_source mapping")
+        );
+    }
+
+    #[test]
+    fn registry_bound_tau_compiled_attestor_factory_requires_policy_source_mapping_by_default() {
+        let policy_hash = dummy_hash(0x31);
+        let signed = signed_registry_state_without_source_mapping(
+            policy_exec_kind_tau_compiled_id_v1(),
+            policy_hash,
+        );
+        let signer = mprd_core::TokenSigningKey::from_seed(&[0x42; 32]);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: dummy_hash(0x33),
+        };
+        let (_resolved_ref, attestor) =
+            create_registry_bound_tau_compiled_v1_attestor_from_signed_registry_state(
+                signed,
+                signer.verifying_key(),
+                signer.verifying_key(),
+                InMemoryPolicyArtifactStore::default(),
+            )
+            .expect("attestor");
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: valid_http_call_candidate(),
+            policy_hash,
+            decision_commitment: dummy_hash(0x32),
+        };
+        let token = DecisionToken {
+            policy_hash,
+            policy_ref,
+            state_hash: dummy_hash(0x33),
+            state_ref: mprd_core::StateRef::unknown(),
+            chosen_action_hash: dummy_hash(0x34),
+            nonce_or_tx_hash: dummy_hash(0x35),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: token.state_hash,
+            state_ref: token.state_ref.clone(),
+        };
+
+        let err = attestor
+            .attest(&token, &decision, &state, &[decision.chosen_action.clone()])
+            .unwrap_err();
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "authorized policy missing required policy_source mapping")
+        );
     }
 }
