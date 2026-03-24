@@ -338,10 +338,8 @@ impl OperatorStore {
             receipt_bytes.to_vec()
         };
 
-        let artifact: mprd_zk::MpbLiteArtifactV1 =
-            mprd_zk::bounded_deser::deserialize_mpb_artifact(&artifact_bytes).map_err(|e| {
-                anyhow::anyhow!("failed to decode MPB-lite artifact from receipt: {e}")
-            })?;
+        let artifact = mprd_zk::mpb_lite::deserialize_artifact(&artifact_bytes)
+            .map_err(|e| anyhow::anyhow!("failed to decode MPB-lite artifact from receipt: {e}"))?;
         mprd_zk::mpb_lite::verify_artifact_header(&artifact)
             .map_err(|e| anyhow::anyhow!("invalid MPB-lite artifact in receipt: {e}"))?;
         Ok(artifact.chosen_action_preimage)
@@ -1189,8 +1187,34 @@ mod tests {
     };
     use mprd_zk::{ModeConfig, RobustMpbAttestor};
     use proptest::prelude::*;
+    use serde::Serialize;
     use std::collections::HashMap;
     use tempfile::TempDir;
+
+    #[derive(Debug, Serialize)]
+    struct MpbLiteArtifactV2Compat {
+        version: u32,
+        mpb_register_mapping_id: mprd_risc0_shared::Id32,
+        policy_variables: Vec<mprd_risc0_shared::MpbVarBindingV1>,
+        state_preimage: Vec<u8>,
+        candidate_preimages: Vec<Vec<u8>>,
+        chosen_index: u32,
+        mpb_proof_bundle: mprd_proof::MpbProofBundle,
+        limits_bytes: Vec<u8>,
+        chosen_action_preimage: Vec<u8>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct MpbLiteArtifactV3Compat {
+        version: u32,
+        mpb_register_mapping_id: mprd_risc0_shared::Id32,
+        policy_variables: Vec<mprd_risc0_shared::MpbVarBindingV1>,
+        state_preimage: Vec<u8>,
+        candidate_preimages: Vec<Vec<u8>>,
+        chosen_index: u32,
+        mpb_proof_bundle: mprd_proof::MpbProofBundle,
+        limits_bytes: Vec<u8>,
+    }
 
     fn sample_decision_inputs(
         allowed: bool,
@@ -1325,6 +1349,45 @@ mod tests {
         }];
 
         (token, proof, state, candidates, verdicts, decision)
+    }
+
+    fn rewrite_receipt_as_mpb_lite_v2_compat(store: &OperatorStore, id: &str, proof: &ProofBundle) {
+        let artifact: mprd_zk::MpbLiteArtifactV1 =
+            mprd_zk::bounded_deser::deserialize_mpb_artifact(&proof.risc0_receipt)
+                .expect("decode v1 artifact");
+        let compat = MpbLiteArtifactV2Compat {
+            version: mprd_zk::mpb_lite::MPB_LITE_ARTIFACT_VERSION_V2,
+            mpb_register_mapping_id: artifact.mpb_register_mapping_id,
+            policy_variables: artifact.policy_variables,
+            state_preimage: artifact.state_preimage,
+            candidate_preimages: vec![proof.chosen_action_preimage.clone()],
+            chosen_index: artifact.chosen_index,
+            mpb_proof_bundle: artifact.mpb_proof_bundle,
+            limits_bytes: artifact.limits_bytes,
+            chosen_action_preimage: proof.chosen_action_preimage.clone(),
+        };
+        let artifact_bytes = bincode::serialize(&compat).expect("serialize v2 compat artifact");
+        let receipt_path = store.decision_dir(id).join("receipt.bin");
+        std::fs::write(&receipt_path, artifact_bytes).expect("rewrite receipt");
+    }
+
+    fn rewrite_receipt_as_mpb_lite_v3_compat(store: &OperatorStore, id: &str, proof: &ProofBundle) {
+        let artifact: mprd_zk::MpbLiteArtifactV1 =
+            mprd_zk::bounded_deser::deserialize_mpb_artifact(&proof.risc0_receipt)
+                .expect("decode v1 artifact");
+        let compat = MpbLiteArtifactV3Compat {
+            version: mprd_zk::mpb_lite::MPB_LITE_ARTIFACT_VERSION_V3,
+            mpb_register_mapping_id: artifact.mpb_register_mapping_id,
+            policy_variables: artifact.policy_variables,
+            state_preimage: artifact.state_preimage,
+            candidate_preimages: vec![proof.chosen_action_preimage.clone()],
+            chosen_index: artifact.chosen_index,
+            mpb_proof_bundle: artifact.mpb_proof_bundle,
+            limits_bytes: artifact.limits_bytes,
+        };
+        let artifact_bytes = bincode::serialize(&compat).expect("serialize v3 compat artifact");
+        let receipt_path = store.decision_dir(id).join("receipt.bin");
+        std::fs::write(&receipt_path, artifact_bytes).expect("rewrite receipt");
     }
 
     #[test]
@@ -1753,6 +1816,46 @@ mod tests {
         assert!(err
             .to_string()
             .contains("failed to decode MPB-lite artifact from receipt"));
+    }
+
+    #[test]
+    fn blobs_for_proof_derives_preimage_from_mpb_lite_v2_receipt_family() {
+        let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+
+        let tmp = TempDir::new().expect("tempdir");
+        let store = OperatorStore::new(tmp.path()).expect("store");
+        let (token, proof, state, candidates, verdicts, decision) =
+            sample_mpb_lite_decision_inputs();
+
+        let id = store
+            .write_verified_decision(&token, &proof, &state, &candidates, &verdicts, &decision)
+            .expect("write decision");
+        let record = store.read_record(&id).expect("read record");
+        rewrite_receipt_as_mpb_lite_v2_compat(&store, &id, &proof);
+
+        let (_receipt, _limits, preimage) = store.blobs_for_proof(&id, &record).expect("blobs");
+        assert_eq!(preimage, proof.chosen_action_preimage);
+    }
+
+    #[test]
+    fn chosen_action_preimage_for_record_derives_from_mpb_lite_v3_receipt_family() {
+        let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+
+        let tmp = TempDir::new().expect("tempdir");
+        let store = OperatorStore::new(tmp.path()).expect("store");
+        let (token, proof, state, candidates, verdicts, decision) =
+            sample_mpb_lite_decision_inputs();
+
+        let id = store
+            .write_verified_decision(&token, &proof, &state, &candidates, &verdicts, &decision)
+            .expect("write decision");
+        let record = store.read_record(&id).expect("read record");
+        rewrite_receipt_as_mpb_lite_v3_compat(&store, &id, &proof);
+
+        let preimage = store
+            .chosen_action_preimage_for_record(&id, &record)
+            .expect("preimage");
+        assert_eq!(preimage, proof.chosen_action_preimage);
     }
 
     #[test]

@@ -1641,6 +1641,28 @@ mod tests {
     }
 
     #[test]
+    fn execution_guard_boxed_executor_execute_rejects_missing_preimage_as_invalid_input() {
+        let (token, mut proof) = noop_token_and_proof(dummy_hash(0x43));
+        proof.chosen_action_preimage.clear();
+
+        let raw_calls = Arc::new(AtomicUsize::new(0));
+        let ready_calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(ReadyOnlyExecutor {
+            raw_calls: raw_calls.clone(),
+            ready_calls: ready_calls.clone(),
+        });
+        let executor = ExecutionGuardBoxedExecutor::new(inner);
+
+        let verified = crate::VerifiedBundle::new(&token, &proof);
+        let err = executor.execute(&verified).unwrap_err();
+        assert!(
+            matches!(err, crate::MprdError::InvalidInput(message) if message == "missing chosen_action_preimage (execution boundary requires committed action bytes)")
+        );
+        assert_eq!(raw_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(ready_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
     fn signature_verifying_executor_execute_ready_accepts_valid_signature() {
         let signing_key = crate::crypto::TokenSigningKey::from_seed(&[0x11; 32]);
         let verifying_key = signing_key.verifying_key();
@@ -1932,6 +1954,38 @@ mod tests {
         let verified2 = crate::VerifiedBundle::new(&token2, &proof2);
         assert!(guarded.execute(&verified2).is_ok());
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn circuit_breaker_does_not_count_execution_boundary_rejects_as_failure() {
+        let config = crate::MprdConfig::builder()
+            .require_signatures(false)
+            .enable_circuit_breaker(true)
+            .build()
+            .expect("config");
+
+        let (token_bad, mut proof_bad) = noop_token_and_proof(dummy_hash(0x52));
+        proof_bad.chosen_action_preimage.clear();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(CountingExecutor {
+            calls: calls.clone(),
+        });
+        let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
+
+        let verified_bad = crate::VerifiedBundle::new(&token_bad, &proof_bad);
+        for _ in 0..10 {
+            let err = guarded.execute(&verified_bad).unwrap_err();
+            assert!(
+                matches!(err, crate::MprdError::InvalidInput(message) if message == "missing chosen_action_preimage (execution boundary requires committed action bytes)")
+            );
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        let (token_good, proof_good) = noop_token_and_proof(dummy_hash(0x53));
+        let verified_good = crate::VerifiedBundle::new(&token_good, &proof_good);
+        assert!(guarded.execute(&verified_good).is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
