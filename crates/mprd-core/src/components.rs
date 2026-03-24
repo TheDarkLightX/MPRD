@@ -540,11 +540,8 @@ impl<E: ExecutorAdapter> ExecutorAdapter for SignatureVerifyingExecutor<E> {
     }
 
     fn execute_ready(&self, ready: &crate::ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
-        let token = ready.token();
-        let _signature = self
-            .verifying_key
-            .signature_witness_v1(token, &token.signature)?;
-        self.inner.execute_ready(ready)
+        let ready = crate::prepare_execution_ready_with_signature(ready, &self.verifying_key)?;
+        self.inner.execute_ready(&ready)
     }
 }
 
@@ -577,11 +574,8 @@ impl ExecutorAdapter for SignatureVerifyingBoxedExecutor {
     }
 
     fn execute_ready(&self, ready: &crate::ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
-        let token = ready.token();
-        let _signature = self
-            .verifying_key
-            .signature_witness_v1(token, &token.signature)?;
-        self.inner.execute_ready(ready)
+        let ready = crate::prepare_execution_ready_with_signature(ready, &self.verifying_key)?;
+        self.inner.execute_ready(&ready)
     }
 }
 
@@ -613,12 +607,11 @@ impl ExecutorAdapter for StateProvenanceBoxedExecutor {
     }
 
     fn execute_ready(&self, ready: &crate::ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
-        let token = ready.token();
-        let _provenance = crate::state_provenance::state_provenance_witness_v1(
-            &token.state_ref,
+        let ready = crate::prepare_execution_ready_with_state_provenance(
+            ready,
             &self.allowed_state_source_ids,
         )?;
-        self.inner.execute_ready(ready)
+        self.inner.execute_ready(&ready)
     }
 }
 
@@ -1134,7 +1127,7 @@ pub fn wrap_executor_with_guards(
 mod tests {
     use super::*;
     use crate::{Decision, PolicyRef};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
 
     fn dummy_hash(byte: u8) -> Hash32 {
@@ -1544,6 +1537,41 @@ mod tests {
         }
     }
 
+    struct ReadyWitnessCapturingExecutor {
+        raw_calls: Arc<AtomicUsize>,
+        ready_calls: Arc<AtomicUsize>,
+        saw_authorization: Arc<AtomicBool>,
+        saw_signature_admission: Arc<AtomicBool>,
+        saw_state_provenance_admission: Arc<AtomicBool>,
+    }
+
+    impl ExecutorAdapter for ReadyWitnessCapturingExecutor {
+        fn execute(&self, _verified: &crate::VerifiedBundle<'_>) -> Result<ExecutionResult> {
+            self.raw_calls.fetch_add(1, Ordering::SeqCst);
+            Err(crate::MprdError::ExecutionError(
+                "raw execute path should not be used".into(),
+            ))
+        }
+
+        fn execute_ready(
+            &self,
+            ready: &crate::ExecutionReadyBundle<'_>,
+        ) -> Result<ExecutionResult> {
+            self.ready_calls.fetch_add(1, Ordering::SeqCst);
+            self.saw_authorization
+                .store(ready.authorization().is_some(), Ordering::SeqCst);
+            let admission = ready.executor_admission().expect("executor admission");
+            self.saw_signature_admission
+                .store(admission.signature().is_some(), Ordering::SeqCst);
+            self.saw_state_provenance_admission
+                .store(admission.state_provenance().is_some(), Ordering::SeqCst);
+            Ok(ExecutionResult {
+                success: true,
+                message: None,
+            })
+        }
+    }
+
     fn now_ms_for_tests() -> i64 {
         let ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1863,22 +1891,45 @@ mod tests {
             state_attestation_hash: dummy_hash(0x56),
         };
         token.signature = signing_key.sign_token(&token).to_vec();
-
-        let ready = crate::prepare_execution_ready(crate::VerifiedBundle::new(&token, &proof))
-            .expect("ready");
+        let authority = crate::policy_authority_witness_v1(&token.policy_hash, &token.policy_ref)
+            .expect("authority");
+        let state = crate::StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: token.state_hash,
+            state_ref: token.state_ref.clone(),
+        };
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let ready = crate::prepare_execution_ready_with_authorization(
+            crate::VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready");
 
         let raw_calls = Arc::new(AtomicUsize::new(0));
         let ready_calls = Arc::new(AtomicUsize::new(0));
-        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(ReadyOnlyExecutor {
-            raw_calls: raw_calls.clone(),
-            ready_calls: ready_calls.clone(),
-        });
+        let saw_authorization = Arc::new(AtomicBool::new(false));
+        let saw_signature_admission = Arc::new(AtomicBool::new(false));
+        let saw_state_provenance_admission = Arc::new(AtomicBool::new(false));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> =
+            Box::new(ReadyWitnessCapturingExecutor {
+                raw_calls: raw_calls.clone(),
+                ready_calls: ready_calls.clone(),
+                saw_authorization: saw_authorization.clone(),
+                saw_signature_admission: saw_signature_admission.clone(),
+                saw_state_provenance_admission: saw_state_provenance_admission.clone(),
+            });
         let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
 
         let result = guarded.execute_ready(&ready).expect("execute_ready");
         assert!(result.success);
         assert_eq!(raw_calls.load(Ordering::SeqCst), 0);
         assert_eq!(ready_calls.load(Ordering::SeqCst), 1);
+        assert!(saw_authorization.load(Ordering::SeqCst));
+        assert!(saw_signature_admission.load(Ordering::SeqCst));
+        assert!(saw_state_provenance_admission.load(Ordering::SeqCst));
     }
 
     struct FailingExecutor {

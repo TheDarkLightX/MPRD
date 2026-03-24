@@ -247,6 +247,7 @@ pub struct ExecutionReadyBundle<'a> {
     verified: VerifiedBundle<'a>,
     boundary: ExecutionBoundaryWitnessV1,
     authorization: Option<ExecutionAuthorizationWitnessV1>,
+    executor_admission: Option<ExecutionExecutorAdmissionWitnessV1>,
 }
 
 impl<'a> ExecutionReadyBundle<'a> {
@@ -260,6 +261,10 @@ impl<'a> ExecutionReadyBundle<'a> {
 
     pub fn authorization(&self) -> Option<&ExecutionAuthorizationWitnessV1> {
         self.authorization.as_ref()
+    }
+
+    pub fn executor_admission(&self) -> Option<&ExecutionExecutorAdmissionWitnessV1> {
+        self.executor_admission.as_ref()
     }
 
     pub fn token(&self) -> &'a DecisionToken {
@@ -406,6 +411,41 @@ impl ExecutionAuthorizationWitnessV1 {
 
     pub fn governance(&self) -> Option<&GovernanceAdmissionWitnessV1> {
         self.governance.as_ref()
+    }
+}
+
+/// Concrete executor-side admission witnesses accumulated at the live `execute_ready` boundary.
+///
+/// These witnesses are produced by runtime guard wrappers such as signature and state-provenance
+/// admission. They remain separate from orchestrator authorization because they depend on local
+/// executor configuration rather than only on the attested protocol objects.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct ExecutionExecutorAdmissionWitnessV1 {
+    signature: Option<crate::crypto::SignatureAdmissionWitnessV1>,
+    state_provenance: Option<crate::state_provenance::StateProvenanceWitnessV1>,
+}
+
+impl ExecutionExecutorAdmissionWitnessV1 {
+    pub fn signature(&self) -> Option<&crate::crypto::SignatureAdmissionWitnessV1> {
+        self.signature.as_ref()
+    }
+
+    pub fn state_provenance(&self) -> Option<&crate::state_provenance::StateProvenanceWitnessV1> {
+        self.state_provenance.as_ref()
+    }
+
+    fn with_signature(mut self, signature: crate::crypto::SignatureAdmissionWitnessV1) -> Self {
+        self.signature = Some(signature);
+        self
+    }
+
+    fn with_state_provenance(
+        mut self,
+        state_provenance: crate::state_provenance::StateProvenanceWitnessV1,
+    ) -> Self {
+        self.state_provenance = Some(state_provenance);
+        self
     }
 }
 
@@ -671,6 +711,7 @@ pub fn prepare_execution_ready<'a>(
         verified,
         boundary,
         authorization: None,
+        executor_admission: None,
     })
 }
 
@@ -689,7 +730,43 @@ pub fn prepare_execution_ready_with_authorization<'a>(
         verified,
         boundary,
         authorization: Some(authorization),
+        executor_admission: None,
     })
+}
+
+/// Enrich an execution-ready bundle with a constructor-gated signature-admission witness.
+pub fn prepare_execution_ready_with_signature<'a>(
+    ready: &ExecutionReadyBundle<'a>,
+    verifying_key: &crate::crypto::TokenVerifyingKey,
+) -> Result<ExecutionReadyBundle<'a>> {
+    let signature = verifying_key.signature_witness_v1(ready.token(), &ready.token().signature)?;
+    let mut enriched = ready.clone();
+    let admission = enriched
+        .executor_admission
+        .take()
+        .unwrap_or_default()
+        .with_signature(signature);
+    enriched.executor_admission = Some(admission);
+    Ok(enriched)
+}
+
+/// Enrich an execution-ready bundle with a constructor-gated state-provenance admission witness.
+pub fn prepare_execution_ready_with_state_provenance<'a>(
+    ready: &ExecutionReadyBundle<'a>,
+    allowed_state_source_ids: &[Hash32],
+) -> Result<ExecutionReadyBundle<'a>> {
+    let provenance = crate::state_provenance::state_provenance_witness_v1(
+        &ready.token().state_ref,
+        allowed_state_source_ids,
+    )?;
+    let mut enriched = ready.clone();
+    let admission = enriched
+        .executor_admission
+        .take()
+        .unwrap_or_default()
+        .with_state_provenance(provenance);
+    enriched.executor_admission = Some(admission);
+    Ok(enriched)
 }
 
 /// Upgrade token, decision, and state inputs into an attestation-ready bundle after checking that
@@ -1383,6 +1460,64 @@ mod tests {
 
         let err = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).unwrap_err();
         assert!(matches!(err, MprdError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn prepare_execution_ready_with_signature_and_state_provenance_accumulates_executor_admission()
+    {
+        let signing_key = crate::crypto::TokenSigningKey::from_seed(&[0x22; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let candidate = valid_http_call_candidate();
+        let state_source_id = dummy_hash(0x61);
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x51),
+            policy_ref: PolicyRef {
+                policy_epoch: 1,
+                registry_root: dummy_hash(0x52),
+            },
+            state_hash: dummy_hash(0x53),
+            state_ref: StateRef {
+                state_source_id,
+                state_epoch: 9,
+                state_attestation_hash: dummy_hash(0x54),
+            },
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x55),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let mut token = token;
+        token.signature = signing_key.sign_token(&token).to_vec();
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0x56),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+
+        let ready = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).expect("ready");
+        let ready = prepare_execution_ready_with_signature(&ready, &verifying_key)
+            .expect("signature witness");
+        let ready = prepare_execution_ready_with_state_provenance(&ready, &[state_source_id])
+            .expect("provenance witness");
+
+        let admission = ready.executor_admission().expect("executor admission");
+        assert_eq!(
+            admission.signature().expect("signature").signer_pubkey(),
+            &verifying_key.to_bytes()
+        );
+        assert_eq!(
+            admission
+                .state_provenance()
+                .expect("state provenance")
+                .state_ref(),
+            &token.state_ref
+        );
     }
 
     #[test]
