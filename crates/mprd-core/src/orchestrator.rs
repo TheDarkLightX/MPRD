@@ -820,6 +820,39 @@ mod tests {
                 "nonce_or_tx_hash".into(),
                 hex::encode(token.nonce_or_tx_hash.0),
             );
+            if let Some(governance) = ready.governance() {
+                metadata.insert(
+                    "governance_update_kind".into(),
+                    governance.update_kind().as_str().into(),
+                );
+                metadata.insert(
+                    "governance_profile_app_ok".into(),
+                    if governance.profile_app_ok() {
+                        "true"
+                    } else {
+                        "false"
+                    }
+                    .into(),
+                );
+                metadata.insert(
+                    "governance_profile_safety_ok".into(),
+                    if governance.profile_safety_ok() {
+                        "true"
+                    } else {
+                        "false"
+                    }
+                    .into(),
+                );
+                metadata.insert(
+                    "governance_link_ok".into(),
+                    if governance.link_ok() {
+                        "true"
+                    } else {
+                        "false"
+                    }
+                    .into(),
+                );
+            }
             Ok(ProofBundle {
                 policy_hash: decision.policy_hash.clone(),
                 state_hash: state.state_hash.clone(),
@@ -2227,6 +2260,86 @@ mod tests {
         });
 
         assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "token chosen_action_hash drifted from selected decision before attestation"));
+        let calls = call_log_snapshot(&log);
+        assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
+        assert_pipeline_temporal_spec(&calls);
+    }
+
+    #[test]
+    fn run_once_fails_closed_when_governance_prepared_input_loses_link_ok_before_attestation() {
+        let log = new_call_log();
+        let state_provider = LoggedStateProvider {
+            log: log.clone(),
+            state: StateSnapshot {
+                fields: HashMap::new(),
+                policy_inputs: HashMap::from([
+                    (
+                        crate::GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1.into(),
+                        b"1".to_vec(),
+                    ),
+                    (
+                        crate::GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1.into(),
+                        b"0".to_vec(),
+                    ),
+                    (
+                        crate::GOVERNANCE_INPUT_IS_CAP_EXPAND_V1.into(),
+                        b"0".to_vec(),
+                    ),
+                    (
+                        crate::GOVERNANCE_INPUT_PROFILE_APP_OK_V1.into(),
+                        b"1".to_vec(),
+                    ),
+                    (
+                        crate::GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1.into(),
+                        b"0".to_vec(),
+                    ),
+                    (crate::GOVERNANCE_INPUT_LINK_OK_V1.into(), b"0".to_vec()),
+                ]),
+                state_hash: dummy_hash(1),
+                state_ref: crate::StateRef::unknown(),
+            },
+        };
+        let proposer = LoggedProposer {
+            log: log.clone(),
+            candidates: vec![CandidateAction {
+                action_type: "noop".into(),
+                params: HashMap::new(),
+                score: Score(1),
+                candidate_hash: dummy_hash(2),
+            }],
+        };
+        let policy_engine = LoggedPolicyEngine { log: log.clone() };
+        let selector = LoggedSelector { log: log.clone() };
+        let token_factory = LoggedTokenFactory { log: log.clone() };
+        let attestor = LoggedAttestor { log: log.clone() };
+        let verifier = LoggedVerifier {
+            log: log.clone(),
+            status: VerificationStatus::Success,
+        };
+        let executor = LoggedExecutor { log: log.clone() };
+        let policy_hash = dummy_hash(9);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: dummy_hash(8),
+        };
+
+        let result = run_once(RunOnceInputs {
+            state_provider: &state_provider,
+            proposer: &proposer,
+            policy_engine: &policy_engine,
+            selector: &selector,
+            token_factory: &token_factory,
+            attestor: &attestor,
+            verifier: &verifier,
+            executor: &executor,
+            policy_hash: &policy_hash,
+            policy_ref,
+            nonce_or_tx_hash: None,
+            metrics: None,
+            audit_recorder: None,
+        });
+
+        assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "governance admission requires link_ok"));
         let calls = call_log_snapshot(&log);
         assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
         assert_pipeline_temporal_spec(&calls);

@@ -344,6 +344,39 @@ impl ZkAttestor for StubZkAttestor {
             "nonce_or_tx_hash".into(),
             hex::encode(token.nonce_or_tx_hash.0),
         );
+        if let Some(governance) = ready.governance() {
+            metadata.insert(
+                "governance_update_kind".into(),
+                governance.update_kind().as_str().into(),
+            );
+            metadata.insert(
+                "governance_profile_app_ok".into(),
+                if governance.profile_app_ok() {
+                    "true"
+                } else {
+                    "false"
+                }
+                .into(),
+            );
+            metadata.insert(
+                "governance_profile_safety_ok".into(),
+                if governance.profile_safety_ok() {
+                    "true"
+                } else {
+                    "false"
+                }
+                .into(),
+            );
+            metadata.insert(
+                "governance_link_ok".into(),
+                if governance.link_ok() {
+                    "true"
+                } else {
+                    "false"
+                }
+                .into(),
+            );
+        }
 
         Ok(ProofBundle {
             policy_hash: decision.policy_hash.clone(),
@@ -1264,11 +1297,15 @@ mod tests {
 
         let decision = Decision {
             chosen_index: 0,
-            chosen_action: CandidateAction {
-                action_type: "BUY".into(),
-                params: HashMap::new(),
-                score: Score(10),
-                candidate_hash: dummy_hash(2),
+            chosen_action: {
+                let mut candidate = CandidateAction {
+                    action_type: "noop".into(),
+                    params: HashMap::new(),
+                    score: Score(10),
+                    candidate_hash: dummy_hash(2),
+                };
+                candidate.candidate_hash = crate::hash::hash_candidate(&candidate);
+                candidate
             },
             policy_hash: dummy_hash(3),
             decision_commitment: dummy_hash(4),
@@ -1276,7 +1313,29 @@ mod tests {
 
         let state = StateSnapshot {
             fields: HashMap::new(),
-            policy_inputs: HashMap::new(),
+            policy_inputs: HashMap::from([
+                (
+                    crate::GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1.into(),
+                    b"1".to_vec(),
+                ),
+                (
+                    crate::GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1.into(),
+                    b"0".to_vec(),
+                ),
+                (
+                    crate::GOVERNANCE_INPUT_IS_CAP_EXPAND_V1.into(),
+                    b"0".to_vec(),
+                ),
+                (
+                    crate::GOVERNANCE_INPUT_PROFILE_APP_OK_V1.into(),
+                    b"1".to_vec(),
+                ),
+                (
+                    crate::GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1.into(),
+                    b"0".to_vec(),
+                ),
+                (crate::GOVERNANCE_INPUT_LINK_OK_V1.into(), b"1".to_vec()),
+            ]),
             state_hash: dummy_hash(5),
             state_ref: crate::StateRef::unknown(),
         };
@@ -1299,6 +1358,22 @@ mod tests {
 
         assert_eq!(proof.policy_hash, decision.policy_hash);
         assert!(!proof.risc0_receipt.is_empty());
+        assert_eq!(
+            proof.attestation_metadata.get("governance_update_kind"),
+            Some(&"policy_tweak".into())
+        );
+        assert_eq!(
+            proof.attestation_metadata.get("governance_profile_app_ok"),
+            Some(&"true".into())
+        );
+        assert_eq!(
+            proof.attestation_metadata.get("governance_profile_safety_ok"),
+            Some(&"false".into())
+        );
+        assert_eq!(
+            proof.attestation_metadata.get("governance_link_ok"),
+            Some(&"true".into())
+        );
     }
 
     #[test]

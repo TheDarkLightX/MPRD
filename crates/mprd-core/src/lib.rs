@@ -266,6 +266,7 @@ pub struct AttestationReadyBundle<'a> {
     token: &'a DecisionToken,
     decision: &'a Decision,
     state: &'a StateSnapshot,
+    governance: Option<GovernanceAdmissionWitnessV1>,
 }
 
 impl<'a> AttestationReadyBundle<'a> {
@@ -279,6 +280,75 @@ impl<'a> AttestationReadyBundle<'a> {
 
     pub fn state(&self) -> &'a StateSnapshot {
         self.state
+    }
+
+    pub fn governance(&self) -> Option<&GovernanceAdmissionWitnessV1> {
+        self.governance.as_ref()
+    }
+}
+
+pub const GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1: &str = "is_policy_tweak";
+pub const GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1: &str = "is_safety_change";
+pub const GOVERNANCE_INPUT_IS_CAP_EXPAND_V1: &str = "is_cap_expand";
+pub const GOVERNANCE_INPUT_PROFILE_APP_OK_V1: &str = "profile_app_ok";
+pub const GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1: &str = "profile_safety_ok";
+pub const GOVERNANCE_INPUT_LINK_OK_V1: &str = "link_ok";
+
+const GOVERNANCE_PREPARED_INPUT_KEYS_V1: [&str; 6] = [
+    GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1,
+    GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1,
+    GOVERNANCE_INPUT_IS_CAP_EXPAND_V1,
+    GOVERNANCE_INPUT_PROFILE_APP_OK_V1,
+    GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1,
+    GOVERNANCE_INPUT_LINK_OK_V1,
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GovernanceUpdateKindV1 {
+    PolicyTweak,
+    SafetyRuleChange,
+    AgentCapabilityExpand,
+}
+
+impl GovernanceUpdateKindV1 {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::PolicyTweak => "policy_tweak",
+            Self::SafetyRuleChange => "safety_rule_change",
+            Self::AgentCapabilityExpand => "agent_capability_expand",
+        }
+    }
+}
+
+/// Concrete governance-admission witness derived from the prepared Tau governance lane surface.
+///
+/// This keeps governance admission off the RC1 path as a free boolean when the canonical
+/// governance input rails are present in `state.policy_inputs`.
+#[must_use]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GovernanceAdmissionWitnessV1 {
+    update_kind: GovernanceUpdateKindV1,
+    profile_app_ok: bool,
+    profile_safety_ok: bool,
+    // Retained for audit/export surfaces even though the current constructor only produces `true`.
+    link_ok: bool,
+}
+
+impl GovernanceAdmissionWitnessV1 {
+    pub fn update_kind(&self) -> GovernanceUpdateKindV1 {
+        self.update_kind
+    }
+
+    pub fn profile_app_ok(&self) -> bool {
+        self.profile_app_ok
+    }
+
+    pub fn profile_safety_ok(&self) -> bool {
+        self.profile_safety_ok
+    }
+
+    pub fn link_ok(&self) -> bool {
+        self.link_ok
     }
 }
 
@@ -347,6 +417,102 @@ pub fn policy_authority_witness_v1(
         policy_hash: *policy_hash,
         policy_ref: policy_ref.clone(),
     })
+}
+
+fn decode_policy_input_bool_v1(raw: &[u8]) -> Result<bool> {
+    if raw == [0u8] {
+        return Ok(false);
+    }
+    if raw == [1u8] {
+        return Ok(true);
+    }
+
+    let s = std::str::from_utf8(raw)
+        .map_err(|_| MprdError::InvalidInput("governance policy input must be valid utf-8".into()))?;
+    match s {
+        "0" | "false" | "False" | "FALSE" | "F" => Ok(false),
+        "1" | "true" | "True" | "TRUE" | "T" => Ok(true),
+        _ => Err(MprdError::InvalidInput(format!(
+            "unsupported governance policy input bool encoding: {s}"
+        ))),
+    }
+}
+
+/// Construct a concrete governance-admission witness when the prepared Tau governance rails are
+/// present in the observed state.
+///
+/// Semantics:
+/// - if none of the canonical governance prepared-input keys are present, governance admission is
+///   not modeled on this runtime packet and `Ok(None)` is returned.
+/// - if any of the keys are present, all required keys must be present and must satisfy the
+///   canonical prepared-lane admission rule fail-closed.
+pub fn governance_admission_witness_v1(
+    state: &StateSnapshot,
+) -> Result<Option<GovernanceAdmissionWitnessV1>> {
+    let has_any = GOVERNANCE_PREPARED_INPUT_KEYS_V1
+        .iter()
+        .any(|k| state.policy_inputs.contains_key(*k));
+    if !has_any {
+        return Ok(None);
+    }
+
+    let read = |key: &str| -> Result<bool> {
+        let raw = state.policy_inputs.get(key).ok_or_else(|| {
+            MprdError::InvalidInput(format!("missing governance prepared input: {key}"))
+        })?;
+        decode_policy_input_bool_v1(raw)
+    };
+
+    let is_policy_tweak = read(GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1)?;
+    let is_safety_change = read(GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1)?;
+    let is_cap_expand = read(GOVERNANCE_INPUT_IS_CAP_EXPAND_V1)?;
+    let profile_app_ok = read(GOVERNANCE_INPUT_PROFILE_APP_OK_V1)?;
+    let profile_safety_ok = read(GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1)?;
+    let link_ok = read(GOVERNANCE_INPUT_LINK_OK_V1)?;
+
+    let one_hot_count =
+        usize::from(is_policy_tweak) + usize::from(is_safety_change) + usize::from(is_cap_expand);
+    if one_hot_count != 1 {
+        return Err(MprdError::InvalidInput(
+            "governance prepared lane is not one-hot".into(),
+        ));
+    }
+    if !link_ok {
+        return Err(MprdError::InvalidInput(
+            "governance admission requires link_ok".into(),
+        ));
+    }
+
+    let update_kind = if is_policy_tweak {
+        if !profile_app_ok {
+            return Err(MprdError::InvalidInput(
+                "governance policy_tweak admission requires profile_app_ok".into(),
+            ));
+        }
+        GovernanceUpdateKindV1::PolicyTweak
+    } else if is_safety_change {
+        if !profile_safety_ok {
+            return Err(MprdError::InvalidInput(
+                "governance safety_rule_change admission requires profile_safety_ok".into(),
+            ));
+        }
+        GovernanceUpdateKindV1::SafetyRuleChange
+    } else {
+        if !(profile_app_ok && profile_safety_ok) {
+            return Err(MprdError::InvalidInput(
+                "governance agent_capability_expand admission requires both profile thresholds"
+                    .into(),
+            ));
+        }
+        GovernanceUpdateKindV1::AgentCapabilityExpand
+    };
+
+    Ok(Some(GovernanceAdmissionWitnessV1 {
+        update_kind,
+        profile_app_ok,
+        profile_safety_ok,
+        link_ok,
+    }))
 }
 
 /// Construct the concrete token-binding witness from the orchestrator's authority, state, and
@@ -475,11 +641,13 @@ pub fn prepare_attestation_ready<'a>(
             "token chosen_action_hash drifted from selected decision before attestation".into(),
         ));
     }
+    let governance = governance_admission_witness_v1(state)?;
 
     Ok(AttestationReadyBundle {
         token,
         decision,
         state,
+        governance,
     })
 }
 
@@ -850,6 +1018,37 @@ mod tests {
         candidate
     }
 
+    fn governance_policy_inputs(
+        update_kind: GovernanceUpdateKindV1,
+        profile_app_ok: bool,
+        profile_safety_ok: bool,
+        link_ok: bool,
+    ) -> HashMap<String, Vec<u8>> {
+        let (is_policy_tweak, is_safety_change, is_cap_expand) = match update_kind {
+            GovernanceUpdateKindV1::PolicyTweak => (true, false, false),
+            GovernanceUpdateKindV1::SafetyRuleChange => (false, true, false),
+            GovernanceUpdateKindV1::AgentCapabilityExpand => (false, false, true),
+        };
+        let enc = |b: bool| if b { b"1".to_vec() } else { b"0".to_vec() };
+        HashMap::from([
+            (GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1.into(), enc(is_policy_tweak)),
+            (
+                GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1.into(),
+                enc(is_safety_change),
+            ),
+            (GOVERNANCE_INPUT_IS_CAP_EXPAND_V1.into(), enc(is_cap_expand)),
+            (
+                GOVERNANCE_INPUT_PROFILE_APP_OK_V1.into(),
+                enc(profile_app_ok),
+            ),
+            (
+                GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1.into(),
+                enc(profile_safety_ok),
+            ),
+            (GOVERNANCE_INPUT_LINK_OK_V1.into(), enc(link_ok)),
+        ])
+    }
+
     #[test]
     fn prepare_execution_ready_accepts_well_bound_transcript() {
         let candidate = valid_http_call_candidate();
@@ -954,6 +1153,105 @@ mod tests {
         assert_eq!(ready.token(), &token);
         assert_eq!(ready.decision(), &decision);
         assert_eq!(ready.state(), &state);
+        assert!(ready.governance().is_none());
+    }
+
+    #[test]
+    fn prepare_attestation_ready_accepts_governance_admitted_inputs() {
+        let candidate = valid_http_call_candidate();
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash: dummy_hash(31),
+            decision_commitment: dummy_hash(32),
+        };
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: governance_policy_inputs(
+                GovernanceUpdateKindV1::AgentCapabilityExpand,
+                true,
+                true,
+                true,
+            ),
+            state_hash: dummy_hash(33),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(34),
+                state_epoch: 4,
+                state_attestation_hash: dummy_hash(35),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: decision.policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 2,
+                registry_root: dummy_hash(36),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: hash::hash_candidate(&decision.chosen_action),
+            nonce_or_tx_hash: dummy_hash(37),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+
+        let ready = prepare_attestation_ready(&token, &decision, &state).expect("ready");
+        let governance = ready.governance().expect("governance witness");
+        assert_eq!(
+            governance.update_kind(),
+            GovernanceUpdateKindV1::AgentCapabilityExpand
+        );
+        assert!(governance.profile_app_ok());
+        assert!(governance.profile_safety_ok());
+        assert!(governance.link_ok());
+    }
+
+    #[test]
+    fn prepare_attestation_ready_accepts_safety_rule_change_governance_inputs() {
+        let candidate = valid_http_call_candidate();
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash: dummy_hash(48),
+            decision_commitment: dummy_hash(49),
+        };
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: governance_policy_inputs(
+                GovernanceUpdateKindV1::SafetyRuleChange,
+                false,
+                true,
+                true,
+            ),
+            state_hash: dummy_hash(50),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(51),
+                state_epoch: 7,
+                state_attestation_hash: dummy_hash(52),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: decision.policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 4,
+                registry_root: dummy_hash(53),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: hash::hash_candidate(&decision.chosen_action),
+            nonce_or_tx_hash: dummy_hash(54),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+
+        let ready = prepare_attestation_ready(&token, &decision, &state).expect("ready");
+        let governance = ready.governance().expect("governance witness");
+        assert_eq!(
+            governance.update_kind(),
+            GovernanceUpdateKindV1::SafetyRuleChange
+        );
+        assert!(!governance.profile_app_ok());
+        assert!(governance.profile_safety_ok());
+        assert!(governance.link_ok());
     }
 
     #[test]
@@ -991,6 +1289,120 @@ mod tests {
 
         let err = prepare_attestation_ready(&token, &decision, &state).unwrap_err();
         assert!(matches!(err, MprdError::InvalidInput(message) if message == "token chosen_action_hash drifted from selected decision before attestation"));
+    }
+
+    #[test]
+    fn prepare_attestation_ready_rejects_governance_inputs_without_link_ok() {
+        let candidate = valid_http_call_candidate();
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash: dummy_hash(38),
+            decision_commitment: dummy_hash(39),
+        };
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: governance_policy_inputs(
+                GovernanceUpdateKindV1::PolicyTweak,
+                true,
+                false,
+                false,
+            ),
+            state_hash: dummy_hash(40),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(41),
+                state_epoch: 5,
+                state_attestation_hash: dummy_hash(42),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: decision.policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 3,
+                registry_root: dummy_hash(43),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: hash::hash_candidate(&decision.chosen_action),
+            nonce_or_tx_hash: dummy_hash(44),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+
+        let err = prepare_attestation_ready(&token, &decision, &state).unwrap_err();
+        assert!(matches!(err, MprdError::InvalidInput(message) if message == "governance admission requires link_ok"));
+    }
+
+    #[test]
+    fn governance_admission_witness_rejects_non_one_hot_prepared_lane() {
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::from([
+                (GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1.into(), b"1".to_vec()),
+                (GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1.into(), b"1".to_vec()),
+                (GOVERNANCE_INPUT_IS_CAP_EXPAND_V1.into(), b"0".to_vec()),
+                (GOVERNANCE_INPUT_PROFILE_APP_OK_V1.into(), b"1".to_vec()),
+                (GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1.into(), b"1".to_vec()),
+                (GOVERNANCE_INPUT_LINK_OK_V1.into(), b"1".to_vec()),
+            ]),
+            state_hash: dummy_hash(45),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(46),
+                state_epoch: 6,
+                state_attestation_hash: dummy_hash(47),
+            },
+        };
+
+        let err = governance_admission_witness_v1(&state).unwrap_err();
+        assert!(matches!(err, MprdError::InvalidInput(message) if message == "governance prepared lane is not one-hot"));
+    }
+
+    #[test]
+    fn governance_admission_witness_rejects_zero_hot_prepared_lane() {
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::from([
+                (GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1.into(), b"0".to_vec()),
+                (GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1.into(), b"0".to_vec()),
+                (GOVERNANCE_INPUT_IS_CAP_EXPAND_V1.into(), b"0".to_vec()),
+                (GOVERNANCE_INPUT_PROFILE_APP_OK_V1.into(), b"0".to_vec()),
+                (GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1.into(), b"0".to_vec()),
+                (GOVERNANCE_INPUT_LINK_OK_V1.into(), b"1".to_vec()),
+            ]),
+            state_hash: dummy_hash(55),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(56),
+                state_epoch: 8,
+                state_attestation_hash: dummy_hash(57),
+            },
+        };
+
+        let err = governance_admission_witness_v1(&state).unwrap_err();
+        assert!(matches!(err, MprdError::InvalidInput(message) if message == "governance prepared lane is not one-hot"));
+    }
+
+    #[test]
+    fn governance_admission_witness_rejects_whitespace_padded_ascii_bool() {
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::from([
+                (GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1.into(), b" 1 ".to_vec()),
+                (GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1.into(), b"0".to_vec()),
+                (GOVERNANCE_INPUT_IS_CAP_EXPAND_V1.into(), b"0".to_vec()),
+                (GOVERNANCE_INPUT_PROFILE_APP_OK_V1.into(), b"1".to_vec()),
+                (GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1.into(), b"0".to_vec()),
+                (GOVERNANCE_INPUT_LINK_OK_V1.into(), b"1".to_vec()),
+            ]),
+            state_hash: dummy_hash(58),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(59),
+                state_epoch: 9,
+                state_attestation_hash: dummy_hash(60),
+            },
+        };
+
+        let err = governance_admission_witness_v1(&state).unwrap_err();
+        assert!(matches!(err, MprdError::InvalidInput(message) if message == "unsupported governance policy input bool encoding:  1 "));
     }
 
     #[test]
