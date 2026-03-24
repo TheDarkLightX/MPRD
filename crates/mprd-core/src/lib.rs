@@ -424,6 +424,7 @@ impl ExecutionAuthorizationWitnessV1 {
 pub struct ExecutionExecutorAdmissionWitnessV1 {
     signature: Option<crate::crypto::SignatureAdmissionWitnessV1>,
     state_provenance: Option<crate::state_provenance::StateProvenanceWitnessV1>,
+    replay_clearance: Option<crate::anti_replay::ReplayClearanceWitnessV1>,
 }
 
 impl ExecutionExecutorAdmissionWitnessV1 {
@@ -433,6 +434,10 @@ impl ExecutionExecutorAdmissionWitnessV1 {
 
     pub fn state_provenance(&self) -> Option<&crate::state_provenance::StateProvenanceWitnessV1> {
         self.state_provenance.as_ref()
+    }
+
+    pub fn replay_clearance(&self) -> Option<&crate::anti_replay::ReplayClearanceWitnessV1> {
+        self.replay_clearance.as_ref()
     }
 
     fn with_signature(mut self, signature: crate::crypto::SignatureAdmissionWitnessV1) -> Self {
@@ -445,6 +450,14 @@ impl ExecutionExecutorAdmissionWitnessV1 {
         state_provenance: crate::state_provenance::StateProvenanceWitnessV1,
     ) -> Self {
         self.state_provenance = Some(state_provenance);
+        self
+    }
+
+    fn with_replay_clearance(
+        mut self,
+        replay_clearance: crate::anti_replay::ReplayClearanceWitnessV1,
+    ) -> Self {
+        self.replay_clearance = Some(replay_clearance);
         self
     }
 }
@@ -767,6 +780,25 @@ pub fn prepare_execution_ready_with_state_provenance<'a>(
         .with_state_provenance(provenance);
     enriched.executor_admission = Some(admission);
     Ok(enriched)
+}
+
+/// Enrich an execution-ready bundle with a constructor-gated replay-clearance witness.
+pub fn prepare_execution_ready_with_replay_clearance<'a>(
+    ready: &ExecutionReadyBundle<'a>,
+    nonce_validator: &dyn crate::anti_replay::NonceValidator,
+) -> Result<(
+    ExecutionReadyBundle<'a>,
+    crate::anti_replay::ReplayClearanceWitnessV1,
+)> {
+    let replay = crate::anti_replay::replay_clearance_witness_v1(ready.token(), nonce_validator)?;
+    let mut enriched = ready.clone();
+    let admission = enriched
+        .executor_admission
+        .take()
+        .unwrap_or_default()
+        .with_replay_clearance(replay);
+    enriched.executor_admission = Some(admission);
+    Ok((enriched, replay))
 }
 
 /// Upgrade token, decision, and state inputs into an attestation-ready bundle after checking that
@@ -1517,6 +1549,76 @@ mod tests {
                 .expect("state provenance")
                 .state_ref(),
             &token.state_ref
+        );
+    }
+
+    #[test]
+    fn prepare_execution_ready_with_replay_clearance_accumulates_executor_admission() {
+        #[derive(Clone, Copy)]
+        struct AcceptingNonceValidator;
+
+        impl crate::anti_replay::NonceValidator for AcceptingNonceValidator {
+            fn validate(&self, _token: &DecisionToken) -> Result<()> {
+                Ok(())
+            }
+
+            fn validate_and_claim(
+                &self,
+                _token: &DecisionToken,
+            ) -> Result<crate::anti_replay::NonceClaim> {
+                Ok(crate::anti_replay::NonceClaim::NotClaimed)
+            }
+
+            fn mark_used(&self, _token: &DecisionToken) -> Result<()> {
+                Ok(())
+            }
+
+            fn cleanup(&self) {}
+        }
+
+        let candidate = valid_http_call_candidate();
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x61),
+            policy_ref: PolicyRef {
+                policy_epoch: 1,
+                registry_root: dummy_hash(0x62),
+            },
+            state_hash: dummy_hash(0x63),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0x64),
+                state_epoch: 2,
+                state_attestation_hash: dummy_hash(0x65),
+            },
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x66),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0x67),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+
+        let ready = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).expect("ready");
+        let (ready, replay) =
+            prepare_execution_ready_with_replay_clearance(&ready, &AcceptingNonceValidator)
+                .expect("replay witness");
+
+        let admission = ready.executor_admission().expect("executor admission");
+        assert_eq!(
+            admission.replay_clearance().expect("replay").claim(),
+            replay.claim()
+        );
+        assert_eq!(
+            admission.replay_clearance().expect("replay").claim(),
+            crate::anti_replay::NonceClaim::NotClaimed
         );
     }
 

@@ -1704,8 +1704,9 @@ where
         ready: &crate::ExecutionReadyBundle<'_>,
     ) -> Result<crate::ExecutionResult> {
         let token = ready.token();
-        let replay = replay_clearance_witness_v1(token, &self.nonce_validator)?;
-        let result = self.inner.execute_ready(ready)?;
+        let (ready, replay) =
+            crate::prepare_execution_ready_with_replay_clearance(ready, &self.nonce_validator)?;
+        let result = self.inner.execute_ready(&ready)?;
         finalize_replay_clearance_v1(token, replay, &result, &self.nonce_validator)?;
         Ok(result)
     }

@@ -909,9 +909,11 @@ impl ExecutorAdapter for AntiReplayBoxedExecutor {
 
     fn execute_ready(&self, ready: &crate::ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
         let token = ready.token();
-        let replay =
-            crate::anti_replay::replay_clearance_witness_v1(token, self.nonce_validator.as_ref())?;
-        let result = self.inner.execute_ready(ready)?;
+        let (ready, replay) = crate::prepare_execution_ready_with_replay_clearance(
+            ready,
+            self.nonce_validator.as_ref(),
+        )?;
+        let result = self.inner.execute_ready(&ready)?;
         crate::anti_replay::finalize_replay_clearance_v1(
             token,
             replay,
@@ -1543,6 +1545,7 @@ mod tests {
         saw_authorization: Arc<AtomicBool>,
         saw_signature_admission: Arc<AtomicBool>,
         saw_state_provenance_admission: Arc<AtomicBool>,
+        saw_replay_clearance_admission: Arc<AtomicBool>,
     }
 
     impl ExecutorAdapter for ReadyWitnessCapturingExecutor {
@@ -1565,6 +1568,8 @@ mod tests {
                 .store(admission.signature().is_some(), Ordering::SeqCst);
             self.saw_state_provenance_admission
                 .store(admission.state_provenance().is_some(), Ordering::SeqCst);
+            self.saw_replay_clearance_admission
+                .store(admission.replay_clearance().is_some(), Ordering::SeqCst);
             Ok(ExecutionResult {
                 success: true,
                 message: None,
@@ -1913,6 +1918,7 @@ mod tests {
         let saw_authorization = Arc::new(AtomicBool::new(false));
         let saw_signature_admission = Arc::new(AtomicBool::new(false));
         let saw_state_provenance_admission = Arc::new(AtomicBool::new(false));
+        let saw_replay_clearance_admission = Arc::new(AtomicBool::new(false));
         let inner: Box<dyn ExecutorAdapter + Send + Sync> =
             Box::new(ReadyWitnessCapturingExecutor {
                 raw_calls: raw_calls.clone(),
@@ -1920,6 +1926,7 @@ mod tests {
                 saw_authorization: saw_authorization.clone(),
                 saw_signature_admission: saw_signature_admission.clone(),
                 saw_state_provenance_admission: saw_state_provenance_admission.clone(),
+                saw_replay_clearance_admission: saw_replay_clearance_admission.clone(),
             });
         let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
 
@@ -1930,6 +1937,7 @@ mod tests {
         assert!(saw_authorization.load(Ordering::SeqCst));
         assert!(saw_signature_admission.load(Ordering::SeqCst));
         assert!(saw_state_provenance_admission.load(Ordering::SeqCst));
+        assert!(saw_replay_clearance_admission.load(Ordering::SeqCst));
     }
 
     struct FailingExecutor {
