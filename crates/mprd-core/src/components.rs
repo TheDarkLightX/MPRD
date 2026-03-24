@@ -567,49 +567,19 @@ impl StateProvenanceBoxedExecutor {
 impl ExecutorAdapter for StateProvenanceBoxedExecutor {
     fn execute(&self, verified: &crate::VerifiedBundle<'_>) -> Result<ExecutionResult> {
         let token = verified.token();
-        let state_ref = &token.state_ref;
-        if state_ref.state_source_id == Hash32([0u8; 32])
-            || state_ref.state_attestation_hash == Hash32([0u8; 32])
-        {
-            return Err(crate::MprdError::InvalidInput(
-                "missing state provenance (state_ref)".into(),
-            ));
-        }
-
-        if !self
-            .allowed_state_source_ids
-            .iter()
-            .any(|h| h == &state_ref.state_source_id)
-        {
-            return Err(crate::MprdError::InvalidInput(
-                "unallowlisted state provenance scheme (state_source_id)".into(),
-            ));
-        }
-
+        let _provenance = crate::state_provenance::state_provenance_witness_v1(
+            &token.state_ref,
+            &self.allowed_state_source_ids,
+        )?;
         self.inner.execute(verified)
     }
 
     fn execute_ready(&self, ready: &crate::ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
         let token = ready.token();
-        let state_ref = &token.state_ref;
-        if state_ref.state_source_id == Hash32([0u8; 32])
-            || state_ref.state_attestation_hash == Hash32([0u8; 32])
-        {
-            return Err(crate::MprdError::InvalidInput(
-                "missing state provenance (state_ref)".into(),
-            ));
-        }
-
-        if !self
-            .allowed_state_source_ids
-            .iter()
-            .any(|h| h == &state_ref.state_source_id)
-        {
-            return Err(crate::MprdError::InvalidInput(
-                "unallowlisted state provenance scheme (state_source_id)".into(),
-            ));
-        }
-
+        let _provenance = crate::state_provenance::state_provenance_witness_v1(
+            &token.state_ref,
+            &self.allowed_state_source_ids,
+        )?;
         self.inner.execute_ready(ready)
     }
 }
@@ -1937,6 +1907,38 @@ mod tests {
 
         let verified = crate::VerifiedBundle::new(&token, &proof);
         let result = guarded.execute(&verified);
+        assert!(result.is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn wrap_executor_with_guards_execute_ready_accepts_allowlisted_state_provenance() {
+        let state_source_id = crate::state_provenance::state_source_id_signed_snapshot_v1();
+        let allowlisted = vec![hex::encode(state_source_id.0)];
+        let config = crate::MprdConfig::builder()
+            .require_signatures(false)
+            .require_state_provenance(true)
+            .allowed_state_source_ids_hex(allowlisted)
+            .build()
+            .expect("config");
+
+        let (mut token, proof) = noop_token_and_proof(dummy_hash(0x9a));
+        token.state_ref = crate::StateRef {
+            state_source_id,
+            state_epoch: 11,
+            state_attestation_hash: dummy_hash(0x9b),
+        };
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(ReadyOnlyExecutor {
+            raw_calls: Arc::new(AtomicUsize::new(0)),
+            ready_calls: calls.clone(),
+        });
+        let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
+
+        let ready = crate::prepare_execution_ready(crate::VerifiedBundle::new(&token, &proof))
+            .expect("ready");
+        let result = guarded.execute_ready(&ready);
         assert!(result.is_ok());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }

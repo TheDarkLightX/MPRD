@@ -18,6 +18,49 @@ pub const SIGNED_SNAPSHOT_VERSION_V1: u32 = 1;
 pub const SIGNED_SNAPSHOT_DOMAIN_V1: &[u8] = b"MPRD_SIGNED_STATE_SNAPSHOT_V1";
 pub const STATE_ATTESTATION_DOMAIN_V1: &[u8] = b"MPRD_STATE_ATTESTATION_V1";
 
+/// Concrete executor-bound provenance witness carried after fail-closed provenance admission.
+///
+/// This is an RC1 witness step: instead of leaving provenance admission as open-coded boolean
+/// checks in the executor wrapper, the wrapper now constructs this witness first and only then
+/// proceeds to side effects.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StateProvenanceWitnessV1 {
+    state_ref: StateRef,
+}
+
+impl StateProvenanceWitnessV1 {
+    pub fn state_ref(&self) -> &StateRef {
+        &self.state_ref
+    }
+}
+
+/// Construct the concrete provenance witness for executor admission.
+pub fn state_provenance_witness_v1(
+    state_ref: &StateRef,
+    allowed_state_source_ids: &[Hash32],
+) -> Result<StateProvenanceWitnessV1> {
+    if state_ref.state_source_id == Hash32([0u8; 32])
+        || state_ref.state_attestation_hash == Hash32([0u8; 32])
+    {
+        return Err(MprdError::InvalidInput(
+            "missing state provenance (state_ref)".into(),
+        ));
+    }
+
+    if !allowed_state_source_ids
+        .iter()
+        .any(|h| h == &state_ref.state_source_id)
+    {
+        return Err(MprdError::InvalidInput(
+            "unallowlisted state provenance scheme (state_source_id)".into(),
+        ));
+    }
+
+    Ok(StateProvenanceWitnessV1 {
+        state_ref: state_ref.clone(),
+    })
+}
+
 /// Canonical state provenance scheme identifier: "signed snapshot v1".
 ///
 /// This is a commitment-sized ID (domain-separated SHA-256), not a free-form string.
@@ -459,6 +502,38 @@ mod tests {
         tampered.fields.insert("risk".into(), Value::Int(8));
         let provider = SignedSnapshotStateProvider::new(tampered, vk);
         assert!(provider.snapshot().is_err());
+    }
+
+    #[test]
+    fn state_provenance_witness_accepts_allowlisted_bound_state_ref() {
+        let state_ref = StateRef {
+            state_source_id: state_source_id_signed_snapshot_v1(),
+            state_epoch: 7,
+            state_attestation_hash: Hash32([0x55; 32]),
+        };
+        let witness = state_provenance_witness_v1(&state_ref, &[state_ref.state_source_id])
+            .expect("witness");
+        assert_eq!(witness.state_ref(), &state_ref);
+    }
+
+    #[test]
+    fn state_provenance_witness_rejects_missing_state_ref() {
+        let state_ref = StateRef::unknown();
+        let err = state_provenance_witness_v1(&state_ref, &[state_source_id_signed_snapshot_v1()])
+            .expect_err("missing provenance must fail closed");
+        assert!(matches!(err, MprdError::InvalidInput(message) if message == "missing state provenance (state_ref)"));
+    }
+
+    #[test]
+    fn state_provenance_witness_rejects_unallowlisted_state_source() {
+        let state_ref = StateRef {
+            state_source_id: Hash32([0x66; 32]),
+            state_epoch: 9,
+            state_attestation_hash: Hash32([0x77; 32]),
+        };
+        let err = state_provenance_witness_v1(&state_ref, &[state_source_id_signed_snapshot_v1()])
+            .expect_err("unallowlisted provenance must fail closed");
+        assert!(matches!(err, MprdError::InvalidInput(message) if message == "unallowlisted state provenance scheme (state_source_id)"));
     }
 
     // =========================================================================
