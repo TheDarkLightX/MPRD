@@ -506,11 +506,18 @@ impl<E: ExecutorAdapter> SignatureVerifyingExecutor<E> {
 impl<E: ExecutorAdapter> ExecutorAdapter for SignatureVerifyingExecutor<E> {
     fn execute(&self, verified: &crate::VerifiedBundle<'_>) -> Result<ExecutionResult> {
         let token = verified.token();
-        // Verify signature before executing
-        self.verifying_key.verify_token(token, &token.signature)?;
-
-        // Signature valid, proceed with execution
+        let _signature = self
+            .verifying_key
+            .signature_witness_v1(token, &token.signature)?;
         self.inner.execute(verified)
+    }
+
+    fn execute_ready(&self, ready: &crate::ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
+        let token = ready.token();
+        let _signature = self
+            .verifying_key
+            .signature_witness_v1(token, &token.signature)?;
+        self.inner.execute_ready(ready)
     }
 }
 
@@ -1596,6 +1603,52 @@ mod tests {
         };
 
         (token, proof)
+    }
+
+    #[test]
+    fn signature_verifying_executor_execute_ready_accepts_valid_signature() {
+        let signing_key = crate::crypto::TokenSigningKey::from_seed(&[0x11; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let (mut token, proof) = noop_token_and_proof(dummy_hash(0x44));
+        token.signature = signing_key.sign_token(&token).to_vec();
+
+        let raw_calls = Arc::new(AtomicUsize::new(0));
+        let ready_calls = Arc::new(AtomicUsize::new(0));
+        let inner = ReadyOnlyExecutor {
+            raw_calls: raw_calls.clone(),
+            ready_calls: ready_calls.clone(),
+        };
+        let executor = SignatureVerifyingExecutor::new(inner, verifying_key);
+
+        let ready = crate::prepare_execution_ready(crate::VerifiedBundle::new(&token, &proof))
+            .expect("ready");
+        let result = executor.execute_ready(&ready);
+        assert!(result.is_ok());
+        assert_eq!(raw_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(ready_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn signature_verifying_executor_execute_ready_rejects_invalid_signature() {
+        let signing_key = crate::crypto::TokenSigningKey::from_seed(&[0x12; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let (mut token, proof) = noop_token_and_proof(dummy_hash(0x45));
+        token.signature = vec![0u8; 64];
+
+        let raw_calls = Arc::new(AtomicUsize::new(0));
+        let ready_calls = Arc::new(AtomicUsize::new(0));
+        let inner = ReadyOnlyExecutor {
+            raw_calls: raw_calls.clone(),
+            ready_calls: ready_calls.clone(),
+        };
+        let executor = SignatureVerifyingExecutor::new(inner, verifying_key);
+
+        let ready = crate::prepare_execution_ready(crate::VerifiedBundle::new(&token, &proof))
+            .expect("ready");
+        let result = executor.execute_ready(&ready);
+        assert!(matches!(result, Err(crate::MprdError::SignatureInvalid(_))));
+        assert_eq!(raw_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(ready_calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]
