@@ -1226,9 +1226,7 @@ impl PersistentNonceStore for FileNonceStore {
             .open(&path)
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::AlreadyExists {
-                    MprdError::NonceReplay {
-                        nonce: *nonce,
-                    }
+                    MprdError::NonceReplay { nonce: *nonce }
                 } else {
                     MprdError::ExecutionError(format!("Failed to create nonce file: {e}"))
                 }

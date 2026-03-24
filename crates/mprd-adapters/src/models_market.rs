@@ -89,10 +89,7 @@ impl EndpointProposerFactory for HttpEndpointProposerFactory {
             timeout: self.timeout,
             max_candidates: self.max_candidates,
         };
-        Ok(Box::new(HttpProposer::new(
-            self.policy_hash,
-            config,
-        )?))
+        Ok(Box::new(HttpProposer::new(self.policy_hash, config)?))
     }
 }
 
@@ -221,11 +218,7 @@ impl Proposer for MarketRoutedProposer {
         let signed = self.provider.get_verified()?;
         let snapshot = &signed.snapshot;
 
-        let seed = router_seed_v1(
-            self.policy_hash,
-            state.state_hash,
-            snapshot.epoch_id,
-        );
+        let seed = router_seed_v1(self.policy_hash, state.state_hash, snapshot.epoch_id);
         let endpoints = self.select_endpoints(&snapshot.miners, seed);
 
         let mut all_candidates: Vec<CandidateAction> = Vec::new();

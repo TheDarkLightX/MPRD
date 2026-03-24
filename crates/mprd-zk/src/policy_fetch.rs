@@ -273,9 +273,7 @@ impl RegistryBoundTauCompiledPolicyProvider {
         let bytes = self
             .store
             .get(policy_hash)?
-            .ok_or(MprdError::PolicyNotFound {
-                hash: *policy_hash,
-            })?;
+            .ok_or(MprdError::PolicyNotFound { hash: *policy_hash })?;
         let computed = Hash32(tau_compiled_policy_hash_v1(&bytes));
         if computed != *policy_hash {
             return Err(MprdError::ZkError(

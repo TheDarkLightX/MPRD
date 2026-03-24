@@ -104,9 +104,7 @@ impl MpbPolicyEngine {
         let policy = self
             .policies
             .get(policy_hash)
-            .ok_or(MprdError::PolicyNotFound {
-                hash: *policy_hash,
-            })?;
+            .ok_or(MprdError::PolicyNotFound { hash: *policy_hash })?;
 
         let registers = self.build_registers(policy, state, candidate);
 

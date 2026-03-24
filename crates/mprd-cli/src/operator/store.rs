@@ -557,8 +557,7 @@ impl OperatorStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => return Err(e.into()),
         };
-        let mut items: Vec<api::AutoAction> =
-            serde_json::from_slice(&bytes).unwrap_or_default();
+        let mut items: Vec<api::AutoAction> = serde_json::from_slice(&bytes).unwrap_or_default();
         if items.len() > limit {
             items.truncate(limit);
         }

@@ -795,12 +795,12 @@ impl Risc0MpbAttestor {
             ));
         }
 
-        let policy = self
-            .mpb_policy_provider
-            .get(&token.policy_hash)
-            .ok_or(MprdError::PolicyNotFound {
-                hash: token.policy_hash,
-            })?;
+        let policy =
+            self.mpb_policy_provider
+                .get(&token.policy_hash)
+                .ok_or(MprdError::PolicyNotFound {
+                    hash: token.policy_hash,
+                })?;
 
         // Canonicalize variable bindings (fail closed if malformed).
         let mut vars = policy.variables;

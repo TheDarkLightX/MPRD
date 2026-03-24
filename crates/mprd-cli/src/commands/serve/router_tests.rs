@@ -599,8 +599,7 @@ async fn decisions_filter_by_policy_hash() {
     let want_policy = Hash32([9u8; 32]);
     let other_policy = Hash32([8u8; 32]);
 
-    let _a =
-        write_simple_decision_with_policy(&store, 1_000, want_policy, true, Some(true));
+    let _a = write_simple_decision_with_policy(&store, 1_000, want_policy, true, Some(true));
     let _b = write_simple_decision_with_policy(&store, 2_000, other_policy, true, Some(true));
 
     let want_hex = hex::encode(want_policy.0);
