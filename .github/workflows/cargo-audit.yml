@@ -33,7 +33,19 @@ jobs:
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --version 0.22.1 --locked
+        env:
+          CARGO_AUDIT_VERSION: 0.22.1
+        run: |
+          set -euo pipefail
+          asset="cargo-audit-x86_64-unknown-linux-gnu-v${CARGO_AUDIT_VERSION}.tgz"
+          dir="${asset%.tgz}"
+          url="https://github.com/rustsec/rustsec/releases/download/cargo-audit%2Fv${CARGO_AUDIT_VERSION}/${asset}"
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+          curl --fail --silent --show-error --location "$url" -o "$tmpdir/$asset"
+          tar -xzf "$tmpdir/$asset" -C "$tmpdir"
+          install -m 0755 "$tmpdir/$dir/cargo-audit" "$HOME/.cargo/bin/cargo-audit"
+          cargo-audit --version
 
       - name: Run cargo audit
         run: cargo audit --no-fetch
