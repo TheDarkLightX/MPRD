@@ -149,6 +149,11 @@ pub fn deserialize_receipt<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, Bound
 ///
 /// Limits input to `MAX_MPB_ARTIFACT_BYTES` (1 MiB) to prevent DoS.
 pub fn deserialize_mpb_artifact<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, BoundedDeserError> {
+    let payload = extract_mpb_artifact_payload(bytes)?;
+    deserialize_bounded(payload, MAX_MPB_ARTIFACT_BYTES)
+}
+
+pub fn extract_mpb_artifact_payload(bytes: &[u8]) -> Result<&[u8], BoundedDeserError> {
     let len = bytes.len() as u64;
     if bytes.starts_with(&wire::MAGIC) {
         if len > MAX_MPB_ARTIFACT_BYTES.saturating_add(wire::MAX_HEADER_BYTES as u64) {
@@ -181,7 +186,7 @@ pub fn deserialize_mpb_artifact<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, 
         Ok(wire::ParsedPayload::Legacy(p)) => p,
         Err(e) => return Err(BoundedDeserError::Wire(e.to_string())),
     };
-    deserialize_bounded(payload, MAX_MPB_ARTIFACT_BYTES)
+    Ok(payload)
 }
 
 /// Deserialize a proof bundle with bounded size.
