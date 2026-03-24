@@ -1216,31 +1216,6 @@ mod tests {
         limits_bytes: Vec<u8>,
     }
 
-    #[derive(Debug, Serialize)]
-    struct MpbLiteArtifactV2Compat {
-        version: u32,
-        mpb_register_mapping_id: mprd_risc0_shared::Id32,
-        policy_variables: Vec<mprd_risc0_shared::MpbVarBindingV1>,
-        state_preimage: Vec<u8>,
-        candidate_preimages: Vec<Vec<u8>>,
-        chosen_index: u32,
-        mpb_proof_bundle: mprd_proof::MpbProofBundle,
-        limits_bytes: Vec<u8>,
-        chosen_action_preimage: Vec<u8>,
-    }
-
-    #[derive(Debug, Serialize)]
-    struct MpbLiteArtifactV3Compat {
-        version: u32,
-        mpb_register_mapping_id: mprd_risc0_shared::Id32,
-        policy_variables: Vec<mprd_risc0_shared::MpbVarBindingV1>,
-        state_preimage: Vec<u8>,
-        candidate_preimages: Vec<Vec<u8>>,
-        chosen_index: u32,
-        mpb_proof_bundle: mprd_proof::MpbProofBundle,
-        limits_bytes: Vec<u8>,
-    }
-
     fn sample_decision_inputs(
         allowed: bool,
     ) -> (
