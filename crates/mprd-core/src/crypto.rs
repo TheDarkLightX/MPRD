@@ -112,6 +112,22 @@ pub struct TokenVerifyingKey {
     verifying_key: VerifyingKey,
 }
 
+/// Concrete signature-admission witness carried after fail-closed token signature verification.
+///
+/// This is an RC1 witness step: instead of leaving signature admission as open-coded wrapper logic,
+/// the wrapper now constructs this witness first and only then proceeds to side effects.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignatureAdmissionWitnessV1 {
+    signer_pubkey: PublicKeyBytes,
+}
+
+impl SignatureAdmissionWitnessV1 {
+    pub fn signer_pubkey(&self) -> &PublicKeyBytes {
+        &self.signer_pubkey
+    }
+}
+
 impl TokenVerifyingKey {
     /// Load verifying key from bytes.
     pub fn from_bytes(bytes: &PublicKeyBytes) -> Result<Self> {
@@ -170,6 +186,18 @@ impl TokenVerifyingKey {
 
         debug!("Signature verified");
         Ok(())
+    }
+
+    /// Construct the concrete signature-admission witness for executor admission.
+    pub fn signature_witness_v1(
+        &self,
+        token: &DecisionToken,
+        signature: &[u8],
+    ) -> Result<SignatureAdmissionWitnessV1> {
+        self.verify_token(token, signature)?;
+        Ok(SignatureAdmissionWitnessV1 {
+            signer_pubkey: self.to_bytes(),
+        })
     }
 
     /// Verify a signature over arbitrary bytes (ed25519).
@@ -413,6 +441,31 @@ mod tests {
         let sig2 = key.sign_token(&token);
 
         assert_eq!(sig1, sig2);
+    }
+
+    #[test]
+    fn signature_witness_accepts_valid_signature() {
+        let signing_key = TokenSigningKey::from_seed(&[7u8; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let token = make_token();
+        let signature = signing_key.sign_token(&token);
+
+        let witness = verifying_key
+            .signature_witness_v1(&token, &signature)
+            .expect("signature witness");
+        assert_eq!(witness.signer_pubkey(), &verifying_key.to_bytes());
+    }
+
+    #[test]
+    fn signature_witness_rejects_invalid_signature() {
+        let signing_key = TokenSigningKey::from_seed(&[8u8; 32]);
+        let verifying_key = signing_key.verifying_key();
+        let token = make_token();
+
+        let err = verifying_key
+            .signature_witness_v1(&token, &[0u8; 64])
+            .expect_err("invalid signature must fail closed");
+        assert!(matches!(err, MprdError::SignatureInvalid(_)));
     }
 
     proptest! {

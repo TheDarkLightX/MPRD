@@ -536,13 +536,17 @@ impl ExecutorAdapter for SignatureVerifyingBoxedExecutor {
         let token = verified.token();
         // SECURITY: fail closed on invalid/missing signatures. This must run before any side
         // effects (including nonce tracking) to prevent unauthenticated probing.
-        self.verifying_key.verify_token(token, &token.signature)?;
+        let _signature = self
+            .verifying_key
+            .signature_witness_v1(token, &token.signature)?;
         self.inner.execute(verified)
     }
 
     fn execute_ready(&self, ready: &crate::ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
         let token = ready.token();
-        self.verifying_key.verify_token(token, &token.signature)?;
+        let _signature = self
+            .verifying_key
+            .signature_witness_v1(token, &token.signature)?;
         self.inner.execute_ready(ready)
     }
 }
@@ -1650,6 +1654,57 @@ mod tests {
         let verified = crate::VerifiedBundle::new(&token, &proof);
         let result = guarded.execute(&verified);
         assert!(result.is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn wrap_executor_with_guards_execute_ready_accepts_valid_signature() {
+        let seed_hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+        let signing_key = crate::crypto::TokenSigningKey::from_hex(seed_hex).expect("signing key");
+        let config = crate::MprdConfig::builder()
+            .signing_key_hex(seed_hex)
+            .require_signatures(true)
+            .build()
+            .expect("config");
+        let (mut token, proof) = noop_token_and_proof(dummy_hash(0x77));
+        token.signature = signing_key.sign_token(&token).to_vec();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(ReadyOnlyExecutor {
+            raw_calls: Arc::new(AtomicUsize::new(0)),
+            ready_calls: calls.clone(),
+        });
+        let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
+
+        let ready = crate::prepare_execution_ready(crate::VerifiedBundle::new(&token, &proof))
+            .expect("ready");
+        let result = guarded.execute_ready(&ready);
+        assert!(result.is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn wrap_executor_with_guards_execute_ready_rejects_invalid_signature_without_side_effects() {
+        let seed_hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+        let config = crate::MprdConfig::builder()
+            .signing_key_hex(seed_hex)
+            .require_signatures(true)
+            .build()
+            .expect("config");
+        let (mut token, proof) = noop_token_and_proof(dummy_hash(0x78));
+        token.signature = vec![0u8; 64];
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inner: Box<dyn ExecutorAdapter + Send + Sync> = Box::new(ReadyOnlyExecutor {
+            raw_calls: Arc::new(AtomicUsize::new(0)),
+            ready_calls: calls.clone(),
+        });
+        let guarded = wrap_executor_with_guards(inner, &config).expect("wrap");
+
+        let ready = crate::prepare_execution_ready(crate::VerifiedBundle::new(&token, &proof))
+            .expect("ready");
+        let result = guarded.execute_ready(&ready);
+        assert!(matches!(result, Err(crate::MprdError::SignatureInvalid(_))));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
