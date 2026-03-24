@@ -13,10 +13,10 @@ use crate::verified_kernels::executor_action_preimage_binding;
 use crate::verified_kernels::executor_circuit_breaker;
 use crate::{
     hash::candidate_hash_preimage,
-    hash::{hash_candidate, hash_decision, hash_state},
+    hash::{hash_candidate, hash_state},
     CandidateAction, Decision, DecisionToken, ExecutionResult, ExecutorAdapter, Hash32, NonceHash,
-    PolicyRef, ProofBundle, Proposer, Result, Score, StateProvider, StateSnapshot, Value,
-    VerificationStatus, ZkAttestor, ZkLocalVerifier,
+    ProofBundle, Proposer, Result, Score, StateProvider, StateSnapshot, Value, VerificationStatus,
+    ZkAttestor, ZkLocalVerifier,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -174,12 +174,10 @@ impl SignedDecisionTokenFactory {
 }
 
 impl DecisionTokenFactory for SignedDecisionTokenFactory {
-    fn create(
+    fn create_from_binding(
         &self,
-        decision: &Decision,
-        state: &StateSnapshot,
+        binding_witness: &crate::DecisionTokenBindingWitnessV1,
         nonce_or_tx_hash: Option<NonceHash>,
-        policy_ref: &PolicyRef,
     ) -> Result<DecisionToken> {
         let nonce = nonce_or_tx_hash.unwrap_or_else(Self::generate_nonce);
         let timestamp_ms = SystemTime::now()
@@ -190,29 +188,27 @@ impl DecisionTokenFactory for SignedDecisionTokenFactory {
             .try_into()
             .map_err(|_| crate::MprdError::ExecutionError("System clock overflow".into()))?;
 
-        let decision_commitment = hash_decision(decision);
-
         // Construct token binding data for signature
         let mut binding = Vec::new();
-        binding.extend_from_slice(&decision.policy_hash.0);
-        binding.extend_from_slice(&policy_ref.policy_epoch.to_le_bytes());
-        binding.extend_from_slice(&policy_ref.registry_root.0);
-        binding.extend_from_slice(&state.state_hash.0);
-        binding.extend_from_slice(&state.state_ref.state_source_id.0);
-        binding.extend_from_slice(&state.state_ref.state_epoch.to_le_bytes());
-        binding.extend_from_slice(&state.state_ref.state_attestation_hash.0);
-        binding.extend_from_slice(&decision_commitment.0);
+        binding.extend_from_slice(&binding_witness.policy_hash().0);
+        binding.extend_from_slice(&binding_witness.policy_ref().policy_epoch.to_le_bytes());
+        binding.extend_from_slice(&binding_witness.policy_ref().registry_root.0);
+        binding.extend_from_slice(&binding_witness.state_hash().0);
+        binding.extend_from_slice(&binding_witness.state_ref().state_source_id.0);
+        binding.extend_from_slice(&binding_witness.state_ref().state_epoch.to_le_bytes());
+        binding.extend_from_slice(&binding_witness.state_ref().state_attestation_hash.0);
+        binding.extend_from_slice(&binding_witness.chosen_action_hash().0);
         binding.extend_from_slice(&nonce.0);
         binding.extend_from_slice(&timestamp_ms.to_le_bytes());
 
         let signature = self.stub_sign(&binding);
 
         Ok(DecisionToken {
-            policy_hash: decision.policy_hash.clone(),
-            policy_ref: policy_ref.clone(),
-            state_hash: state.state_hash.clone(),
-            state_ref: state.state_ref.clone(),
-            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            policy_hash: *binding_witness.policy_hash(),
+            policy_ref: binding_witness.policy_ref().clone(),
+            state_hash: *binding_witness.state_hash(),
+            state_ref: binding_witness.state_ref().clone(),
+            chosen_action_hash: *binding_witness.chosen_action_hash(),
             nonce_or_tx_hash: nonce,
             timestamp_ms,
             signature,
@@ -269,12 +265,10 @@ impl CryptoDecisionTokenFactory {
 }
 
 impl DecisionTokenFactory for CryptoDecisionTokenFactory {
-    fn create(
+    fn create_from_binding(
         &self,
-        decision: &Decision,
-        state: &StateSnapshot,
+        binding_witness: &crate::DecisionTokenBindingWitnessV1,
         nonce_or_tx_hash: Option<NonceHash>,
-        policy_ref: &PolicyRef,
     ) -> Result<DecisionToken> {
         let nonce = nonce_or_tx_hash.unwrap_or_else(Self::generate_nonce);
         let timestamp_ms = SystemTime::now()
@@ -287,11 +281,11 @@ impl DecisionTokenFactory for CryptoDecisionTokenFactory {
 
         // Create unsigned token for signing
         let mut token = DecisionToken {
-            policy_hash: decision.policy_hash.clone(),
-            policy_ref: policy_ref.clone(),
-            state_hash: state.state_hash.clone(),
-            state_ref: state.state_ref.clone(),
-            chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+            policy_hash: *binding_witness.policy_hash(),
+            policy_ref: binding_witness.policy_ref().clone(),
+            state_hash: *binding_witness.state_hash(),
+            state_ref: binding_witness.state_ref().clone(),
+            chosen_action_hash: *binding_witness.chosen_action_hash(),
             nonce_or_tx_hash: nonce,
             timestamp_ms,
             signature: vec![],
@@ -1183,6 +1177,7 @@ pub fn wrap_executor_with_guards(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PolicyRef;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 

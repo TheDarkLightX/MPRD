@@ -280,6 +280,42 @@ impl PolicyAuthorityWitnessV1 {
     }
 }
 
+/// Concrete token-binding witness carried before token materialization on the RC1 path.
+///
+/// This narrows the token-factory role: factories receive one immutable binding packet for the
+/// critical identity fields instead of reconstructing those fields from loose orchestrator inputs.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecisionTokenBindingWitnessV1 {
+    policy_hash: PolicyHash,
+    policy_ref: PolicyRef,
+    state_hash: StateHash,
+    state_ref: StateRef,
+    chosen_action_hash: Hash32,
+}
+
+impl DecisionTokenBindingWitnessV1 {
+    pub fn policy_hash(&self) -> &PolicyHash {
+        &self.policy_hash
+    }
+
+    pub fn policy_ref(&self) -> &PolicyRef {
+        &self.policy_ref
+    }
+
+    pub fn state_hash(&self) -> &StateHash {
+        &self.state_hash
+    }
+
+    pub fn state_ref(&self) -> &StateRef {
+        &self.state_ref
+    }
+
+    pub fn chosen_action_hash(&self) -> &Hash32 {
+        &self.chosen_action_hash
+    }
+}
+
 /// Construct the concrete policy authority witness for a run.
 pub fn policy_authority_witness_v1(
     policy_hash: &PolicyHash,
@@ -289,6 +325,23 @@ pub fn policy_authority_witness_v1(
         policy_hash: *policy_hash,
         policy_ref: policy_ref.clone(),
     })
+}
+
+/// Construct the concrete token-binding witness from the orchestrator's authority, state, and
+/// selected action.
+#[must_use]
+pub fn decision_token_binding_witness_v1(
+    authority: &PolicyAuthorityWitnessV1,
+    state_binding: &crate::state_provenance::StateBindingWitnessV1,
+    decision: &Decision,
+) -> DecisionTokenBindingWitnessV1 {
+    DecisionTokenBindingWitnessV1 {
+        policy_hash: *authority.policy_hash(),
+        policy_ref: authority.policy_ref().clone(),
+        state_hash: *state_binding.state_hash(),
+        state_ref: state_binding.state_ref().clone(),
+        chosen_action_hash: crate::hash::hash_candidate(&decision.chosen_action),
+    }
 }
 
 /// Verify that the selector preserved the orchestrator-authorized policy identity.
@@ -853,5 +906,41 @@ mod tests {
         let err = verify_token_policy_authority_v1(&authority, &token)
             .expect_err("policy_ref drift must fail closed");
         assert!(matches!(err, MprdError::InvalidInput(message) if message == "token policy_ref drifted from authorized policy context"));
+    }
+
+    #[test]
+    fn decision_token_binding_witness_carries_authority_and_state_identity() {
+        let policy_hash = dummy_hash(26);
+        let policy_ref = PolicyRef {
+            policy_epoch: 9,
+            registry_root: dummy_hash(27),
+        };
+        let authority =
+            policy_authority_witness_v1(&policy_hash, &policy_ref).expect("authority witness");
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(28),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(29),
+                state_epoch: 3,
+                state_attestation_hash: dummy_hash(30),
+            },
+        };
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let candidate = valid_http_call_candidate();
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash,
+            decision_commitment: dummy_hash(31),
+        };
+
+        let binding = decision_token_binding_witness_v1(&authority, &state_binding, &decision);
+        assert_eq!(binding.policy_hash(), &policy_hash);
+        assert_eq!(binding.policy_ref(), &policy_ref);
+        assert_eq!(binding.state_hash(), &state.state_hash);
+        assert_eq!(binding.state_ref(), &state.state_ref);
+        assert_eq!(binding.chosen_action_hash(), &crate::hash::hash_candidate(&candidate));
     }
 }

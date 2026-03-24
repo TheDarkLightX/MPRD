@@ -10,20 +10,32 @@ use tracing::{debug, error, info, instrument, warn, Span};
 /// Factory responsible for constructing signed decision tokens from
 /// decisions and state snapshots.
 pub trait DecisionTokenFactory {
-    /// Preconditions:
-    /// - `decision` was produced by a compliant `Selector`.
-    /// - `state` is the same snapshot used during selection.
+    /// Preferred RC1 path: build a token from an already-constructed binding witness.
     ///
     /// Postconditions:
-    /// - Returned token binds `policy_hash`, `state_hash` and
-    ///   `chosen_action_hash` consistently.
+    /// - Returned token preserves the critical binding fields captured in `binding`.
+    fn create_from_binding(
+        &self,
+        binding: &crate::DecisionTokenBindingWitnessV1,
+        nonce_or_tx_hash: Option<crate::NonceHash>,
+    ) -> Result<DecisionToken>;
+
+    /// Compatibility path for direct callers that still have loose decision/state inputs.
+    ///
+    /// This path deterministically reconstructs the same binding witness used by the orchestrator
+    /// and then delegates to `create_from_binding(...)`.
     fn create(
         &self,
         decision: &Decision,
         state: &StateSnapshot,
         nonce_or_tx_hash: Option<crate::NonceHash>,
         policy_ref: &PolicyRef,
-    ) -> Result<DecisionToken>;
+    ) -> Result<DecisionToken> {
+        let authority = crate::policy_authority_witness_v1(&decision.policy_hash, policy_ref)?;
+        let state_binding = crate::state_provenance::state_binding_witness_v1(state);
+        let binding = crate::decision_token_binding_witness_v1(&authority, &state_binding, decision);
+        self.create_from_binding(&binding, nonce_or_tx_hash)
+    }
 }
 
 /// Optional hook for recording verified decisions (e.g., on-chain/Tau anchoring).
@@ -283,14 +295,10 @@ where
 
     // 5. Create decision token
     debug!("Creating decision token");
+    let token_binding = crate::decision_token_binding_witness_v1(&authority, &state_binding, &decision);
     let token = inputs
         .token_factory
-        .create(
-            &decision,
-            &state,
-            inputs.nonce_or_tx_hash,
-            authority.policy_ref(),
-        )
+        .create_from_binding(&token_binding, inputs.nonce_or_tx_hash)
         .inspect_err(|e| record_stage_failure(inputs.metrics, "token", e))?;
     crate::state_provenance::verify_token_state_binding_v1(&state_binding, &token)
         .inspect_err(|e| record_stage_failure(inputs.metrics, "token_state_binding", e))?;
@@ -651,20 +659,18 @@ mod tests {
     }
 
     impl DecisionTokenFactory for LoggedTokenFactory {
-        fn create(
+        fn create_from_binding(
             &self,
-            decision: &Decision,
-            state: &StateSnapshot,
+            binding: &crate::DecisionTokenBindingWitnessV1,
             nonce_or_tx_hash: Option<crate::NonceHash>,
-            policy_ref: &PolicyRef,
         ) -> Result<DecisionToken> {
             push_call(&self.log, "token");
             Ok(DecisionToken {
-                policy_hash: decision.policy_hash.clone(),
-                policy_ref: policy_ref.clone(),
-                state_hash: state.state_hash.clone(),
-                state_ref: state.state_ref.clone(),
-                chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                policy_hash: *binding.policy_hash(),
+                policy_ref: binding.policy_ref().clone(),
+                state_hash: *binding.state_hash(),
+                state_ref: binding.state_ref().clone(),
+                chosen_action_hash: *binding.chosen_action_hash(),
                 nonce_or_tx_hash: nonce_or_tx_hash.unwrap_or_else(|| dummy_hash(3)),
                 timestamp_ms: 0,
                 signature: vec![],
@@ -677,20 +683,18 @@ mod tests {
     }
 
     impl DecisionTokenFactory for LoggedPolicyHashDriftTokenFactory {
-        fn create(
+        fn create_from_binding(
             &self,
-            decision: &Decision,
-            state: &StateSnapshot,
+            binding: &crate::DecisionTokenBindingWitnessV1,
             nonce_or_tx_hash: Option<crate::NonceHash>,
-            policy_ref: &PolicyRef,
         ) -> Result<DecisionToken> {
             push_call(&self.log, "token");
             Ok(DecisionToken {
                 policy_hash: dummy_hash(92),
-                policy_ref: policy_ref.clone(),
-                state_hash: state.state_hash.clone(),
-                state_ref: state.state_ref.clone(),
-                chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                policy_ref: binding.policy_ref().clone(),
+                state_hash: *binding.state_hash(),
+                state_ref: binding.state_ref().clone(),
+                chosen_action_hash: *binding.chosen_action_hash(),
                 nonce_or_tx_hash: nonce_or_tx_hash.unwrap_or_else(|| dummy_hash(3)),
                 timestamp_ms: 0,
                 signature: vec![],
@@ -703,23 +707,21 @@ mod tests {
     }
 
     impl DecisionTokenFactory for LoggedPolicyRefDriftTokenFactory {
-        fn create(
+        fn create_from_binding(
             &self,
-            decision: &Decision,
-            state: &StateSnapshot,
+            binding: &crate::DecisionTokenBindingWitnessV1,
             nonce_or_tx_hash: Option<crate::NonceHash>,
-            _policy_ref: &PolicyRef,
         ) -> Result<DecisionToken> {
             push_call(&self.log, "token");
             Ok(DecisionToken {
-                policy_hash: decision.policy_hash.clone(),
+                policy_hash: *binding.policy_hash(),
                 policy_ref: PolicyRef {
                     policy_epoch: 999,
                     registry_root: dummy_hash(93),
                 },
-                state_hash: state.state_hash.clone(),
-                state_ref: state.state_ref.clone(),
-                chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                state_hash: *binding.state_hash(),
+                state_ref: binding.state_ref().clone(),
+                chosen_action_hash: *binding.chosen_action_hash(),
                 nonce_or_tx_hash: nonce_or_tx_hash.unwrap_or_else(|| dummy_hash(3)),
                 timestamp_ms: 0,
                 signature: vec![],
@@ -732,20 +734,18 @@ mod tests {
     }
 
     impl DecisionTokenFactory for LoggedStateHashDriftTokenFactory {
-        fn create(
+        fn create_from_binding(
             &self,
-            decision: &Decision,
-            state: &StateSnapshot,
+            binding: &crate::DecisionTokenBindingWitnessV1,
             nonce_or_tx_hash: Option<crate::NonceHash>,
-            policy_ref: &PolicyRef,
         ) -> Result<DecisionToken> {
             push_call(&self.log, "token");
             Ok(DecisionToken {
-                policy_hash: decision.policy_hash.clone(),
-                policy_ref: policy_ref.clone(),
+                policy_hash: *binding.policy_hash(),
+                policy_ref: binding.policy_ref().clone(),
                 state_hash: dummy_hash(94),
-                state_ref: state.state_ref.clone(),
-                chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                state_ref: binding.state_ref().clone(),
+                chosen_action_hash: *binding.chosen_action_hash(),
                 nonce_or_tx_hash: nonce_or_tx_hash.unwrap_or_else(|| dummy_hash(3)),
                 timestamp_ms: 0,
                 signature: vec![],
@@ -758,24 +758,22 @@ mod tests {
     }
 
     impl DecisionTokenFactory for LoggedStateRefDriftTokenFactory {
-        fn create(
+        fn create_from_binding(
             &self,
-            decision: &Decision,
-            state: &StateSnapshot,
+            binding: &crate::DecisionTokenBindingWitnessV1,
             nonce_or_tx_hash: Option<crate::NonceHash>,
-            policy_ref: &PolicyRef,
         ) -> Result<DecisionToken> {
             push_call(&self.log, "token");
             Ok(DecisionToken {
-                policy_hash: decision.policy_hash.clone(),
-                policy_ref: policy_ref.clone(),
-                state_hash: state.state_hash.clone(),
+                policy_hash: *binding.policy_hash(),
+                policy_ref: binding.policy_ref().clone(),
+                state_hash: *binding.state_hash(),
                 state_ref: crate::StateRef {
                     state_source_id: dummy_hash(95),
                     state_epoch: 999,
                     state_attestation_hash: dummy_hash(96),
                 },
-                chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                chosen_action_hash: *binding.chosen_action_hash(),
                 nonce_or_tx_hash: nonce_or_tx_hash.unwrap_or_else(|| dummy_hash(3)),
                 timestamp_ms: 0,
                 signature: vec![],
@@ -960,19 +958,17 @@ mod tests {
     struct DummyTokenFactory;
 
     impl DecisionTokenFactory for DummyTokenFactory {
-        fn create(
+        fn create_from_binding(
             &self,
-            decision: &Decision,
-            state: &StateSnapshot,
+            binding: &crate::DecisionTokenBindingWitnessV1,
             nonce_or_tx_hash: Option<crate::NonceHash>,
-            policy_ref: &PolicyRef,
         ) -> Result<DecisionToken> {
             Ok(DecisionToken {
-                policy_hash: decision.policy_hash.clone(),
-                policy_ref: policy_ref.clone(),
-                state_hash: state.state_hash.clone(),
-                state_ref: state.state_ref.clone(),
-                chosen_action_hash: decision.chosen_action.candidate_hash.clone(),
+                policy_hash: *binding.policy_hash(),
+                policy_ref: binding.policy_ref().clone(),
+                state_hash: *binding.state_hash(),
+                state_ref: binding.state_ref().clone(),
+                chosen_action_hash: *binding.chosen_action_hash(),
                 nonce_or_tx_hash: nonce_or_tx_hash.unwrap_or_else(|| dummy_hash(3)),
                 timestamp_ms: 0,
                 signature: vec![],
