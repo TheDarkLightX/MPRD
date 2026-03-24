@@ -42,7 +42,8 @@ These gates are necessary, but not sufficient, for RC1.
 
 - Owner namespace, node assignment, activation epoch, and certification-tier admission are not first-class yet.
   - Current state: authority is cryptographic and fail-closed, but not yet modeled as "which namespace this node should obey".
-- Source mapping is not yet enforced as a universal RC1 default profile across all relevant runtime surfaces.
+- Source mapping still is not universal across every runtime surface, but the shipped registry-bound production proving and verifying helpers now enforce it by default.
+  - Remaining gap: non-registry-bound or explicitly relaxed surfaces can still opt out, so RC1 claims must stay scoped to the production registry-bound path.
 
 ## Release Rule
 
