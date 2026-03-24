@@ -444,6 +444,14 @@ async fn run_handler(
              // Wrapper for Box<dyn ZkAttestor> to satisfy ZkAttestor trait bound
              struct BoxedZkAttestor(Box<dyn mprd_core::ZkAttestor>);
              impl mprd_core::ZkAttestor for BoxedZkAttestor {
+                 fn attest_ready(
+                     &self,
+                     ready: &mprd_core::AttestationReadyBundle<'_>,
+                     candidates: &[mprd_core::CandidateAction],
+                 ) -> mprd_core::Result<mprd_core::ProofBundle> {
+                     self.0.attest_ready(ready, candidates)
+                 }
+
                  fn attest(
                      &self,
                      token: &mprd_core::DecisionToken,

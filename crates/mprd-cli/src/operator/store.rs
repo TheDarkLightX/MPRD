@@ -338,13 +338,13 @@ impl OperatorStore {
             receipt_bytes.to_vec()
         };
 
-        let artifact = mprd_zk::mpb_lite::deserialize_artifact(&artifact_bytes)
-            .map_err(|e| anyhow::anyhow!("failed to decode MPB-lite artifact from receipt: {e}"))?;
+        let artifact: mprd_zk::MpbLiteArtifactV1 =
+            mprd_zk::bounded_deser::deserialize_mpb_artifact(&artifact_bytes).map_err(|e| {
+                anyhow::anyhow!("failed to decode MPB-lite artifact from receipt: {e}")
+            })?;
         mprd_zk::mpb_lite::verify_artifact_header(&artifact)
             .map_err(|e| anyhow::anyhow!("invalid MPB-lite artifact in receipt: {e}"))?;
-        let preimage = mprd_zk::mpb_lite::chosen_action_preimage_from_family(&artifact)
-            .map_err(|e| anyhow::anyhow!("failed to derive chosen action from receipt: {e}"))?;
-        Ok(preimage.to_vec())
+        Ok(artifact.chosen_action_preimage)
     }
 
     fn can_deduplicate_chosen_action_preimage(proof: &ProofBundle) -> bool {
@@ -352,7 +352,10 @@ impl OperatorStore {
             .attestation_metadata
             .get("proof_backend")
             .map(|s| s.as_str());
-        if backend != Some("mpb_lite_v2") && backend != Some("mpb_lite_v3") {
+        if backend != Some("mpb_lite_v1")
+            && backend != Some("mpb_lite_v2")
+            && backend != Some("mpb_lite_v3")
+        {
             return false;
         }
         match Self::derive_chosen_action_preimage_from_receipt_bytes(&proof.risc0_receipt) {

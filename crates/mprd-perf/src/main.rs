@@ -322,8 +322,8 @@ fn main() {
 mod simplex_bench {
     use super::{Config, OutputMode};
     use mprd_core::tokenomics_v6::simplex_ceo::{self, SimplexCeoMode};
-    use mprd_core::tokenomics_v6::simplex_por_oracle::{self, Transfer};
     use mprd_core::tokenomics_v6::simplex_planner;
+    use mprd_core::tokenomics_v6::simplex_por_oracle::{self, Transfer};
     use mprd_core::tokenomics_v6::simplex_symmetry_key;
     use serde_json::json;
     use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
@@ -620,18 +620,26 @@ mod simplex_bench {
         let (_a1, _e1, _g1, r1) =
             run_trace_enum(k, h, &x0, &caps, &weights, true, 0, big_ms, big_budget, 0);
         // Reachable state *count* should match; for tiny sizes this is a strong sanity check.
-        assert_eq!(r0, r1, "POR trace canonicalization changed reachable-state count");
+        assert_eq!(
+            r0, r1,
+            "POR trace canonicalization changed reachable-state count"
+        );
 
         let (_b0, _s0, _sg0, rs0) =
             run_state_bfs(k, h, &x0, &caps, &weights, false, 0, big_ms, big_budget, 0);
         let (_b1, _s1, _sg1, rs1) =
             run_state_bfs(k, h, &x0, &caps, &weights, true, 0, big_ms, big_budget, 0);
         // Symmetry quotient should never increase distinct canonical keys; this is a weak but useful check.
-        assert!(rs1 <= rs0, "symmetry quotient did not reduce or preserve reachable states");
+        assert!(
+            rs1 <= rs0,
+            "symmetry quotient did not reduce or preserve reachable states"
+        );
     }
 
     fn parse_u32_list(s: Option<&String>, default: &[u32]) -> Vec<u32> {
-        let Some(s) = s else { return default.to_vec(); };
+        let Some(s) = s else {
+            return default.to_vec();
+        };
         let mut out = Vec::new();
         for part in s.split(',') {
             let p = part.trim();
@@ -650,7 +658,9 @@ mod simplex_bench {
     }
 
     fn parse_usize_list(s: Option<&String>, default: &[usize]) -> Vec<usize> {
-        let Some(s) = s else { return default.to_vec(); };
+        let Some(s) = s else {
+            return default.to_vec();
+        };
         let mut out = Vec::new();
         for part in s.split(',') {
             let p = part.trim();
@@ -810,7 +820,10 @@ mod simplex_bench {
             Some(t),
         );
         let ceo_t3 = start.elapsed().as_secs_f64();
-        let ceo_ample_lite = ceo_ample_res.as_ref().ok().map(|d| decision_lite_from_core(k, d));
+        let ceo_ample_lite = ceo_ample_res
+            .as_ref()
+            .ok()
+            .map(|d| decision_lite_from_core(k, d));
 
         let start = Instant::now();
         let (acc0, e0, g0, r0) = run_trace_enum(
@@ -998,8 +1011,8 @@ mod simplex_bench {
 mod policy_bench {
     use super::{Config, OutputMode};
     use mprd_core::policy_algebra::{
-        compile_allow_robdd, evaluate, policy_equiv_robdd_bool_fast, CanonicalPolicy, EvalContext,
-        policy_hash_v1, PolicyAtom, PolicyExpr, PolicyLimits, Robdd,
+        compile_allow_robdd, evaluate, policy_equiv_robdd_bool_fast, policy_hash_v1,
+        CanonicalPolicy, EvalContext, PolicyAtom, PolicyExpr, PolicyLimits, Robdd,
     };
     use serde_json::json;
     use std::collections::BTreeMap;
@@ -1087,7 +1100,14 @@ mod policy_bench {
                 let n = 2 + (r as usize % children_max.max(2).min(limits.max_children));
                 let mut kids = Vec::with_capacity(n);
                 for i in 0..n {
-                    kids.push(gen_policy(r ^ (i as u64), depth - 1, atoms, limits, children_max, under_not));
+                    kids.push(gen_policy(
+                        r ^ (i as u64),
+                        depth - 1,
+                        atoms,
+                        limits,
+                        children_max,
+                        under_not,
+                    ));
                 }
                 PolicyExpr::all(kids, limits).expect("all")
             }
@@ -1096,7 +1116,14 @@ mod policy_bench {
                 let n = 2 + (r as usize % children_max.max(2).min(limits.max_children));
                 let mut kids = Vec::with_capacity(n);
                 for i in 0..n {
-                    kids.push(gen_policy(r ^ (i as u64), depth - 1, atoms, limits, children_max, under_not));
+                    kids.push(gen_policy(
+                        r ^ (i as u64),
+                        depth - 1,
+                        atoms,
+                        limits,
+                        children_max,
+                        under_not,
+                    ));
                 }
                 PolicyExpr::any(kids, limits).expect("any")
             }
@@ -1105,7 +1132,14 @@ mod policy_bench {
                 let n = 2 + (r as usize % children_max.max(2).min(limits.max_children));
                 let mut kids = Vec::with_capacity(n);
                 for i in 0..n {
-                    kids.push(gen_policy(r ^ (i as u64), depth - 1, atoms, limits, children_max, under_not));
+                    kids.push(gen_policy(
+                        r ^ (i as u64),
+                        depth - 1,
+                        atoms,
+                        limits,
+                        children_max,
+                        under_not,
+                    ));
                 }
                 let k = ((r >> 8) as usize) % (n + 1);
                 PolicyExpr::threshold(k as u16, kids, limits).expect("threshold")
@@ -1143,7 +1177,9 @@ mod policy_bench {
             PolicyExpr::True | PolicyExpr::False | PolicyExpr::Atom(_) | PolicyExpr::DenyIf(_) => 1,
             PolicyExpr::Not(p) => 1 + node_count(p),
             PolicyExpr::All(v) | PolicyExpr::Any(v) => 1 + v.iter().map(node_count).sum::<usize>(),
-            PolicyExpr::Threshold { children, .. } => 1 + children.iter().map(node_count).sum::<usize>(),
+            PolicyExpr::Threshold { children, .. } => {
+                1 + children.iter().map(node_count).sum::<usize>()
+            }
         }
     }
 
@@ -1154,9 +1190,15 @@ mod policy_bench {
             PolicyExpr::Atom(a) => json!({"k":"A","a":a.as_str()}),
             PolicyExpr::DenyIf(a) => json!({"k":"D","a":a.as_str()}),
             PolicyExpr::Not(p) => json!({"k":"N","p":expr_to_json(p)}),
-            PolicyExpr::All(children) => json!({"k":"All","c":children.iter().map(expr_to_json).collect::<Vec<_>>() }),
-            PolicyExpr::Any(children) => json!({"k":"Any","c":children.iter().map(expr_to_json).collect::<Vec<_>>() }),
-            PolicyExpr::Threshold { k, children } => json!({"k":"Th","t":*k,"c":children.iter().map(expr_to_json).collect::<Vec<_>>() }),
+            PolicyExpr::All(children) => {
+                json!({"k":"All","c":children.iter().map(expr_to_json).collect::<Vec<_>>() })
+            }
+            PolicyExpr::Any(children) => {
+                json!({"k":"Any","c":children.iter().map(expr_to_json).collect::<Vec<_>>() })
+            }
+            PolicyExpr::Threshold { k, children } => {
+                json!({"k":"Th","t":*k,"c":children.iter().map(expr_to_json).collect::<Vec<_>>() })
+            }
         }
     }
 
@@ -1184,11 +1226,7 @@ mod policy_bench {
         serde_json::Value::Object(m)
     }
 
-    fn bdd_eval(
-        bdd: &Robdd,
-        idx_str: &BTreeMap<String, usize>,
-        env: &Env,
-    ) -> bool {
+    fn bdd_eval(bdd: &Robdd, idx_str: &BTreeMap<String, usize>, env: &Env) -> bool {
         bdd.eval(|var| {
             let s = var.as_str();
             if let Some(rest) = s.strip_prefix("p_") {
@@ -1211,14 +1249,20 @@ mod policy_bench {
                 out.push(v);
             }
         }
-        if out.is_empty() { None } else { Some(out) }
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
     }
 
     pub fn main_like(cfg: Config) {
         let limits = PolicyLimits::DEFAULT;
 
-        let atoms_list = parse_list(&cfg.policy_atoms_list).unwrap_or_else(|| vec![cfg.policy_atoms]);
-        let depth_list = parse_list(&cfg.policy_depth_list).unwrap_or_else(|| vec![cfg.policy_depth as usize]);
+        let atoms_list =
+            parse_list(&cfg.policy_atoms_list).unwrap_or_else(|| vec![cfg.policy_atoms]);
+        let depth_list =
+            parse_list(&cfg.policy_depth_list).unwrap_or_else(|| vec![cfg.policy_depth as usize]);
 
         let mut rows = Vec::new();
 
@@ -1259,7 +1303,9 @@ mod policy_bench {
                     cfg.policy_children_max,
                 );
 
-                let mut env = Env { vals: Vec::with_capacity(na) };
+                let mut env = Env {
+                    vals: Vec::with_capacity(na),
+                };
                 let mut acc: u64 = 0;
                 let mut agree = true;
                 let mut mismatch: Option<serde_json::Value> = None;
@@ -1267,7 +1313,10 @@ mod policy_bench {
                 let t_eval = Instant::now();
                 for i in 0..cfg.policy_env_iters {
                     make_env(cfg.seed ^ (i as u64), na, &mut env);
-                    let ctx = IndexedCtx { env: &env, idx: &idx };
+                    let ctx = IndexedCtx {
+                        env: &env,
+                        idx: &idx,
+                    };
                     let r = evaluate(&policy, &ctx, limits).expect("evaluate");
                     acc ^= black_box(r.allowed() as u64);
                 }
@@ -1280,7 +1329,10 @@ mod policy_bench {
                     acc ^= black_box(out_bdd as u64);
                     // spot-check agreement on a small prefix
                     if i < 256 {
-                        let ctx = IndexedCtx { env: &env, idx: &idx };
+                        let ctx = IndexedCtx {
+                            env: &env,
+                            idx: &idx,
+                        };
                         let r = evaluate(&policy, &ctx, limits).expect("evaluate");
                         if r.allowed() != out_bdd {
                             agree = false;
@@ -1302,7 +1354,8 @@ mod policy_bench {
                     let t = Instant::now();
                     for i in 0..(cfg.policy_env_iters / 100).max(1) {
                         make_env(cfg.seed ^ (i as u64), na, &mut env);
-                        let bdd = compile_allow_robdd(&policy, limits).expect("compile_allow_robdd");
+                        let bdd =
+                            compile_allow_robdd(&policy, limits).expect("compile_allow_robdd");
                         acc ^= black_box(bdd_eval(&bdd, &idx_str, &env) as u64);
                     }
                     bdd_compile_eval_secs = t.elapsed().as_secs_f64();

@@ -15,6 +15,15 @@ use mprd_core::tau_testnet::{
 fn tau_testnet_node_boots_and_answers_commands() {
     let port = pick_free_local_port().expect("free port");
     let tau_dir = default_tau_testnet_dir_from_manifest();
+    let server_py = tau_dir.join("server.py");
+
+    if !server_py.is_file() {
+        eprintln!(
+            "SKIP tau_testnet_node_boots_and_answers_commands: Tau Testnet harness not present at {}",
+            server_py.display()
+        );
+        return;
+    }
 
     let opts = TauTestnetNodeOptions::dev_default(tau_dir, port);
     let node = match TauTestnetNode::spawn(opts) {

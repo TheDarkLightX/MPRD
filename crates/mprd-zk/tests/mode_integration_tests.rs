@@ -58,6 +58,16 @@ fn dummy_policy_ref() -> PolicyRef {
     }
 }
 
+fn http_call_params(path: &str) -> HashMap<String, Value> {
+    HashMap::from([
+        ("http_method".into(), Value::String("GET".into())),
+        (
+            "http_url".into(),
+            Value::String(format!("https://example.com/{path}")),
+        ),
+    ])
+}
+
 fn setup_components() -> (
     SimpleStateProvider,
     SimpleProposer,
@@ -68,11 +78,7 @@ fn setup_components() -> (
     let state_provider =
         SimpleStateProvider::new(HashMap::from([("balance".into(), Value::UInt(10000))]));
 
-    let proposer = SimpleProposer::single(
-        "ACTION",
-        HashMap::from([("param".into(), Value::Int(42))]),
-        100,
-    );
+    let proposer = SimpleProposer::single("http_call", http_call_params("mode-a"), 100);
 
     let policy_engine = AllowAllPolicyEngine;
     let selector = DefaultSelector;
@@ -129,11 +135,7 @@ fn mode_a_local_trusted_flow() {
 fn mode_b_lite_attestation_flow() {
     let state_provider =
         SimpleStateProvider::new(HashMap::from([("balance".into(), Value::UInt(10000))]));
-    let proposer = SimpleProposer::single(
-        "ACTION",
-        HashMap::from([("param".into(), Value::Int(42))]),
-        100,
-    );
+    let proposer = SimpleProposer::single("http_call", http_call_params("mode-b-lite"), 100);
     let policy_engine = AllowAllPolicyEngine;
     let selector = DefaultSelector;
 

@@ -203,7 +203,10 @@ impl TauTestnetClient {
     /// Tau Testnet uses a simple line-oriented protocol over TCP.
     pub fn call(&self, command: &str) -> Result<String> {
         let mut stream = TcpStream::connect_timeout(&self.addr, self.timeout).map_err(|e| {
-            MprdError::ExecutionError(format!("failed to connect tau-testnet at {}: {e}", self.addr))
+            MprdError::ExecutionError(format!(
+                "failed to connect tau-testnet at {}: {e}",
+                self.addr
+            ))
         })?;
         stream
             .set_read_timeout(Some(self.timeout))
@@ -215,7 +218,9 @@ impl TauTestnetClient {
         // Tau server expects utf-8; it strips whitespace.
         stream
             .write_all(format!("{command}\n").as_bytes())
-            .map_err(|e| MprdError::ExecutionError(format!("failed to write to tau-testnet: {e}")))?;
+            .map_err(|e| {
+                MprdError::ExecutionError(format!("failed to write to tau-testnet: {e}"))
+            })?;
         stream.flush().ok();
 
         let mut reader = BufReader::new(stream);
@@ -246,4 +251,3 @@ pub fn default_tau_testnet_dir_from_manifest() -> PathBuf {
         .join("external")
         .join("tau-testnet")
 }
-

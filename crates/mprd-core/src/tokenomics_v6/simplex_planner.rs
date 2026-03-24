@@ -71,7 +71,9 @@ impl OracleCache {
 /// Deterministic key for transfers (used for canonical ordering).
 #[inline]
 pub fn action_key(k: usize, a: Transfer) -> u32 {
-    (a.src as u32).saturating_mul(k as u32).saturating_add(a.dst as u32)
+    (a.src as u32)
+        .saturating_mul(k as u32)
+        .saturating_add(a.dst as u32)
 }
 
 /// Deterministic bubble-like pass with state-dependent justified swaps.
@@ -93,7 +95,8 @@ pub fn canon_pass(caps: &[u32], x0: &[u32], trace: &[Transfer]) -> Result<Vec<Tr
     while i + 1 < xs.len() {
         let a = xs[i];
         let b = xs[i + 1];
-        if action_key(k, b) < action_key(k, a) && simplex_por_oracle::stable_enabled_ineq(&s, caps, a, b)
+        if action_key(k, b) < action_key(k, a)
+            && simplex_por_oracle::stable_enabled_ineq(&s, caps, a, b)
         {
             // swap and advance one step by executing `b` (failure-as-noop)
             xs[i] = b;

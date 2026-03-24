@@ -33,7 +33,8 @@ pub trait DecisionTokenFactory {
     ) -> Result<DecisionToken> {
         let authority = crate::policy_authority_witness_v1(&decision.policy_hash, policy_ref)?;
         let state_binding = crate::state_provenance::state_binding_witness_v1(state);
-        let binding = crate::decision_token_binding_witness_v1(&authority, &state_binding, decision);
+        let binding =
+            crate::decision_token_binding_witness_v1(&authority, &state_binding, decision);
         self.create_from_binding(&binding, nonce_or_tx_hash)
     }
 }
@@ -295,7 +296,8 @@ where
 
     // 5. Create decision token
     debug!("Creating decision token");
-    let token_binding = crate::decision_token_binding_witness_v1(&authority, &state_binding, &decision);
+    let token_binding =
+        crate::decision_token_binding_witness_v1(&authority, &state_binding, &decision);
     let token = inputs
         .token_factory
         .create_from_binding(&token_binding, inputs.nonce_or_tx_hash)
@@ -311,7 +313,9 @@ where
         .inspect_err(|e| record_stage_failure(inputs.metrics, "attest_input", e))?;
     debug!("Generating attestation");
     let proof: ProofBundle = if let Some(m) = inputs.metrics {
-        metrics::timed_attest(m, || inputs.attestor.attest_ready(&attest_ready, &candidates))
+        metrics::timed_attest(m, || {
+            inputs.attestor.attest_ready(&attest_ready, &candidates)
+        })
     } else {
         inputs.attestor.attest_ready(&attest_ready, &candidates)
     }
@@ -962,8 +966,14 @@ mod tests {
     impl Proposer for DummyProposer {
         fn propose(&self, _state: &StateSnapshot) -> Result<Vec<CandidateAction>> {
             Ok(vec![CandidateAction {
-                action_type: "A".into(),
-                params: HashMap::from([("x".into(), Value::Int(1))]),
+                action_type: "http_call".into(),
+                params: HashMap::from([
+                    ("http_method".into(), Value::String("GET".into())),
+                    (
+                        "http_url".into(),
+                        Value::String("https://example.com/health".into()),
+                    ),
+                ]),
                 score: Score(10),
                 candidate_hash: dummy_hash(2),
             }])
@@ -1134,7 +1144,7 @@ mod tests {
     #[test]
     fn run_once_happy_path_with_dummy_components() {
         let state_provider = DummyStateProvider;
-        let proposer = DummyProposer;
+        let proposer = ValidHttpCallProposer;
         let policy_engine = AllowAllPolicyEngine;
         let selector = DummySelector;
         let token_factory = DummyTokenFactory;
@@ -1247,7 +1257,7 @@ mod tests {
     #[test]
     fn run_once_with_recorder_invokes_recorder() {
         let state_provider = DummyStateProvider;
-        let proposer = DummyProposer;
+        let proposer = ValidHttpCallProposer;
         let policy_engine = AllowAllPolicyEngine;
         let selector = DummySelector;
         let token_factory = DummyTokenFactory;
@@ -1298,14 +1308,26 @@ mod tests {
             fn propose(&self, _state: &StateSnapshot) -> Result<Vec<CandidateAction>> {
                 Ok(vec![
                     CandidateAction {
-                        action_type: "A".into(),
-                        params: HashMap::new(),
+                        action_type: "http_call".into(),
+                        params: HashMap::from([
+                            ("http_method".into(), Value::String("GET".into())),
+                            (
+                                "http_url".into(),
+                                Value::String("https://example.com/health".into()),
+                            ),
+                        ]),
                         score: Score(1),
                         candidate_hash: dummy_hash(2),
                     },
                     CandidateAction {
-                        action_type: "B".into(),
-                        params: HashMap::new(),
+                        action_type: "http_call".into(),
+                        params: HashMap::from([
+                            ("http_method".into(), Value::String("POST".into())),
+                            (
+                                "http_url".into(),
+                                Value::String("https://example.com/submit".into()),
+                            ),
+                        ]),
                         score: Score(1),
                         candidate_hash: dummy_hash(3),
                     },
@@ -1443,7 +1465,7 @@ mod tests {
 
         let metrics = MprdMetrics::new();
         let state_provider = DummyStateProvider;
-        let proposer = DummyProposer;
+        let proposer = ValidHttpCallProposer;
         let policy_engine = AllowAllPolicyEngine;
         let selector = DummySelector;
         let token_factory = DummyTokenFactory;
@@ -1656,8 +1678,14 @@ mod tests {
         let proposer = LoggedProposer {
             log: log.clone(),
             candidates: vec![CandidateAction {
-                action_type: "A".into(),
-                params: HashMap::new(),
+                action_type: "http_call".into(),
+                params: HashMap::from([
+                    ("http_method".into(), Value::String("GET".into())),
+                    (
+                        "http_url".into(),
+                        Value::String("https://example.com/health".into()),
+                    ),
+                ]),
                 score: Score(1),
                 candidate_hash: dummy_hash(2),
             }],
@@ -1772,8 +1800,14 @@ mod tests {
         let proposer = LoggedProposer {
             log: log.clone(),
             candidates: vec![CandidateAction {
-                action_type: "A".into(),
-                params: HashMap::new(),
+                action_type: "http_call".into(),
+                params: HashMap::from([
+                    ("http_method".into(), Value::String("GET".into())),
+                    (
+                        "http_url".into(),
+                        Value::String("https://example.com/health".into()),
+                    ),
+                ]),
                 score: Score(1),
                 candidate_hash: dummy_hash(2),
             }],
@@ -1850,8 +1884,14 @@ mod tests {
         let proposer = LoggedProposer {
             log: log.clone(),
             candidates: vec![CandidateAction {
-                action_type: "A".into(),
-                params: HashMap::new(),
+                action_type: "http_call".into(),
+                params: HashMap::from([
+                    ("http_method".into(), Value::String("GET".into())),
+                    (
+                        "http_url".into(),
+                        Value::String("https://example.com/health".into()),
+                    ),
+                ]),
                 score: Score(1),
                 candidate_hash: dummy_hash(2),
             }],
@@ -1969,7 +2009,9 @@ mod tests {
             audit_recorder: None,
         });
 
-        assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "decision policy_hash drifted from authorized policy context"));
+        assert!(
+            matches!(result, Err(MprdError::InvalidInput(message)) if message == "decision policy_hash drifted from authorized policy context")
+        );
         let calls = call_log_snapshot(&log);
         assert_eq!(calls, vec!["state", "propose", "evaluate", "select"]);
         assert_pipeline_temporal_spec(&calls);
@@ -2027,9 +2069,14 @@ mod tests {
             audit_recorder: None,
         });
 
-        assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "token policy_hash drifted from authorized policy context"));
+        assert!(
+            matches!(result, Err(MprdError::InvalidInput(message)) if message == "token policy_hash drifted from authorized policy context")
+        );
         let calls = call_log_snapshot(&log);
-        assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
+        assert_eq!(
+            calls,
+            vec!["state", "propose", "evaluate", "select", "token"]
+        );
         assert_pipeline_temporal_spec(&calls);
     }
 
@@ -2085,9 +2132,14 @@ mod tests {
             audit_recorder: None,
         });
 
-        assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "token policy_ref drifted from authorized policy context"));
+        assert!(
+            matches!(result, Err(MprdError::InvalidInput(message)) if message == "token policy_ref drifted from authorized policy context")
+        );
         let calls = call_log_snapshot(&log);
-        assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
+        assert_eq!(
+            calls,
+            vec!["state", "propose", "evaluate", "select", "token"]
+        );
         assert_pipeline_temporal_spec(&calls);
     }
 
@@ -2143,9 +2195,14 @@ mod tests {
             audit_recorder: None,
         });
 
-        assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "token state_hash drifted from observed state snapshot"));
+        assert!(
+            matches!(result, Err(MprdError::InvalidInput(message)) if message == "token state_hash drifted from observed state snapshot")
+        );
         let calls = call_log_snapshot(&log);
-        assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
+        assert_eq!(
+            calls,
+            vec!["state", "propose", "evaluate", "select", "token"]
+        );
         assert_pipeline_temporal_spec(&calls);
     }
 
@@ -2201,9 +2258,14 @@ mod tests {
             audit_recorder: None,
         });
 
-        assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "token state_ref drifted from observed state snapshot"));
+        assert!(
+            matches!(result, Err(MprdError::InvalidInput(message)) if message == "token state_ref drifted from observed state snapshot")
+        );
         let calls = call_log_snapshot(&log);
-        assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
+        assert_eq!(
+            calls,
+            vec!["state", "propose", "evaluate", "select", "token"]
+        );
         assert_pipeline_temporal_spec(&calls);
     }
 
@@ -2259,9 +2321,14 @@ mod tests {
             audit_recorder: None,
         });
 
-        assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "token chosen_action_hash drifted from selected decision before attestation"));
+        assert!(
+            matches!(result, Err(MprdError::InvalidInput(message)) if message == "token chosen_action_hash drifted from selected decision before attestation")
+        );
         let calls = call_log_snapshot(&log);
-        assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
+        assert_eq!(
+            calls,
+            vec!["state", "propose", "evaluate", "select", "token"]
+        );
         assert_pipeline_temporal_spec(&calls);
     }
 
@@ -2339,9 +2406,14 @@ mod tests {
             audit_recorder: None,
         });
 
-        assert!(matches!(result, Err(MprdError::InvalidInput(message)) if message == "governance admission requires link_ok"));
+        assert!(
+            matches!(result, Err(MprdError::InvalidInput(message)) if message == "governance admission requires link_ok")
+        );
         let calls = call_log_snapshot(&log);
-        assert_eq!(calls, vec!["state", "propose", "evaluate", "select", "token"]);
+        assert_eq!(
+            calls,
+            vec!["state", "propose", "evaluate", "select", "token"]
+        );
         assert_pipeline_temporal_spec(&calls);
     }
 
@@ -2467,8 +2539,14 @@ mod tests {
             let proposer = LoggedProposer {
                 log: log.clone(),
                 candidates: vec![CandidateAction {
-                    action_type: "A".into(),
-                    params: HashMap::new(),
+                    action_type: "http_call".into(),
+                    params: HashMap::from([
+                        ("http_method".into(), Value::String("GET".into())),
+                        (
+                            "http_url".into(),
+                            Value::String("https://example.com/health".into()),
+                        ),
+                    ]),
                     score: Score(1),
                     candidate_hash: dummy_hash(2),
                 }],

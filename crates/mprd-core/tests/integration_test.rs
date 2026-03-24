@@ -10,8 +10,8 @@ use mprd_core::{
     },
     config::MprdConfig,
     orchestrator::{run_once, RunOnceInputs},
-    CandidateAction, DefaultSelector, Hash32, PolicyEngine, PolicyHash, PolicyRef, Proposer,
-    Result, RuleVerdict, StateSnapshot, Value,
+    CandidateAction, DefaultSelector, Hash32, PolicyEngine, PolicyHash, PolicyRef, Result,
+    RuleVerdict, Score, StateSnapshot, Value,
 };
 use std::collections::HashMap;
 
@@ -79,6 +79,20 @@ fn dummy_policy_ref() -> PolicyRef {
     }
 }
 
+fn http_call_candidate(url: &str, score: i64) -> CandidateAction {
+    let mut candidate = CandidateAction {
+        action_type: "http_call".into(),
+        params: HashMap::from([
+            ("http_method".into(), Value::String("GET".into())),
+            ("http_url".into(), Value::String(url.into())),
+        ]),
+        score: Score(score),
+        candidate_hash: Hash32([0u8; 32]),
+    };
+    candidate.candidate_hash = mprd_core::hash::hash_candidate(&candidate);
+    candidate
+}
+
 #[test]
 fn end_to_end_with_crypto_signatures() {
     // Setup configuration (validates settings)
@@ -95,8 +109,14 @@ fn end_to_end_with_crypto_signatures() {
     ]));
 
     let proposer = SimpleProposer::single(
-        "TRADE",
-        HashMap::from([("amount".into(), Value::UInt(100))]),
+        "http_call",
+        HashMap::from([
+            ("http_method".into(), Value::String("GET".into())),
+            (
+                "http_url".into(),
+                Value::String("https://example.com/trade".into()),
+            ),
+        ]),
         10,
     );
 
@@ -145,8 +165,14 @@ fn end_to_end_policy_denial() {
     ]));
 
     let proposer = SimpleProposer::single(
-        "TRADE",
-        HashMap::from([("amount".into(), Value::UInt(100))]),
+        "http_call",
+        HashMap::from([
+            ("http_method".into(), Value::String("GET".into())),
+            (
+                "http_url".into(),
+                Value::String("https://example.com/trade".into()),
+            ),
+        ]),
         10,
     );
 
@@ -198,7 +224,17 @@ fn signature_verification_prevents_tampering() {
     // Create a token signed by factory1
     let state_provider = SimpleStateProvider::new(HashMap::from([("risk".into(), Value::Int(50))]));
 
-    let proposer = SimpleProposer::single("TRADE", HashMap::new(), 10);
+    let proposer = SimpleProposer::single(
+        "http_call",
+        HashMap::from([
+            ("http_method".into(), Value::String("GET".into())),
+            (
+                "http_url".into(),
+                Value::String("https://example.com/trade".into()),
+            ),
+        ]),
+        10,
+    );
     let policy_engine = RiskThresholdPolicyEngine::new(100);
     let selector = DefaultSelector;
     let attestor = StubZkAttestor::new();
@@ -241,15 +277,7 @@ fn multiple_candidates_highest_score_selected() {
         candidates
             .iter()
             .map(|(name, score)| {
-                let mut action = SimpleProposer::single(*name, HashMap::new(), *score)
-                    .propose(&StateSnapshot {
-                        fields: HashMap::new(),
-                        policy_inputs: HashMap::new(),
-                        state_hash: dummy_hash(0),
-                        state_ref: mprd_core::StateRef::unknown(),
-                    })
-                    .unwrap();
-                action.pop().unwrap()
+                http_call_candidate(&format!("https://example.com/{name}"), *score)
             })
             .collect(),
     );

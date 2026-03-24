@@ -814,6 +814,14 @@ impl ZkAttestor for Risc0ZkAttestor {
     ///
     /// This is deliberate to avoid silent insecure operation before the
     /// Risc0 pipeline is fully implemented.
+    fn attest_ready(
+        &self,
+        ready: &mprd_core::AttestationReadyBundle<'_>,
+        candidates: &[CandidateAction],
+    ) -> Result<ProofBundle> {
+        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+    }
+
     fn attest(
         &self,
         _token: &DecisionToken,
