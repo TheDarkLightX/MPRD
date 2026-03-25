@@ -1,4 +1,4 @@
-/- 
+/-
   MPRD_SignedRegistryServeIdempotentHttpBoundary.lean
 
   A lightweight top-level model for the shipped signed-registry `mprd serve`
