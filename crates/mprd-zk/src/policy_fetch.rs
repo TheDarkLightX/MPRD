@@ -396,8 +396,8 @@ mod tests {
                 policy_hash,
                 policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
                 policy_exec_version_id: policy_exec_version_id_v1(),
-                policy_source_kind_id: None,
-                policy_source_hash: None,
+                policy_source_kind_id: Some([0xA1; 32]),
+                policy_source_hash: Some(dummy_hash(0xB2)),
             }],
             guest_image_manifest,
         };

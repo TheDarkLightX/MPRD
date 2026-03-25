@@ -702,8 +702,8 @@ fn registry_bound_verifier_rejects_wrong_image_id_routing() {
             policy_hash,
             policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
             policy_exec_version_id: policy_exec_version_id_v1(),
-            policy_source_kind_id: None,
-            policy_source_hash: None,
+            policy_source_kind_id: Some([0x31u8; 32]),
+            policy_source_hash: Some(Hash32([0x41u8; 32])),
         }],
         guest_image_manifest: manifest,
     };

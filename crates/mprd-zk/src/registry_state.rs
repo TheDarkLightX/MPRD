@@ -689,7 +689,7 @@ impl RegistryStatePolicyAuthorizationProvider {
         Self {
             registry_state,
             manifest_verifying_key,
-            require_policy_source_mapping: false,
+            require_policy_source_mapping: true,
         }
     }
 
@@ -799,7 +799,7 @@ impl RegistryBoundRisc0Verifier {
         Self {
             registry_state,
             manifest_verifying_key,
-            require_policy_source_mapping: false,
+            require_policy_source_mapping: true,
         }
     }
 
@@ -1008,6 +1008,51 @@ mod tests {
         assert!(
             matches!(status, VerificationStatus::Failure(msg) if msg == "authorized policy missing required policy_source mapping")
         );
+    }
+
+    #[test]
+    fn policy_authorization_provider_requires_policy_source_mapping_by_default() {
+        let key = TokenSigningKey::from_seed(&[44u8; 32]);
+        let vk = key.verifying_key();
+
+        let manifest = GuestImageManifestV1::sign(&key, 123, vec![]).expect("manifest");
+        let policy_hash = dummy_hash(4);
+        let state = RegistryStateV1 {
+            policy_epoch: 1,
+            registry_root: dummy_hash(9),
+            authorized_policies: vec![AuthorizedPolicyV1 {
+                policy_hash,
+                policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
+                policy_exec_version_id: policy_exec_version_id_v1(),
+                policy_source_kind_id: None,
+                policy_source_hash: None,
+            }],
+            guest_image_manifest: manifest,
+        };
+
+        let provider = RegistryStatePolicyAuthorizationProvider::new(
+            Arc::new(StaticRegistryStateProvider(state)),
+            vk,
+        );
+
+        let err = provider
+            .resolve(
+                &policy_hash,
+                &PolicyRef {
+                    policy_epoch: 1,
+                    registry_root: dummy_hash(9),
+                },
+            )
+            .unwrap_err();
+        match err {
+            mprd_core::MprdError::InvalidInput(msg) => {
+                assert_eq!(
+                    msg,
+                    "authorized policy missing required policy_source mapping"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     // =========================================================================
@@ -1267,8 +1312,8 @@ mod tests {
                 policy_hash,
                 policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
                 policy_exec_version_id: policy_exec_version_id_v1(),
-                policy_source_kind_id: None,
-                policy_source_hash: None,
+                policy_source_kind_id: Some([0xA1; 32]),
+                policy_source_hash: Some(dummy_hash(0xB2)),
             }],
             guest_image_manifest: manifest,
         };
