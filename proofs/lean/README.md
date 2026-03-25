@@ -21,6 +21,7 @@ assumption.
 - `MPRD_GovernanceStateLinkage.lean`: a lightweight proof of the concrete governance-state linkage boundary: applied rules and committee updates require threshold authorization plus previous-hash linkage and monotone sequence continuity.
 - `MPRD_GovernanceExecutionBridge.lean`: a lightweight cross-slice proof that execution-time `governance_ok` requires both a resolved live policy and an admitted governance update before execution can occur.
 - `MPRD_SignedRegistryCheckpointBridge.lean`: a lightweight proof of the stricter signed-registry execution path: rebuilding the live ready bundle, and therefore executing, requires registry resolution, exact checkpoint binding, execution-authorization binding, and governance alignment.
+- `MPRD_SignedRegistryBridgeWitnessBoundary.lean`: a lightweight proof of the next stricter signed-registry boundary: executed states require the registry-authorization hash binding and preservation of the concrete bridge witness into the rebuilt ready bundle, in addition to the signed-registry bridge facts.
 - `MPRD_SignedRegistryExecutionBoundary.lean`: a lightweight joined boundary proof for the shipped signed-registry path: executed states require the signed-registry bridge facts plus the concrete execution guards (verified, allowed, replay, binding, executor).
 - `MPRD_SignedRegistryServeBoundary.lean`: a lightweight top-level proof for the shipped production `mprd serve` path: executed states require validated registry and state anchors, explicit policy selection, production verifier binding, ready-bridge invocation, the signed-registry bridge facts, and the concrete execution guards.
 - `MPRD_RegistryPolicyAuthority.lean`: a lightweight proof of the registry-backed policy admission boundary: a node only resolves a live policy after a selected trusted authority mode, manifest verification, exact `policy_ref` alignment, policy authorization, and image routing.
@@ -54,6 +55,7 @@ lake env lean MPRD_GovernanceGateAuthorization.lean
 lake env lean MPRD_GovernanceStateLinkage.lean
 lake env lean MPRD_GovernanceExecutionBridge.lean
 lake env lean MPRD_SignedRegistryCheckpointBridge.lean
+lake env lean MPRD_SignedRegistryBridgeWitnessBoundary.lean
 lake env lean MPRD_SignedRegistryExecutionBoundary.lean
 lake env lean MPRD_SignedRegistryServeBoundary.lean
 lake env lean MPRD_RegistryPolicyAuthority.lean
