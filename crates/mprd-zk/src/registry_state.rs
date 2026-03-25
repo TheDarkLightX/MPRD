@@ -844,11 +844,18 @@ pub fn verify_signed_registry_checkpoint_attestation_metadata_v1(
     proof: &mprd_core::ProofBundle,
     signed_registry_state: &SignedRegistryStateV1,
 ) -> Result<()> {
+    let expected = signed_registry_checkpoint_attestation_hash_v1(signed_registry_state);
+    verify_registry_checkpoint_attestation_hash_metadata_v1(proof, &expected)
+}
+
+pub fn verify_registry_checkpoint_attestation_hash_metadata_v1(
+    proof: &mprd_core::ProofBundle,
+    expected: &Hash32,
+) -> Result<()> {
     let actual = require_registry_authorization_metadata_value_v1(
         &proof.attestation_metadata,
         REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1,
     )?;
-    let expected = signed_registry_checkpoint_attestation_hash_v1(signed_registry_state);
     if actual != hex::encode(expected.0) {
         return Err(mprd_core::MprdError::InvalidInput(
             "registry_auth_checkpoint_attestation_hash_v1 attestation metadata drifted from signed registry checkpoint".into(),
@@ -975,6 +982,7 @@ pub struct RegistryBoundRisc0Verifier {
     manifest_verifying_key: TokenVerifyingKey,
     /// If true, require that every authorized policy entry includes a source-hash mapping.
     require_policy_source_mapping: bool,
+    expected_registry_checkpoint_attestation_hash: Option<Hash32>,
 }
 
 impl RegistryBoundRisc0Verifier {
@@ -986,6 +994,7 @@ impl RegistryBoundRisc0Verifier {
             registry_state,
             manifest_verifying_key,
             require_policy_source_mapping: true,
+            expected_registry_checkpoint_attestation_hash: None,
         }
     }
 
@@ -995,6 +1004,16 @@ impl RegistryBoundRisc0Verifier {
         require_policy_source_mapping: bool,
     ) -> Self {
         self.require_policy_source_mapping = require_policy_source_mapping;
+        self
+    }
+
+    /// Require the proof to preserve the exact signed-registry checkpoint attestation hash.
+    pub fn with_expected_registry_checkpoint_attestation_hash(
+        mut self,
+        expected_registry_checkpoint_attestation_hash: Hash32,
+    ) -> Self {
+        self.expected_registry_checkpoint_attestation_hash =
+            Some(expected_registry_checkpoint_attestation_hash);
         self
     }
 }
@@ -1060,7 +1079,21 @@ impl ZkLocalVerifier for RegistryBoundRisc0Verifier {
                     image_id,
                 };
                 match verify_registry_authorization_attestation_metadata_v1(proof, &resolution) {
-                    Ok(()) => VerificationStatus::Success,
+                    Ok(()) => {
+                        if let Some(expected_checkpoint_hash) =
+                            &self.expected_registry_checkpoint_attestation_hash
+                        {
+                            match verify_registry_checkpoint_attestation_hash_metadata_v1(
+                                proof,
+                                expected_checkpoint_hash,
+                            ) {
+                                Ok(()) => VerificationStatus::Success,
+                                Err(e) => VerificationStatus::Failure(e.to_string()),
+                            }
+                        } else {
+                            VerificationStatus::Success
+                        }
+                    }
                     Err(e) => VerificationStatus::Failure(e.to_string()),
                 }
             }

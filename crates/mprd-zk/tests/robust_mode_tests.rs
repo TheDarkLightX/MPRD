@@ -18,13 +18,17 @@ use mprd_risc0_shared::{
 };
 use mprd_zk::manifest::{GuestImageEntryV1, GuestImageManifestV1};
 use mprd_zk::modes_v2::{DeploymentMode, ModeConfig};
+use mprd_zk::policy_fetch::InMemoryPolicyArtifactStore;
 use mprd_zk::registry_state::{
-    AuthorizedPolicyV1, RegistryBoundRisc0Verifier, RegistryStateV1, StaticRegistryStateProvider,
+    AuthorizedPolicyV1, RegistryBoundRisc0Verifier, RegistryStateV1, SignedRegistryStateV1,
+    StaticRegistryStateProvider, REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1,
 };
 use mprd_zk::risc0_host::MpbPolicyArtifactV1;
 use mprd_zk::{
-    create_robust_attestor, ModeError, RobustMpbAttestor, RobustMpbVerifier, RobustPrivateAttestor,
-    RobustPrivateVerifier, RobustRisc0Attestor, RobustRisc0Verifier, SecurityChecker,
+    create_production_verifier_from_signed_registry_state_with_manifest_key,
+    create_registry_bound_mpb_v1_attestor_from_signed_registry_state, create_robust_attestor,
+    ModeError, RobustMpbAttestor, RobustMpbVerifier, RobustPrivateAttestor, RobustPrivateVerifier,
+    RobustRisc0Attestor, RobustRisc0Verifier, SecurityChecker,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -814,6 +818,149 @@ fn registry_bound_verifier_rejects_unauthorized_policy_hash() {
 
     let status = registry_bound.verify(&token, &proof);
     assert!(matches!(status, VerificationStatus::Failure(_)));
+}
+
+#[test]
+fn production_verifier_rejects_signed_registry_checkpoint_hash_drift() {
+    if should_skip_due_to_missing_risc0_methods() {
+        return;
+    }
+
+    fn encode_mpb_policy_artifact_bytes_v1(bytecode: &[u8], vars: &[(&str, u8)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&(bytecode.len() as u32).to_le_bytes());
+        out.extend_from_slice(bytecode);
+        out.extend_from_slice(&(vars.len() as u32).to_le_bytes());
+        for (name, reg) in vars {
+            out.extend_from_slice(&(name.len() as u32).to_le_bytes());
+            out.extend_from_slice(name.as_bytes());
+            out.push(*reg);
+        }
+        out
+    }
+
+    let mut state = StateSnapshot {
+        fields: HashMap::from([("balance".into(), Value::UInt(10000))]),
+        policy_inputs: HashMap::new(),
+        state_hash: Hash32([0u8; 32]),
+        state_ref: StateRef::unknown(),
+    };
+    state.state_hash = mprd_core::hash::hash_state(&state);
+
+    let mut chosen_action = CandidateAction {
+        action_type: "http_call".into(),
+        params: http_call_params("registry-checkpoint-hash"),
+        score: Score(100),
+        candidate_hash: Hash32([0u8; 32]),
+    };
+    chosen_action.candidate_hash = mprd_core::hash::hash_candidate(&chosen_action);
+    let candidates = vec![chosen_action.clone()];
+
+    let policy_bytecode = mprd_core::mpb::BytecodeBuilder::new()
+        .push_i64(1)
+        .halt()
+        .build();
+    let policy_hash = Hash32(mprd_mpb::policy_hash_v1(&policy_bytecode, &[]));
+
+    let signing_key = TokenSigningKey::from_seed(&[203u8; 32]);
+    let vk = signing_key.verifying_key();
+    let mut mpb_image_id = [0u8; 32];
+    for (i, word) in MPRD_MPB_GUEST_ID.iter().enumerate() {
+        mpb_image_id[i * 4..(i + 1) * 4].copy_from_slice(&word.to_le_bytes());
+    }
+    let manifest = GuestImageManifestV1::sign(
+        &signing_key,
+        123,
+        vec![GuestImageEntryV1 {
+            policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
+            policy_exec_version_id: policy_exec_version_id_v1(),
+            image_id: mpb_image_id,
+        }],
+    )
+    .expect("manifest");
+    let signed_registry = SignedRegistryStateV1::sign(
+        &signing_key,
+        456,
+        RegistryStateV1 {
+            policy_epoch: 7,
+            registry_root: dummy_hash(0x91),
+            authorized_policies: vec![AuthorizedPolicyV1 {
+                policy_hash,
+                policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
+                policy_exec_version_id: policy_exec_version_id_v1(),
+                policy_source_kind_id: Some([0x31u8; 32]),
+                policy_source_hash: Some(Hash32([0x41u8; 32])),
+            }],
+            guest_image_manifest: manifest,
+        },
+    )
+    .expect("signed registry");
+
+    let policy_ref = PolicyRef {
+        policy_epoch: signed_registry.state.policy_epoch,
+        registry_root: signed_registry.state.registry_root,
+    };
+    let decision = mprd_core::Decision {
+        chosen_index: 0,
+        chosen_action: chosen_action.clone(),
+        policy_hash,
+        decision_commitment: Hash32([0u8; 32]),
+    };
+    let token = mprd_core::DecisionToken {
+        policy_hash,
+        policy_ref,
+        state_hash: state.state_hash,
+        state_ref: state.state_ref.clone(),
+        chosen_action_hash: chosen_action.candidate_hash,
+        nonce_or_tx_hash: dummy_hash(5),
+        timestamp_ms: 0,
+        signature: vec![],
+    };
+
+    let store = InMemoryPolicyArtifactStore::default();
+    store
+        .insert(
+            policy_hash,
+            encode_mpb_policy_artifact_bytes_v1(&policy_bytecode, &[]),
+        )
+        .expect("insert policy bytes");
+    let (_policy_ref, attestor) = create_registry_bound_mpb_v1_attestor_from_signed_registry_state(
+        signed_registry.clone(),
+        vk.clone(),
+        vk.clone(),
+        store,
+        100,
+    )
+    .expect("registry-bound attestor");
+
+    let mut proof = match attestor.attest(&token, &decision, &state, &candidates) {
+        Ok(p) => p,
+        Err(e) => {
+            if should_skip_due_to_r0vm_mismatch(&e) {
+                return;
+            }
+            panic!("Attestation should succeed: {e}");
+        }
+    };
+
+    let verifier = create_production_verifier_from_signed_registry_state_with_manifest_key(
+        signed_registry.clone(),
+        &vk,
+        &vk,
+    )
+    .expect("production verifier");
+    let ok = verifier.verify(&token, &proof);
+    assert!(matches!(ok, VerificationStatus::Success));
+
+    proof.attestation_metadata.insert(
+        REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1.into(),
+        hex::encode([0xAB; 32]),
+    );
+
+    let status = verifier.verify(&token, &proof);
+    assert!(
+        matches!(status, VerificationStatus::Failure(msg) if msg.contains("registry_auth_checkpoint_attestation_hash_v1 attestation metadata drifted from signed registry checkpoint"))
+    );
 }
 
 #[test]

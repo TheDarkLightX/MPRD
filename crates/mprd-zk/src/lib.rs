@@ -1024,7 +1024,10 @@ pub fn create_production_verifier_from_signed_registry_state_with_manifest_key(
     registry_state_verifying_key: &mprd_core::TokenVerifyingKey,
     manifest_verifying_key: &mprd_core::TokenVerifyingKey,
 ) -> mprd_core::Result<Box<dyn mprd_core::ZkLocalVerifier>> {
-    use crate::registry_state::{RegistryBoundRisc0Verifier, SignedStaticRegistryStateProvider};
+    use crate::registry_state::{
+        signed_registry_checkpoint_attestation_hash_v1, RegistryBoundRisc0Verifier,
+        SignedStaticRegistryStateProvider,
+    };
     use std::sync::Arc;
 
     signed_registry_state
@@ -1032,6 +1035,8 @@ pub fn create_production_verifier_from_signed_registry_state_with_manifest_key(
         .map_err(|e| {
             mprd_core::MprdError::ZkError(format!("Invalid registry_state checkpoint: {e}"))
         })?;
+    let expected_registry_checkpoint_attestation_hash =
+        signed_registry_checkpoint_attestation_hash_v1(&signed_registry_state);
 
     let provider = Arc::new(SignedStaticRegistryStateProvider::new(
         signed_registry_state,
@@ -1039,7 +1044,10 @@ pub fn create_production_verifier_from_signed_registry_state_with_manifest_key(
     ));
 
     let verifier = RegistryBoundRisc0Verifier::new(provider, manifest_verifying_key.clone())
-        .with_required_policy_source_mapping(true);
+        .with_required_policy_source_mapping(true)
+        .with_expected_registry_checkpoint_attestation_hash(
+            expected_registry_checkpoint_attestation_hash,
+        );
     Ok(Box::new(verifier))
 }
 
