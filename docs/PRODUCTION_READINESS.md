@@ -89,6 +89,13 @@ status; the RC1 board separates automated green gates from still-open Tier-0 rel
   downstream services can enforce retry idempotence without re-deriving the key
   ad hoc. The remaining gap is still deployment-time enforcement by those
   downstream systems and full end-to-end at-most-once closure.
+- **Production remote-side-effect sink is fail-closed and journaled (SHOULD)**:
+  trustless/private `mprd serve` now rejects plain `http` and requires
+  `execution.executor_type = "idempotent_http"` plus
+  `execution.effect_journal_dir`, so the shipped production HTTP path carries a
+  local pending/committed barrier keyed by `execution_idempotency_key_v1`
+  instead of advertising raw retryable remote side effects with no local crash
+  barrier.
 - **Production file-side-effect sink is idempotent (SHOULD)**: trustless/private
   `mprd serve` now rejects the plain append-only `file` executor and requires
   `execution.executor_type = "idempotent_file"` for file-backed side effects,

@@ -76,7 +76,7 @@ pub struct PolicyStorageConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExecutionConfig {
-    /// Executor type: noop, http, file, idempotent_file.
+    /// Executor type: noop, http, idempotent_http, file, idempotent_file.
     pub executor_type: String,
 
     /// HTTP executor URL.
@@ -84,6 +84,9 @@ pub struct ExecutionConfig {
 
     /// File executor path or idempotent file executor root.
     pub audit_file: Option<PathBuf>,
+
+    /// Local effect journal root for idempotent remote executors.
+    pub effect_journal_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -109,6 +112,7 @@ impl Default for MprdConfigFile {
                 executor_type: "noop".into(),
                 http_url: None,
                 audit_file: Some(PathBuf::from(".mprd/audit.jsonl")),
+                effect_journal_dir: Some(PathBuf::from(".mprd/http_effects")),
             },
             anti_replay: Some(AntiReplayConfig {
                 nonce_store_dir: Some(PathBuf::from(".mprd/anti_replay")),

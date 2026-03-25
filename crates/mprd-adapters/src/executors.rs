@@ -4,6 +4,7 @@
 //! different deployment scenarios:
 //!
 //! - **HttpExecutor**: Calls an HTTP endpoint to execute actions
+//! - **IdempotentHttpExecutor**: HTTP executor with a local pending/committed barrier
 //! - **WebhookExecutor**: Posts action data to a webhook URL
 //! - **FileExecutor**: Writes actions to a file (audit trail)
 //! - **CompositeExecutor**: Chains multiple executors
@@ -32,7 +33,7 @@ use mprd_core::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -184,6 +185,9 @@ pub struct HttpExecutorConfig {
 
     /// Retry count on transient failures.
     pub retry_count: u32,
+
+    /// Optional local barrier journal root for idempotent HTTP execution.
+    pub effect_journal_root: Option<PathBuf>,
 }
 
 impl Default for HttpExecutorConfig {
@@ -193,6 +197,7 @@ impl Default for HttpExecutorConfig {
             timeout_ms: 5000,
             api_key: None,
             retry_count: 3,
+            effect_journal_root: None,
         }
     }
 }
@@ -329,6 +334,239 @@ impl HttpExecutor {
             self.config.retry_count + 1,
             last_error
         )))
+    }
+}
+
+/// HTTP executor with a local fail-closed pending/committed barrier.
+///
+/// The barrier uses:
+/// `root/<policy_hash_hex>/<execution_idempotency_key_v1>.pending.json`
+/// `root/<policy_hash_hex>/<execution_idempotency_key_v1>.committed.json`
+///
+/// If the process loses certainty after creating the pending marker, subsequent retries reject
+/// until an operator resolves the pending barrier manually. This narrows duplicate remote effects
+/// without claiming global exactly-once semantics.
+pub struct IdempotentHttpExecutor {
+    inner: HttpExecutor,
+    effect_journal_root: PathBuf,
+}
+
+impl IdempotentHttpExecutor {
+    /// Create a new idempotent HTTP executor.
+    pub fn new(config: HttpExecutorConfig) -> Result<Self> {
+        let effect_journal_root = config.effect_journal_root.clone().ok_or_else(|| {
+            MprdError::ConfigError("idempotent_http requires effect_journal_root".into())
+        })?;
+        fs::create_dir_all(&effect_journal_root).map_err(|e| {
+            MprdError::ExecutionError(format!("Failed to create HTTP effect journal dir: {}", e))
+        })?;
+        let inner = HttpExecutor::new(config)?;
+        Ok(Self {
+            inner,
+            effect_journal_root,
+        })
+    }
+
+    fn journal_base_dir(&self, token: &DecisionToken) -> PathBuf {
+        self.effect_journal_root
+            .join(hex::encode(token.policy_hash.0))
+    }
+
+    fn pending_path(&self, token: &DecisionToken) -> PathBuf {
+        self.journal_base_dir(token).join(format!(
+            "{}.pending.json",
+            execution_idempotency_key_v1(token)
+        ))
+    }
+
+    fn committed_path(&self, token: &DecisionToken) -> PathBuf {
+        self.journal_base_dir(token).join(format!(
+            "{}.committed.json",
+            execution_idempotency_key_v1(token)
+        ))
+    }
+
+    fn persist_barrier_payload(
+        mut file: File,
+        path: &PathBuf,
+        payload: &ExecutePayload,
+    ) -> Result<()> {
+        let json = serde_json::to_vec(payload).map_err(|e| {
+            MprdError::ExecutionError(format!("Failed to serialize HTTP effect barrier: {}", e))
+        })?;
+        file.write_all(&json).map_err(|e| {
+            MprdError::ExecutionError(format!(
+                "Failed to write HTTP effect barrier {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+        file.write_all(b"\n").map_err(|e| {
+            MprdError::ExecutionError(format!(
+                "Failed to write HTTP effect barrier {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+        file.flush().map_err(|e| {
+            MprdError::ExecutionError(format!(
+                "Failed to flush HTTP effect barrier {}: {}",
+                path.display(),
+                e
+            ))
+        })
+    }
+
+    fn clear_pending(path: &PathBuf) -> Result<()> {
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(MprdError::ExecutionError(format!(
+                "Failed to clear pending HTTP effect barrier {}: {}",
+                path.display(),
+                e
+            ))),
+        }
+    }
+
+    fn prepare_pending_barrier(
+        &self,
+        token: &DecisionToken,
+        payload: &ExecutePayload,
+    ) -> Result<EffectBarrierState> {
+        let base_dir = self.journal_base_dir(token);
+        fs::create_dir_all(&base_dir).map_err(|e| {
+            MprdError::ExecutionError(format!(
+                "Failed to create HTTP effect journal dir {}: {}",
+                base_dir.display(),
+                e
+            ))
+        })?;
+
+        let committed = self.committed_path(token);
+        if committed.exists() {
+            return Ok(EffectBarrierState::Committed(committed));
+        }
+
+        let pending = self.pending_path(token);
+        let file = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&pending)
+        {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Ok(EffectBarrierState::BlockedPending(pending));
+            }
+            Err(e) => {
+                return Err(MprdError::ExecutionError(format!(
+                    "Failed to create HTTP effect barrier {}: {}",
+                    pending.display(),
+                    e
+                )));
+            }
+        };
+        match Self::persist_barrier_payload(file, &pending, payload) {
+            Ok(()) => Ok(EffectBarrierState::Pending { pending, committed }),
+            Err(err) => {
+                let _ = Self::clear_pending(&pending);
+                Err(err)
+            }
+        }
+    }
+
+    fn execute_payload_idempotent(
+        &self,
+        token: &DecisionToken,
+        payload: &ExecutePayload,
+    ) -> Result<ExecutionResult> {
+        match self.prepare_pending_barrier(token, payload)? {
+            EffectBarrierState::Committed(path) => {
+                return Ok(ExecutionResult {
+                    success: true,
+                    message: Some(format!(
+                        "Already committed remote effect barrier: {}",
+                        path.display()
+                    )),
+                });
+            }
+            EffectBarrierState::BlockedPending(path) => {
+                return Err(MprdError::ExecutionError(format!(
+                    "HTTP effect barrier pending at {}; manual resolution required before retry",
+                    path.display()
+                )));
+            }
+            EffectBarrierState::Pending { pending, committed } => {
+                let result = self.inner.execute_payload(token, payload);
+                match result {
+                    Ok(result) if result.success => {
+                        if committed.exists() {
+                            Self::clear_pending(&pending)?;
+                        } else {
+                            fs::rename(&pending, &committed).map_err(|e| {
+                                MprdError::ExecutionError(format!(
+                                    "Failed to commit HTTP effect barrier {} -> {}: {}",
+                                    pending.display(),
+                                    committed.display(),
+                                    e
+                                ))
+                            })?;
+                        }
+                        Ok(ExecutionResult {
+                            success: true,
+                            message: Some(match result.message {
+                                Some(message) => {
+                                    format!("{message}; committed barrier: {}", committed.display())
+                                }
+                                None => format!("committed barrier: {}", committed.display()),
+                            }),
+                        })
+                    }
+                    Ok(result) => {
+                        Self::clear_pending(&pending)?;
+                        Ok(result)
+                    }
+                    Err(err) => Err(MprdError::ExecutionError(format!(
+                        "HTTP effect barrier pending at {} after uncertain remote outcome: {}",
+                        pending.display(),
+                        err
+                    ))),
+                }
+            }
+        }
+    }
+}
+
+enum EffectBarrierState {
+    Committed(PathBuf),
+    BlockedPending(PathBuf),
+    Pending {
+        pending: PathBuf,
+        committed: PathBuf,
+    },
+}
+
+impl ExecutorAdapter for IdempotentHttpExecutor {
+    fn execute(&self, verified: &VerifiedBundle<'_>) -> Result<ExecutionResult> {
+        let token = verified.token();
+        let proof = verified.proof();
+        let action_preimage = require_action_preimage(verified)?;
+        let payload = execute_payload_from_parts(token, proof, &action_preimage, None, None);
+        self.execute_payload_idempotent(token, &payload)
+    }
+
+    fn execute_ready(&self, ready: &ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
+        let token = ready.token();
+        let proof = ready.proof();
+        let action_preimage = require_ready_action_preimage(ready);
+        let payload = execute_payload_from_parts(
+            token,
+            proof,
+            &action_preimage,
+            ready.authorization().and_then(|a| a.governance()),
+            ready.bridge(),
+        );
+        self.execute_payload_idempotent(token, &payload)
     }
 }
 
@@ -925,8 +1163,10 @@ impl ExecutorAdapter for NoOpExecutor {
 mod tests {
     use super::*;
     use mprd_core::{verify_for_execution, CandidateAction, Hash32, ProofBundle, Score, Value};
+    use std::net::TcpListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::thread;
 
     fn dummy_hash(b: u8) -> Hash32 {
         Hash32([b; 32])
@@ -968,6 +1208,34 @@ mod tests {
             timestamp_ms: 12345,
             signature: vec![1, 2, 3],
         }
+    }
+
+    fn spawn_fixed_http_server(
+        expected_requests: usize,
+        body: &'static str,
+    ) -> (String, Arc<AtomicUsize>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_clone = hits.clone();
+        let handle = thread::spawn(move || {
+            for _ in 0..expected_requests {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                hits_clone.fetch_add(1, Ordering::SeqCst);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write response");
+                stream.flush().expect("flush response");
+            }
+        });
+        (format!("http://{}", addr), hits, handle)
     }
 
     fn dummy_proof() -> ProofBundle {
@@ -1520,5 +1788,75 @@ mod tests {
         let policy_dir = dir.path().join(hex::encode(token.policy_hash.0));
         let entries: Vec<_> = std::fs::read_dir(policy_dir).unwrap().collect();
         assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn idempotent_http_executor_writes_once_per_nonce() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base_url, hits, handle) =
+            spawn_fixed_http_server(1, r#"{"success":true,"message":"ok"}"#);
+        let exec = IdempotentHttpExecutor::new(HttpExecutorConfig {
+            base_url,
+            effect_journal_root: Some(dir.path().join("http_effects")),
+            ..Default::default()
+        })
+        .expect("new");
+        let token = dummy_token();
+        let proof = dummy_proof();
+        let verified = verified(&token, &proof);
+
+        let r1 = exec.execute(&verified).expect("exec1");
+        assert!(r1.success);
+        let r2 = exec.execute(&verified).expect("exec2");
+        assert!(r2.success);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        handle.join().expect("join");
+
+        let policy_dir = dir
+            .path()
+            .join("http_effects")
+            .join(hex::encode(token.policy_hash.0));
+        let entries: Vec<_> = std::fs::read_dir(policy_dir).unwrap().collect();
+        assert_eq!(entries.len(), 1);
+        let file_name = entries[0]
+            .as_ref()
+            .expect("entry")
+            .file_name()
+            .into_string()
+            .expect("filename");
+        assert!(file_name.ends_with(".committed.json"));
+    }
+
+    #[test]
+    fn idempotent_http_executor_blocks_when_pending_barrier_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("http_effects");
+        let exec = IdempotentHttpExecutor::new(HttpExecutorConfig {
+            base_url: "http://127.0.0.1:1".into(),
+            effect_journal_root: Some(root.clone()),
+            ..Default::default()
+        })
+        .expect("new");
+        let token = dummy_token();
+        let proof = dummy_proof();
+        let verified = verified(&token, &proof);
+
+        let policy_dir = root.join(hex::encode(token.policy_hash.0));
+        std::fs::create_dir_all(&policy_dir).expect("policy dir");
+        let pending = policy_dir.join(format!(
+            "{}.pending.json",
+            execution_idempotency_key_v1(&token)
+        ));
+        std::fs::write(&pending, b"{}\n").expect("pending marker");
+
+        let err = exec
+            .execute(&verified)
+            .expect_err("pending barrier must block");
+        assert!(
+            err.to_string()
+                .contains("manual resolution required before retry"),
+            "unexpected error: {err}"
+        );
     }
 }

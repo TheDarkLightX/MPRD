@@ -6,6 +6,7 @@
 //! # Executors
 //!
 //! - `HttpExecutor`: Execute via HTTP endpoint
+//! - `IdempotentHttpExecutor`: HTTP endpoint with fail-closed local effect journal
 //! - `WebhookExecutor`: Fire-and-forget webhook
 //! - `FileExecutor`: Audit trail to file
 //! - `CompositeExecutor`: Chain multiple executors
@@ -23,8 +24,8 @@ pub mod proposers;
 pub mod storage;
 
 pub use executors::{
-    CompositeExecutor, FileExecutor, HttpExecutor, HttpExecutorConfig, NoOpExecutor,
-    WebhookExecutor,
+    CompositeExecutor, FileExecutor, HttpExecutor, HttpExecutorConfig, IdempotentHttpExecutor,
+    NoOpExecutor, WebhookExecutor,
 };
 
 pub use storage::{IpfsConfig, IpfsPolicyStorage, LocalPolicyStorage};

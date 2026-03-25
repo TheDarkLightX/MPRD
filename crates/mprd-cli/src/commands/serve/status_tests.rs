@@ -391,6 +391,18 @@ fn serve_startup_validation_accepts_trustless_mode_with_idempotent_file_executor
 }
 
 #[test]
+fn serve_startup_validation_accepts_trustless_mode_with_idempotent_http_executor() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut config = valid_trustless_serve_config(&tmp);
+    config.execution.executor_type = "idempotent_http".into();
+    config.execution.http_url = Some("http://127.0.0.1:8080".into());
+    config.execution.effect_journal_dir = Some(tmp.path().join("http_effects"));
+
+    validate_serve_startup_config(&config, false)
+        .expect("trustless serve should accept idempotent http executor");
+}
+
+#[test]
 fn serve_startup_validation_rejects_invalid_signed_state_snapshot() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let config = valid_trustless_serve_config(&tmp);
@@ -480,6 +492,39 @@ fn serve_startup_validation_rejects_plain_file_executor_in_trustless_mode() {
 }
 
 #[test]
+fn serve_startup_validation_rejects_plain_http_executor_in_trustless_mode() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut config = valid_trustless_serve_config(&tmp);
+    config.execution.executor_type = "http".into();
+    config.execution.http_url = Some("http://127.0.0.1:8080".into());
+
+    let err = validate_serve_startup_config(&config, false)
+        .expect_err("trustless serve must reject non-idempotent http executor");
+    assert!(
+        err.to_string()
+            .contains("requires execution.executor_type=idempotent_http"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn serve_startup_validation_rejects_idempotent_http_without_effect_journal_dir() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut config = valid_trustless_serve_config(&tmp);
+    config.execution.executor_type = "idempotent_http".into();
+    config.execution.http_url = Some("http://127.0.0.1:8080".into());
+    config.execution.effect_journal_dir = None;
+
+    let err = validate_serve_startup_config(&config, false)
+        .expect_err("idempotent http executor must require effect journal dir");
+    assert!(
+        err.to_string()
+            .contains("executor_type=idempotent_http requires execution.effect_journal_dir"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn executor_component_health_reports_idempotent_file_root() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let mut config = super::super::MprdConfigFile::default();
@@ -493,6 +538,26 @@ fn executor_component_health_reports_idempotent_file_root() {
             .message
             .as_deref()
             .is_some_and(|m| m.contains("idempotent audit root:")),
+        "unexpected health message: {:?}",
+        health.message
+    );
+}
+
+#[test]
+fn executor_component_health_reports_idempotent_http_root() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut config = super::super::MprdConfigFile::default();
+    config.execution.executor_type = "idempotent_http".into();
+    config.execution.http_url = Some("http://127.0.0.1:8080".into());
+    config.execution.effect_journal_dir = Some(tmp.path().join("http_effects"));
+
+    let health = executor_component_health(&config);
+    assert!(matches!(health.status, op_api::HealthLevel::Healthy));
+    assert!(
+        health
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("effect journal root:")),
         "unexpected health message: {:?}",
         health.message
     );

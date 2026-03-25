@@ -271,6 +271,34 @@ fn check_executor(config: &MprdConfigFile) -> CheckResult {
                 }
             }
         }
+        "idempotent_http" => {
+            let Some(url) = config.execution.http_url.as_deref() else {
+                return CheckResult::Fail {
+                    message: "http_url not configured".into(),
+                    suggestion: "Add http_url to execution config".into(),
+                };
+            };
+            if let Err(e) = mprd_adapters::egress::validate_outbound_url(url) {
+                return CheckResult::Fail {
+                    message: format!("Invalid HTTP URL: {}", e),
+                    suggestion: "Use a valid URL".into(),
+                };
+            }
+            if let Some(ref path) = config.execution.effect_journal_dir {
+                CheckResult::Pass {
+                    message: format!(
+                        "Idempotent HTTP executor: {} with effect journal {}",
+                        url,
+                        path.display()
+                    ),
+                }
+            } else {
+                CheckResult::Fail {
+                    message: "effect_journal_dir not configured".into(),
+                    suggestion: "Add effect_journal_dir to execution config".into(),
+                }
+            }
+        }
         "file" => {
             if let Some(ref path) = config.execution.audit_file {
                 CheckResult::Pass {
@@ -283,9 +311,22 @@ fn check_executor(config: &MprdConfigFile) -> CheckResult {
                 }
             }
         }
+        "idempotent_file" => {
+            if let Some(ref path) = config.execution.audit_file {
+                CheckResult::Pass {
+                    message: format!("Idempotent file executor: {}", path.display()),
+                }
+            } else {
+                CheckResult::Fail {
+                    message: "audit_file not configured".into(),
+                    suggestion: "Add audit_file to execution config".into(),
+                }
+            }
+        }
         other => CheckResult::Warn {
             message: format!("Unknown executor type: {}", other),
-            suggestion: "Use 'noop', 'http', or 'file'".into(),
+            suggestion: "Use 'noop', 'http', 'idempotent_http', 'file', or 'idempotent_file'"
+                .into(),
         },
     }
 }

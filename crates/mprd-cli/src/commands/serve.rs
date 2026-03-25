@@ -506,18 +506,16 @@ async fn run_handler(
              // - `noop` => logs only
              // - `file` => append-only JSONL audit sink (local/demo only)
              // - `idempotent_file` => one-record-per-idempotency-key file sink
-             // - `http` => POST to an external executor service (must be idempotent)
+             // - `idempotent_http` => remote HTTP side effects with a fail-closed local barrier
              let executor_typ = config.execution.executor_type.trim().to_ascii_lowercase();
              let inner_executor: Box<dyn mprd_core::ExecutorAdapter + Send + Sync> =
                  match executor_typ.as_str() {
                      "noop" => Box::new(LoggingExecutorAdapter::new()),
                      "file" => {
-                         let path = config.execution.audit_file.clone().ok_or_else(|| {
-                             mprd_core::MprdError::ConfigError(
-                                 "executor_type=file requires execution.audit_file".into(),
-                             )
-                         })?;
-                         Box::new(mprd_adapters::executors::FileExecutor::new(path)?)
+                         return Err(mprd_core::MprdError::ConfigError(
+                             "production serve requires executor_type=idempotent_file for file-based side effects"
+                                 .into(),
+                         ))
                      }
                      "idempotent_file" => {
                          let path = config.execution.audit_file.clone().ok_or_else(|| {
@@ -529,22 +527,38 @@ async fn run_handler(
                          Box::new(mprd_adapters::executors::IdempotentFileExecutor::new(path)?)
                      }
                      "http" => {
+                         return Err(mprd_core::MprdError::ConfigError(
+                             "production serve requires executor_type=idempotent_http for remote side effects"
+                                 .into(),
+                         ))
+                     }
+                     "idempotent_http" => {
                          let url = config.execution.http_url.clone().ok_or_else(|| {
                              mprd_core::MprdError::ConfigError(
-                                 "executor_type=http requires execution.http_url".into(),
+                                 "executor_type=idempotent_http requires execution.http_url".into(),
                              )
                          })?;
+                         let effect_journal_root =
+                             config.execution.effect_journal_dir.clone().ok_or_else(|| {
+                                 mprd_core::MprdError::ConfigError(
+                                     "executor_type=idempotent_http requires execution.effect_journal_dir"
+                                         .into(),
+                                 )
+                             })?;
                          let api_key = env_opt("MPRD_EXECUTOR_API_KEY");
                          let http_cfg = mprd_adapters::executors::HttpExecutorConfig {
                              base_url: url,
                              api_key,
+                             effect_journal_root: Some(effect_journal_root),
                              ..Default::default()
                          };
-                         Box::new(mprd_adapters::executors::HttpExecutor::new(http_cfg)?)
+                         Box::new(mprd_adapters::executors::IdempotentHttpExecutor::new(
+                             http_cfg,
+                         )?)
                      }
                      other => {
                          return Err(mprd_core::MprdError::ConfigError(format!(
-                             "unknown executor_type: {other} (expected noop|file|idempotent_file|http)"
+                             "unknown executor_type: {other} (expected noop|file|idempotent_file|http|idempotent_http)"
                          )))
                      }
                  };
@@ -1348,6 +1362,46 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                 message: Some(format!("configured ({url}); connectivity not checked")),
             }
         }
+        "idempotent_http" => {
+            let Some(url) = config.execution.http_url.as_deref() else {
+                return op_api::ComponentHealth {
+                    status: op_api::HealthLevel::Unavailable,
+                    version: None,
+                    last_check: now,
+                    message: Some(
+                        "idempotent_http executor selected but http_url is not configured".into(),
+                    ),
+                };
+            };
+            if let Err(e) = mprd_adapters::egress::validate_outbound_url(url) {
+                return op_api::ComponentHealth {
+                    status: op_api::HealthLevel::Unavailable,
+                    version: None,
+                    last_check: now,
+                    message: Some(format!("invalid http_url: {e}")),
+                };
+            }
+            let Some(path) = config.execution.effect_journal_dir.as_ref() else {
+                return op_api::ComponentHealth {
+                    status: op_api::HealthLevel::Unavailable,
+                    version: None,
+                    last_check: now,
+                    message: Some(
+                        "idempotent_http executor selected but effect_journal_dir is not configured"
+                            .into(),
+                    ),
+                };
+            };
+            op_api::ComponentHealth {
+                status: op_api::HealthLevel::Healthy,
+                version: None,
+                last_check: now,
+                message: Some(format!(
+                    "idempotent http executor: {url}; effect journal root: {}",
+                    path.display()
+                )),
+            }
+        }
         "file" => {
             let Some(path) = config.execution.audit_file.as_ref() else {
                 return op_api::ComponentHealth {
@@ -1485,15 +1539,27 @@ fn validate_serve_startup_config(
         match executor_typ.as_str() {
             "noop" => {}
             "http" => {
+                anyhow::bail!(
+                    "trustless/private production serve requires execution.executor_type=idempotent_http for remote side effects"
+                );
+            }
+            "idempotent_http" => {
                 let url = config.execution.http_url.clone().ok_or_else(|| {
-                    anyhow::anyhow!("executor_type=http requires execution.http_url")
+                    anyhow::anyhow!("executor_type=idempotent_http requires execution.http_url")
                 })?;
+                let effect_journal_root =
+                    config.execution.effect_journal_dir.clone().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "executor_type=idempotent_http requires execution.effect_journal_dir"
+                        )
+                    })?;
                 let http_cfg = mprd_adapters::executors::HttpExecutorConfig {
                     base_url: url,
                     api_key: None,
+                    effect_journal_root: Some(effect_journal_root),
                     ..Default::default()
                 };
-                let _ = mprd_adapters::executors::HttpExecutor::new(http_cfg)?;
+                let _ = mprd_adapters::executors::IdempotentHttpExecutor::new(http_cfg)?;
             }
             "idempotent_file" => {
                 let path = config.execution.audit_file.clone().ok_or_else(|| {
@@ -1508,7 +1574,7 @@ fn validate_serve_startup_config(
             }
             other => {
                 anyhow::bail!(
-                    "unknown executor_type: {other} (expected noop|file|idempotent_file|http)"
+                    "unknown executor_type: {other} (expected noop|file|idempotent_file|http|idempotent_http)"
                 );
             }
         }
