@@ -62,6 +62,32 @@ The next required replayable disaster states are:
 - Tau or API outage with fail-closed fallback
 - Mode C key rotation or allowlist drift
 
+The tracked RC1 replay script and receipt for the current model series are:
+
+- `tools/replay_network_barriers_rc1.py`
+- `docs/receipts/rc1_network_replay_20260325.json`
+
+The current receipt is green across 10 tracked safety models:
+
+- `serial_commit_network_barrier`: 1,274 distinct states, depth 12
+- `distributed_replay_claim_barrier`: 63 distinct states, depth 7
+- `distributed_replay_visibility_barrier`: 291 distinct states, depth 12
+- `distributed_replay_lease_barrier`: 671 distinct states, depth 14
+- `distributed_replay_split_brain_barrier`: 170 distinct states, depth 13
+- `distributed_replay_direct_handoff_barrier`: 361 distinct states, depth 13
+- `distributed_replay_quorum_barrier`: 21,888 distinct states, depth 16
+- `distributed_replay_quorum_equivocation_barrier`: 150 distinct states, depth 13
+- `distributed_replay_equivocation_recovery_barrier`: 132 distinct states, depth 9
+- `distributed_replay_hidden_equivocation_barrier`: 250 distinct states, depth 13
+
+Replay command:
+
+```bash
+TLA2TOOLS_JAR=/path/to/tla2tools.jar \
+python3 tools/replay_network_barriers_rc1.py \
+  --output docs/receipts/rc1_network_replay_20260325.json
+```
+
 The first tracked replay surface for this frontier is:
 
 - `docs/specs/serial_commit_network_barrier.tla`

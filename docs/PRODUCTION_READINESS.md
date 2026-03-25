@@ -55,7 +55,14 @@ status; the RC1 board separates automated green gates from still-open Tier-0 rel
 - **Execution-time governance bridge refinement**: the local formal packet now proves execution-time `governance_ok` should require both a resolved policy and an admitted governance update, the runtime now shares one constructor-gated governance admission rule between core prepared-state rails and concrete `mprd-zk` governance gate packets, and the live `attest_ready -> verify -> execute_ready` path now fails closed if attestors omit or drift the admitted governance metadata. The remaining gap is still the replayable refinement edge from concrete registry and governance objects into the live execution authorization packet.
 - **Pre or post-condition parallelization refinement**: a local Lean/ESSO/TLA packet now shows speculative eval or cache work can commute only before a serial commit barrier, but runtime adoption is still blocked until concrete footprints, stale-data handling, and serial barrier refinement are proved. Unknown or stale cases must continue to serialize. See `docs/PARALLELIZATION_AND_NETWORK_RESILIENCE.md`.
 - **Selector-binding refinement and canonicalization**: the local formal packet now proves executed states require both chosen-index and chosen-preimage selector bindings, and the runtime now canonicalizes candidate families into strict ascending canonical-hash order while guest/attestor/verifier surfaces reject noncanonical sorted-unique families. The remaining open gap is the replayable refinement edge from concrete candidate-set/preimage objects into that formal selector slice, plus semantic canonicalization beyond exact canonical-hash order.
-- **Adversarial network-resilience chaos**: current chaos evidence is strong on local admission and execution correctness, but there is still no replayable network campaign for stale registry checkpoints, checkpoint withholding, quorum degradation, distributed replay races, Tau/API outages, or similar partitioned schedules. See `docs/PARALLELIZATION_AND_NETWORK_RESILIENCE.md`.
+- **Adversarial network-resilience chaos**: current chaos evidence is strong on local
+  admission and execution correctness, and the tracked distributed replay /
+  serial-commit TLA safety series now has a consolidated receipt at
+  `docs/receipts/rc1_network_replay_20260325.json`. The remaining gap is still the
+  absence of replayable network chaos campaigns for stale registry checkpoints,
+  checkpoint withholding, quorum degradation, distributed replay races, Tau/API
+  outages, or similar partitioned schedules. See
+  `docs/PARALLELIZATION_AND_NETWORK_RESILIENCE.md`.
 - **Mode C minimized trust**: Mode C currently gives a strong private-boundary verification surface, but it is not full minimized trust yet because the prover or operator still sees plaintext and governance, registry authority, and source mapping remain part of the trust root.
 - **Persistent anti-replay is deployed**: configure `anti_replay.nonce_store_dir` in production deployments (not just the in-repo option).
 - **Persistent anti-replay is deployed**:
