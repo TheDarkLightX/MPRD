@@ -253,6 +253,7 @@ pub struct ExecutionReadyPacketV1 {
     boundary: ExecutionBoundaryWitnessV1,
     authorization: Option<ExecutionAuthorizationWitnessV1>,
     bridge: Option<ExecutionRegistryBridgeWitnessV1>,
+    executor_admission: Option<ExecutionExecutorAdmissionWitnessV1>,
 }
 
 impl ExecutionReadyPacketV1 {
@@ -267,6 +268,10 @@ impl ExecutionReadyPacketV1 {
     pub fn bridge(&self) -> Option<&ExecutionRegistryBridgeWitnessV1> {
         self.bridge.as_ref()
     }
+
+    pub fn executor_admission(&self) -> Option<&ExecutionExecutorAdmissionWitnessV1> {
+        self.executor_admission.as_ref()
+    }
 }
 
 /// A locally verified bundle that is also admitted through the concrete execution boundary.
@@ -274,7 +279,6 @@ impl ExecutionReadyPacketV1 {
 pub struct ExecutionReadyBundle<'a> {
     verified: VerifiedBundle<'a>,
     packet: ExecutionReadyPacketV1,
-    executor_admission: Option<ExecutionExecutorAdmissionWitnessV1>,
 }
 
 impl<'a> ExecutionReadyBundle<'a> {
@@ -299,7 +303,7 @@ impl<'a> ExecutionReadyBundle<'a> {
     }
 
     pub fn executor_admission(&self) -> Option<&ExecutionExecutorAdmissionWitnessV1> {
-        self.executor_admission.as_ref()
+        self.packet.executor_admission()
     }
 
     pub fn token(&self) -> &'a DecisionToken {
@@ -1023,8 +1027,8 @@ pub fn prepare_execution_ready<'a>(
             boundary,
             authorization: None,
             bridge: None,
+            executor_admission: None,
         },
-        executor_admission: None,
     })
 }
 
@@ -1045,8 +1049,8 @@ pub fn prepare_execution_ready_with_authorization<'a>(
             boundary,
             authorization: Some(authorization),
             bridge: None,
+            executor_admission: None,
         },
-        executor_admission: None,
     })
 }
 
@@ -1068,11 +1072,12 @@ pub fn prepare_execution_ready_with_signature<'a>(
     let signature = verifying_key.signature_witness_v1(ready.token(), &ready.token().signature)?;
     let mut enriched = ready.clone();
     let admission = enriched
+        .packet
         .executor_admission
         .take()
         .unwrap_or_default()
         .with_signature(signature);
-    enriched.executor_admission = Some(admission);
+    enriched.packet.executor_admission = Some(admission);
     Ok(enriched)
 }
 
@@ -1087,11 +1092,12 @@ pub fn prepare_execution_ready_with_state_provenance<'a>(
     )?;
     let mut enriched = ready.clone();
     let admission = enriched
+        .packet
         .executor_admission
         .take()
         .unwrap_or_default()
         .with_state_provenance(provenance);
-    enriched.executor_admission = Some(admission);
+    enriched.packet.executor_admission = Some(admission);
     Ok(enriched)
 }
 
@@ -1106,11 +1112,12 @@ pub fn prepare_execution_ready_with_replay_clearance<'a>(
     let replay = crate::anti_replay::replay_clearance_witness_v1(ready.token(), nonce_validator)?;
     let mut enriched = ready.clone();
     let admission = enriched
+        .packet
         .executor_admission
         .take()
         .unwrap_or_default()
         .with_replay_clearance(replay);
-    enriched.executor_admission = Some(admission);
+    enriched.packet.executor_admission = Some(admission);
     Ok((enriched, replay))
 }
 
@@ -2229,6 +2236,7 @@ mod tests {
             admission.signature().expect("signature").signer_pubkey(),
             &verifying_key.to_bytes()
         );
+        assert_eq!(ready.packet().executor_admission(), Some(admission));
         assert_eq!(
             admission
                 .state_provenance()
@@ -2302,6 +2310,7 @@ mod tests {
             admission.replay_clearance().expect("replay").claim(),
             replay.claim()
         );
+        assert_eq!(ready.packet().executor_admission(), Some(admission));
         assert_eq!(
             admission.replay_clearance().expect("replay").claim(),
             crate::anti_replay::NonceClaim::NotClaimed
