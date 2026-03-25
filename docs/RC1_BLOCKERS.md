@@ -26,6 +26,7 @@ These gates are necessary, but not sufficient, for RC1.
 
 - Runtime refinement still stops short of one top-level concrete execution theorem.
   - Narrowed: the shipped concrete adapters now override `execute_ready(...)` directly instead of inheriting the legacy default that fell back to raw `execute(ready.verified())`, so the witness-native path now survives into the real side-effecting adapter layer and not only through the guard wrappers.
+  - Narrowed further: the tracked Lean bundle now includes a top-level signed-registry production `mprd serve` packet proving that reachable executed states on the shipped production path require validated registry and state anchors, explicit policy selection, production verifier binding, ready-bridge invocation, the signed-registry bridge facts, and the concrete execution guards before side effects.
   - Needed: constructor-gated witness chain from runtime objects into the execution boundary packet.
 - Governance-to-execution closure is still incomplete.
   - Narrowed: prepared state rails in `mprd-core` and concrete `GovernanceGateInput` packets in `mprd-zk` now share one constructor-gated governance admission rule, and the live `attest_ready -> verify -> execute_ready` path now fails closed if attestors drop or drift that admitted governance metadata before execution.

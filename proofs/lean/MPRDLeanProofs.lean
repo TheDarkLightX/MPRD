@@ -18,6 +18,7 @@ import MPRD_GovernanceStateLinkage
 import MPRD_GovernanceExecutionBridge
 import MPRD_SignedRegistryCheckpointBridge
 import MPRD_SignedRegistryExecutionBoundary
+import MPRD_SignedRegistryServeBoundary
 import MPRD_RegistryPolicyAuthority
 import MPRD_ParallelIndependenceOracle
 import TauTables_SelectSet

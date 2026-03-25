@@ -25,6 +25,7 @@ lean_lib MPRDLeanProofs where
     `MPRD_GovernanceExecutionBridge,
     `MPRD_SignedRegistryCheckpointBridge,
     `MPRD_SignedRegistryExecutionBoundary,
+    `MPRD_SignedRegistryServeBoundary,
     `MPRD_RegistryPolicyAuthority,
     `MPRD_ParallelIndependenceOracle,
     `TauTables_SelectSet
