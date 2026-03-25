@@ -54,6 +54,7 @@ TARGET_ROWS=(
   "candidate_preimage_v1|--no-default-features|candidate_preimage_decode"
   "anti_replay_state_machine|--no-default-features|anti_replay_state_machine"
   "tau_output_attestation_envelope_v1|--no-default-features|tau_output_attestation_envelope"
+  "governance_admission_witness_v1|--features zk|governance_admission_witness"
   "receipt_deser|--features zk|receipt_deserialization"
   "mpb_artifact_deser|--features zk|mpb_artifact_deserialization"
   "decoded_journal_metamorphic_v3|--features zk|decoded_journal_metamorphic"

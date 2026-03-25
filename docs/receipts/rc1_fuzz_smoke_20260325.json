@@ -1,0 +1,86 @@
+{
+  "generated_at_utc": "2026-03-25T04:29:02.467448Z",
+  "git_head": "6e4afc191e962ff1bcc209621dd31e9bc027c4fd",
+  "include_asde": false,
+  "overall_status": "passed",
+  "schema": "mprd/rc1-fuzz-smoke-summary/v1",
+  "targets": [
+    {
+      "duration_s": 12,
+      "feature_flags": [
+        "--no-default-features"
+      ],
+      "status": "passed",
+      "surface": "limits_bytes_parser",
+      "target": "limits_bytes_v1"
+    },
+    {
+      "duration_s": 12,
+      "feature_flags": [
+        "--no-default-features"
+      ],
+      "status": "passed",
+      "surface": "candidate_preimage_decode",
+      "target": "candidate_preimage_v1"
+    },
+    {
+      "duration_s": 12,
+      "feature_flags": [
+        "--no-default-features"
+      ],
+      "status": "passed",
+      "surface": "anti_replay_state_machine",
+      "target": "anti_replay_state_machine"
+    },
+    {
+      "duration_s": 12,
+      "feature_flags": [
+        "--no-default-features"
+      ],
+      "status": "passed",
+      "surface": "tau_output_attestation_envelope",
+      "target": "tau_output_attestation_envelope_v1"
+    },
+    {
+      "duration_s": 12,
+      "feature_flags": [
+        "--features",
+        "zk"
+      ],
+      "status": "passed",
+      "surface": "governance_admission_witness",
+      "target": "governance_admission_witness_v1"
+    },
+    {
+      "duration_s": 12,
+      "feature_flags": [
+        "--features",
+        "zk"
+      ],
+      "status": "passed",
+      "surface": "receipt_deserialization",
+      "target": "receipt_deser"
+    },
+    {
+      "duration_s": 12,
+      "feature_flags": [
+        "--features",
+        "zk"
+      ],
+      "status": "passed",
+      "surface": "mpb_artifact_deserialization",
+      "target": "mpb_artifact_deser"
+    },
+    {
+      "duration_s": 12,
+      "feature_flags": [
+        "--features",
+        "zk"
+      ],
+      "status": "passed",
+      "surface": "decoded_journal_metamorphic",
+      "target": "decoded_journal_metamorphic_v3"
+    }
+  ],
+  "time_per_target_s": 10
+}

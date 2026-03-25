@@ -108,3 +108,10 @@ path = "fuzz_targets/decoded_journal_metamorphic_v3.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "governance_admission_witness_v1"
+path = "fuzz_targets/governance_admission_witness_v1.rs"
+test = false
+doc = false
+bench = false

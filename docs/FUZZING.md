@@ -41,6 +41,7 @@ Example (ASDE):
 
 - `limits_bytes_v1`: fuzzes `mprd_core::limits::parse_limits_v1`
 - `candidate_preimage_v1`: fuzzes `mprd_core::validation::decode_candidate_preimage_v1`
+- `governance_admission_witness_v1`: fuzzes parity between `mprd-zk` governance gate packets, the canonical `mprd-core` governance admission constructor, and the prepared state-rail decoder
 - `receipt_deser`: fuzzes bounded receipt deserialization (`mprd_zk::bounded_deser::deserialize_receipt`)
 - `mpb_artifact_deser`: fuzzes bounded MPB artifact deserialization (`mprd_zk::bounded_deser::deserialize_mpb_artifact`)
 - `asde_voucher_trace_v1`: fuzzes ASDE voucher grant/spend trace accounting against an independent reference implementation
@@ -86,7 +87,7 @@ The tracked GitHub workflow is:
 
 A current tracked smoke receipt is checked in at:
 
-- `docs/receipts/rc1_fuzz_smoke_20260324.json`
+- `docs/receipts/rc1_fuzz_smoke_20260325.json`
 
 For future RC1 candidate cuts, rerun the same tracked campaign on the candidate commit and keep the
 new summary artifact with that cut.
