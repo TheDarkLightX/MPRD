@@ -355,6 +355,22 @@ pub fn prepare_execution_ready_from_registry_and_governance_v1<'a>(
     authorization_provider: &dyn crate::registry_state::PolicyAuthorizationProvider,
     governance_input: Option<&crate::decentralization::GovernanceGateInput>,
 ) -> mprd_core::Result<mprd_core::ExecutionReadyBundle<'a>> {
+    prepare_execution_ready_from_registry_and_governance_inner_v1(
+        verified,
+        state,
+        authorization_provider,
+        governance_input,
+        None,
+    )
+}
+
+fn prepare_execution_ready_from_registry_and_governance_inner_v1<'a>(
+    verified: mprd_core::VerifiedBundle<'a>,
+    state: &'a mprd_core::StateSnapshot,
+    authorization_provider: &dyn crate::registry_state::PolicyAuthorizationProvider,
+    governance_input: Option<&crate::decentralization::GovernanceGateInput>,
+    registry_checkpoint_attestation_hash: Option<mprd_core::Hash32>,
+) -> mprd_core::Result<mprd_core::ExecutionReadyBundle<'a>> {
     let resolution = authorization_provider
         .resolve(&verified.token().policy_hash, &verified.token().policy_ref)?;
     crate::registry_state::verify_registry_authorization_attestation_metadata_v1(
@@ -393,12 +409,19 @@ pub fn prepare_execution_ready_from_registry_and_governance_v1<'a>(
         governance.as_ref(),
     )?;
 
-    mprd_core::prepare_execution_ready_with_authorization(
+    let ready = mprd_core::prepare_execution_ready_with_authorization(
         verified,
         &authority,
         &state_binding,
         governance,
-    )
+    )?;
+    let bridge = mprd_core::execution_registry_bridge_witness_v1(
+        crate::registry_state::registry_authorization_attestation_hash_v1(&resolution),
+        registry_checkpoint_attestation_hash,
+    );
+    Ok(mprd_core::prepare_execution_ready_with_registry_bridge(
+        &ready, bridge,
+    ))
 }
 
 /// Convenience wrapper for the common production case where the registry authority surface is a
@@ -411,6 +434,10 @@ pub fn prepare_execution_ready_from_signed_registry_and_governance_v1<'a>(
     manifest_verifying_key: mprd_core::TokenVerifyingKey,
     governance_input: Option<&crate::decentralization::GovernanceGateInput>,
 ) -> mprd_core::Result<mprd_core::ExecutionReadyBundle<'a>> {
+    let expected_checkpoint_hash =
+        crate::registry_state::signed_registry_checkpoint_attestation_hash_v1(
+            &signed_registry_state,
+        );
     crate::registry_state::verify_signed_registry_checkpoint_attestation_metadata_v1(
         verified.proof(),
         &signed_registry_state,
@@ -426,11 +453,12 @@ pub fn prepare_execution_ready_from_signed_registry_and_governance_v1<'a>(
         manifest_verifying_key,
     )
     .with_required_policy_source_mapping(true);
-    prepare_execution_ready_from_registry_and_governance_v1(
+    prepare_execution_ready_from_registry_and_governance_inner_v1(
         verified,
         state,
         &authorization,
         governance_input,
+        Some(expected_checkpoint_hash),
     )
 }
 
@@ -1668,7 +1696,18 @@ mod tests {
     fn prepare_execution_ready_from_signed_registry_and_governance_accepts_aligned_inputs() {
         let (token, proof, state, governance_input, signed, registry_vk, manifest_vk) =
             ready_bridge_fixture();
+        let resolution = RegistryStatePolicyAuthorizationProvider::new(
+            Arc::new(SignedStaticRegistryStateProvider::new(
+                signed.clone(),
+                registry_vk.clone(),
+            )),
+            manifest_vk.clone(),
+        )
+        .resolve(&token.policy_hash, &token.policy_ref)
+        .expect("resolve");
         let verified = verify_bundle(&token, &proof);
+        let expected_checkpoint_hash =
+            crate::registry_state::signed_registry_checkpoint_attestation_hash_v1(&signed);
 
         let ready = prepare_execution_ready_from_signed_registry_and_governance_v1(
             verified,
@@ -1691,6 +1730,15 @@ mod tests {
                 .expect("governance")
                 .update_kind(),
             mprd_core::GovernanceUpdateKindV1::PolicyTweak
+        );
+        let bridge = ready.bridge().expect("bridge");
+        assert_eq!(
+            bridge.registry_authorization_hash(),
+            &crate::registry_state::registry_authorization_attestation_hash_v1(&resolution)
+        );
+        assert_eq!(
+            bridge.registry_checkpoint_attestation_hash(),
+            Some(&expected_checkpoint_hash)
         );
     }
 
@@ -1740,6 +1788,31 @@ mod tests {
 
         assert!(err.to_string().contains(
             "registry_auth_image_id attestation metadata drifted from registry authorization"
+        ));
+    }
+
+    #[test]
+    fn prepare_execution_ready_from_registry_and_governance_rejects_resolution_hash_drift() {
+        let (token, mut proof, state, governance_input, signed, registry_vk, manifest_vk) =
+            ready_bridge_fixture();
+        proof.attestation_metadata.insert(
+            crate::registry_state::REGISTRY_AUTH_METADATA_RESOLUTION_HASH_V1.into(),
+            hex::encode([0xAB; 32]),
+        );
+        let verified = verify_bundle(&token, &proof);
+
+        let err = prepare_execution_ready_from_signed_registry_and_governance_v1(
+            verified,
+            &state,
+            signed,
+            registry_vk,
+            manifest_vk,
+            Some(&governance_input),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains(
+            "registry_auth_resolution_hash_v1 attestation metadata drifted from registry authorization"
         ));
     }
 

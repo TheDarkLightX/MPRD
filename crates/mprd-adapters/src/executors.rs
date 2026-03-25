@@ -66,6 +66,7 @@ fn execute_payload_from_parts(
     proof: &ProofBundle,
     action_preimage: &[u8],
     governance: Option<&mprd_core::GovernanceAdmissionWitnessV1>,
+    bridge: Option<&mprd_core::ExecutionRegistryBridgeWitnessV1>,
 ) -> ExecutePayload {
     ExecutePayload {
         idempotency_key_v1: execution_idempotency_key_v1(token),
@@ -83,6 +84,11 @@ fn execute_payload_from_parts(
         token_signature_hex: hex::encode(&token.signature),
         proof_receipt_hex: hex::encode(&proof.risc0_receipt),
         proof_metadata: proof.attestation_metadata.clone(),
+        registry_authorization_hash: bridge.map(|b| hex::encode(b.registry_authorization_hash().0)),
+        registry_checkpoint_attestation_hash: bridge.and_then(|b| {
+            b.registry_checkpoint_attestation_hash()
+                .map(|hash| hex::encode(hash.0))
+        }),
         governance_update_kind: governance.map(|g| g.update_kind().as_str().to_string()),
         governance_profile_app_ok: governance.map(|g| g.profile_app_ok()),
         governance_profile_safety_ok: governance.map(|g| g.profile_safety_ok()),
@@ -95,6 +101,7 @@ fn webhook_payload_from_parts(
     proof: &ProofBundle,
     action_preimage: &[u8],
     governance: Option<&mprd_core::GovernanceAdmissionWitnessV1>,
+    bridge: Option<&mprd_core::ExecutionRegistryBridgeWitnessV1>,
 ) -> serde_json::Value {
     let mut payload = serde_json::json!({
         "event": "mprd_action_executed",
@@ -138,6 +145,22 @@ fn webhook_payload_from_parts(
             "governance_link_ok".into(),
             serde_json::Value::Bool(governance.link_ok()),
         );
+    }
+
+    if let Some(bridge) = bridge {
+        let object = payload
+            .as_object_mut()
+            .expect("webhook payload should remain an object");
+        object.insert(
+            "registry_authorization_hash".into(),
+            serde_json::Value::String(hex::encode(bridge.registry_authorization_hash().0)),
+        );
+        if let Some(checkpoint_hash) = bridge.registry_checkpoint_attestation_hash() {
+            object.insert(
+                "registry_checkpoint_attestation_hash".into(),
+                serde_json::Value::String(hex::encode(checkpoint_hash.0)),
+            );
+        }
     }
 
     payload
@@ -328,6 +351,10 @@ struct ExecutePayload {
     proof_receipt_hex: String,
     proof_metadata: HashMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    registry_authorization_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    registry_checkpoint_attestation_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     governance_update_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     governance_profile_app_ok: Option<bool>,
@@ -366,7 +393,7 @@ impl ExecutorAdapter for HttpExecutor {
         let proof = verified.proof();
         let action_preimage = require_action_preimage(verified)?;
 
-        let payload = execute_payload_from_parts(token, proof, &action_preimage, None);
+        let payload = execute_payload_from_parts(token, proof, &action_preimage, None, None);
         self.execute_payload(token, &payload)
     }
 
@@ -379,6 +406,7 @@ impl ExecutorAdapter for HttpExecutor {
             proof,
             &action_preimage,
             ready.authorization().and_then(|a| a.governance()),
+            ready.bridge(),
         );
         self.execute_payload(token, &payload)
     }
@@ -422,7 +450,7 @@ impl ExecutorAdapter for WebhookExecutor {
         let token = verified.token();
         let proof = verified.proof();
         let action_preimage = require_action_preimage(verified)?;
-        let payload = webhook_payload_from_parts(token, proof, &action_preimage, None);
+        let payload = webhook_payload_from_parts(token, proof, &action_preimage, None, None);
         let idempotency_key = execution_idempotency_key_v1(token);
 
         match self
@@ -458,6 +486,7 @@ impl ExecutorAdapter for WebhookExecutor {
             proof,
             &action_preimage,
             ready.authorization().and_then(|a| a.governance()),
+            ready.bridge(),
         );
         let idempotency_key = execution_idempotency_key_v1(token);
 
@@ -532,6 +561,10 @@ struct AuditRecord {
     token_timestamp_ms: i64,
     proof_metadata: HashMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    registry_authorization_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    registry_checkpoint_attestation_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     governance_update_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     governance_profile_app_ok: Option<bool>,
@@ -546,6 +579,7 @@ fn audit_record_from_parts(
     proof: &ProofBundle,
     action_preimage: &[u8],
     governance: Option<&mprd_core::GovernanceAdmissionWitnessV1>,
+    bridge: Option<&mprd_core::ExecutionRegistryBridgeWitnessV1>,
 ) -> AuditRecord {
     AuditRecord {
         timestamp: chrono::Utc::now().to_rfc3339(),
@@ -560,6 +594,11 @@ fn audit_record_from_parts(
         nonce_or_tx_hash: hex::encode(token.nonce_or_tx_hash.0),
         token_timestamp_ms: token.timestamp_ms,
         proof_metadata: proof.attestation_metadata.clone(),
+        registry_authorization_hash: bridge.map(|b| hex::encode(b.registry_authorization_hash().0)),
+        registry_checkpoint_attestation_hash: bridge.and_then(|b| {
+            b.registry_checkpoint_attestation_hash()
+                .map(|hash| hex::encode(hash.0))
+        }),
         governance_update_kind: governance.map(|g| g.update_kind().as_str().to_string()),
         governance_profile_app_ok: governance.map(|g| g.profile_app_ok()),
         governance_profile_safety_ok: governance.map(|g| g.profile_safety_ok()),
@@ -575,7 +614,7 @@ impl ExecutorAdapter for FileExecutor {
         let token = verified.token();
         let proof = verified.proof();
         let action_preimage = require_action_preimage(verified)?;
-        let record = audit_record_from_parts(token, proof, &action_preimage, None);
+        let record = audit_record_from_parts(token, proof, &action_preimage, None, None);
 
         let json = serde_json::to_string(&record)
             .map_err(|e| MprdError::ExecutionError(format!("Failed to serialize record: {}", e)))?;
@@ -606,6 +645,7 @@ impl ExecutorAdapter for FileExecutor {
             proof,
             &action_preimage,
             ready.authorization().and_then(|a| a.governance()),
+            ready.bridge(),
         );
 
         let json = serde_json::to_string(&record)
@@ -666,7 +706,7 @@ impl ExecutorAdapter for IdempotentFileExecutor {
         let token = verified.token();
         let proof = verified.proof();
         let action_preimage = require_action_preimage(verified)?;
-        let record = audit_record_from_parts(token, proof, &action_preimage, None);
+        let record = audit_record_from_parts(token, proof, &action_preimage, None, None);
 
         let path = self.record_path(token);
         if let Some(parent) = path.parent() {
@@ -716,6 +756,7 @@ impl ExecutorAdapter for IdempotentFileExecutor {
             proof,
             &action_preimage,
             ready.authorization().and_then(|a| a.governance()),
+            ready.bridge(),
         );
 
         let path = self.record_path(token);
@@ -1007,6 +1048,18 @@ mod tests {
         .expect("prepare_execution_ready_with_authorization")
     }
 
+    fn ready_with_governance_and_bridge<'a>(
+        token: &'a DecisionToken,
+        proof: &'a mut ProofBundle,
+    ) -> mprd_core::ExecutionReadyBundle<'a> {
+        let ready = ready_with_governance(token, proof);
+        let bridge = mprd_core::execution_registry_bridge_witness_v1(
+            Hash32([0xAA; 32]),
+            Some(Hash32([0xBB; 32])),
+        );
+        mprd_core::prepare_execution_ready_with_registry_bridge(&ready, bridge)
+    }
+
     struct CountingExecutor {
         raw_calls: Arc<AtomicUsize>,
         ready_calls: Arc<AtomicUsize>,
@@ -1068,7 +1121,7 @@ mod tests {
         let action_preimage = dummy_http_call_action_preimage();
         let expected_idempotency_key = execution_idempotency_key_v1(&token);
 
-        let payload = execute_payload_from_parts(&token, &proof, &action_preimage, None);
+        let payload = execute_payload_from_parts(&token, &proof, &action_preimage, None, None);
         assert_eq!(payload.idempotency_key_v1, expected_idempotency_key);
         assert_eq!(
             payload.state_source_id,
@@ -1090,7 +1143,7 @@ mod tests {
         let expected_state_source_id = hex::encode(token.state_ref.state_source_id.0);
         let expected_state_attestation_hash = hex::encode(token.state_ref.state_attestation_hash.0);
 
-        let payload = webhook_payload_from_parts(&token, &proof, &action_preimage, None);
+        let payload = webhook_payload_from_parts(&token, &proof, &action_preimage, None, None);
         assert_eq!(
             payload
                 .get("idempotency_key_v1")
@@ -1177,7 +1230,7 @@ mod tests {
     fn execute_ready_payload_includes_governance_provenance() {
         let token = dummy_token();
         let mut proof = dummy_proof();
-        let ready = ready_with_governance(&token, &mut proof);
+        let ready = ready_with_governance_and_bridge(&token, &mut proof);
         let action_preimage = require_ready_action_preimage(&ready);
 
         let payload = execute_payload_from_parts(
@@ -1185,6 +1238,7 @@ mod tests {
             ready.proof(),
             &action_preimage,
             ready.authorization().and_then(|a| a.governance()),
+            ready.bridge(),
         );
         assert_eq!(
             payload.governance_update_kind.as_deref(),
@@ -1193,13 +1247,21 @@ mod tests {
         assert_eq!(payload.governance_profile_app_ok, Some(true));
         assert_eq!(payload.governance_profile_safety_ok, Some(false));
         assert_eq!(payload.governance_link_ok, Some(true));
+        assert_eq!(
+            payload.registry_authorization_hash.as_deref(),
+            Some(hex::encode([0xAA; 32]).as_str())
+        );
+        assert_eq!(
+            payload.registry_checkpoint_attestation_hash.as_deref(),
+            Some(hex::encode([0xBB; 32]).as_str())
+        );
     }
 
     #[test]
     fn webhook_ready_payload_includes_governance_provenance() {
         let token = dummy_token();
         let mut proof = dummy_proof();
-        let ready = ready_with_governance(&token, &mut proof);
+        let ready = ready_with_governance_and_bridge(&token, &mut proof);
         let action_preimage = require_ready_action_preimage(&ready);
 
         let payload = webhook_payload_from_parts(
@@ -1207,6 +1269,7 @@ mod tests {
             ready.proof(),
             &action_preimage,
             ready.authorization().and_then(|a| a.governance()),
+            ready.bridge(),
         );
         assert_eq!(
             payload
@@ -1232,6 +1295,18 @@ mod tests {
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
+        assert_eq!(
+            payload
+                .get("registry_authorization_hash")
+                .and_then(serde_json::Value::as_str),
+            Some(hex::encode([0xAA; 32]).as_str())
+        );
+        assert_eq!(
+            payload
+                .get("registry_checkpoint_attestation_hash")
+                .and_then(serde_json::Value::as_str),
+            Some(hex::encode([0xBB; 32]).as_str())
+        );
     }
 
     #[test]
@@ -1243,7 +1318,7 @@ mod tests {
         let token = dummy_token();
         let mut proof = dummy_proof();
         let result = executor
-            .execute_ready(&ready_with_governance(&token, &mut proof))
+            .execute_ready(&ready_with_governance_and_bridge(&token, &mut proof))
             .unwrap();
 
         assert!(result.success);
@@ -1272,6 +1347,18 @@ mod tests {
                 .get("governance_link_ok")
                 .and_then(serde_json::Value::as_bool),
             Some(true)
+        );
+        assert_eq!(
+            record
+                .get("registry_authorization_hash")
+                .and_then(serde_json::Value::as_str),
+            Some(hex::encode([0xAA; 32]).as_str())
+        );
+        assert_eq!(
+            record
+                .get("registry_checkpoint_attestation_hash")
+                .and_then(serde_json::Value::as_str),
+            Some(hex::encode([0xBB; 32]).as_str())
         );
     }
 

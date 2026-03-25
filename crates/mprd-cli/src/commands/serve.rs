@@ -2075,6 +2075,11 @@ async fn api_decision_detail(
                 )
                 .0,
             ),
+            registry_authorization_hash: record
+                .proof
+                .attestation_metadata
+                .get(mprd_zk::registry_state::REGISTRY_AUTH_METADATA_RESOLUTION_HASH_V1)
+                .cloned(),
             registry_checkpoint_attestation_hash: record
                 .proof
                 .attestation_metadata

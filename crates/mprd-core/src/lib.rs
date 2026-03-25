@@ -248,6 +248,7 @@ pub struct ExecutionReadyBundle<'a> {
     verified: VerifiedBundle<'a>,
     boundary: ExecutionBoundaryWitnessV1,
     authorization: Option<ExecutionAuthorizationWitnessV1>,
+    bridge: Option<ExecutionRegistryBridgeWitnessV1>,
     executor_admission: Option<ExecutionExecutorAdmissionWitnessV1>,
 }
 
@@ -262,6 +263,10 @@ impl<'a> ExecutionReadyBundle<'a> {
 
     pub fn authorization(&self) -> Option<&ExecutionAuthorizationWitnessV1> {
         self.authorization.as_ref()
+    }
+
+    pub fn bridge(&self) -> Option<&ExecutionRegistryBridgeWitnessV1> {
+        self.bridge.as_ref()
     }
 
     pub fn executor_admission(&self) -> Option<&ExecutionExecutorAdmissionWitnessV1> {
@@ -421,6 +426,28 @@ impl ExecutionAuthorizationWitnessV1 {
 
     pub fn governance(&self) -> Option<&GovernanceAdmissionWitnessV1> {
         self.governance.as_ref()
+    }
+}
+
+/// Concrete signed-registry bridge witness carried into the live execute path.
+///
+/// This preserves the exact concrete registry authorization tuple and optional checkpoint binding
+/// beyond the local bridge helper, so side-effecting adapters do not have to recover those facts
+/// only from generic proof metadata.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionRegistryBridgeWitnessV1 {
+    registry_authorization_hash: Hash32,
+    registry_checkpoint_attestation_hash: Option<Hash32>,
+}
+
+impl ExecutionRegistryBridgeWitnessV1 {
+    pub fn registry_authorization_hash(&self) -> &Hash32 {
+        &self.registry_authorization_hash
+    }
+
+    pub fn registry_checkpoint_attestation_hash(&self) -> Option<&Hash32> {
+        self.registry_checkpoint_attestation_hash.as_ref()
     }
 }
 
@@ -945,6 +972,17 @@ pub fn execution_authorization_witness_v1(
     })
 }
 
+/// Construct the concrete registry-bridge witness for the live execute path.
+pub fn execution_registry_bridge_witness_v1(
+    registry_authorization_hash: Hash32,
+    registry_checkpoint_attestation_hash: Option<Hash32>,
+) -> ExecutionRegistryBridgeWitnessV1 {
+    ExecutionRegistryBridgeWitnessV1 {
+        registry_authorization_hash,
+        registry_checkpoint_attestation_hash,
+    }
+}
+
 /// Upgrade a verified bundle into an execution-ready bundle carrying the concrete boundary witness.
 pub fn prepare_execution_ready<'a>(
     verified: VerifiedBundle<'a>,
@@ -954,6 +992,7 @@ pub fn prepare_execution_ready<'a>(
         verified,
         boundary,
         authorization: None,
+        bridge: None,
         executor_admission: None,
     })
 }
@@ -973,8 +1012,19 @@ pub fn prepare_execution_ready_with_authorization<'a>(
         verified,
         boundary,
         authorization: Some(authorization),
+        bridge: None,
         executor_admission: None,
     })
+}
+
+/// Enrich an execution-ready bundle with a constructor-gated concrete registry-bridge witness.
+pub fn prepare_execution_ready_with_registry_bridge<'a>(
+    ready: &ExecutionReadyBundle<'a>,
+    bridge: ExecutionRegistryBridgeWitnessV1,
+) -> ExecutionReadyBundle<'a> {
+    let mut enriched = ready.clone();
+    enriched.bridge = Some(bridge);
+    enriched
 }
 
 /// Enrich an execution-ready bundle with a constructor-gated signature-admission witness.
@@ -1585,6 +1635,42 @@ mod tests {
             authorization.governance().map(|g| g.update_kind()),
             Some(GovernanceUpdateKindV1::PolicyTweak)
         );
+        assert!(ready.bridge().is_none());
+    }
+
+    #[test]
+    fn prepare_execution_ready_with_registry_bridge_threads_bridge_witness() {
+        let candidate = valid_http_call_candidate();
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x71),
+            policy_ref: PolicyRef {
+                policy_epoch: 1,
+                registry_root: dummy_hash(0x72),
+            },
+            state_hash: dummy_hash(0x73),
+            state_ref: StateRef::unknown(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x74),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0x75),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+
+        let ready = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).expect("ready");
+        let bridge = execution_registry_bridge_witness_v1(dummy_hash(0x76), Some(dummy_hash(0x77)));
+        let ready = prepare_execution_ready_with_registry_bridge(&ready, bridge.clone());
+
+        assert_eq!(ready.bridge(), Some(&bridge));
     }
 
     #[test]

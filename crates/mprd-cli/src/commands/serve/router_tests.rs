@@ -501,6 +501,11 @@ async fn decision_detail_reports_attestation_and_execution_authorization_hashes(
         mprd_zk::registry_state::REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1.into(),
         expected_registry_checkpoint_attestation_hash.clone(),
     );
+    let expected_registry_authorization_hash = hex::encode([0xeeu8; 32]);
+    proof.attestation_metadata.insert(
+        mprd_zk::registry_state::REGISTRY_AUTH_METADATA_RESOLUTION_HASH_V1.into(),
+        expected_registry_authorization_hash.clone(),
+    );
     let expected_execution_authorization_hash = hex::encode([0xabu8; 32]);
     proof.attestation_metadata.insert(
         mprd_core::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1.into(),
@@ -548,6 +553,10 @@ async fn decision_detail_reports_attestation_and_execution_authorization_hashes(
     assert_eq!(
         body.proof.registry_checkpoint_attestation_hash.as_deref(),
         Some(expected_registry_checkpoint_attestation_hash.as_str())
+    );
+    assert_eq!(
+        body.proof.registry_authorization_hash.as_deref(),
+        Some(expected_registry_authorization_hash.as_str())
     );
 }
 
