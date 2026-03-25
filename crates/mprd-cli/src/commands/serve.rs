@@ -1373,6 +1373,11 @@ fn validate_serve_startup_config(
     config: &super::MprdConfigFile,
     insecure_demo: bool,
 ) -> anyhow::Result<()> {
+    use mprd_core::crypto::TokenVerifyingKey;
+    use mprd_zk::registry_state::{
+        RegistryStateProvider, SignedRegistryStateV1, SignedStaticRegistryStateProvider,
+    };
+
     if insecure_demo {
         return Ok(());
     }
@@ -1391,6 +1396,21 @@ fn validate_serve_startup_config(
             "production serve startup requires configured trust anchors (registry checkpoint + signed state snapshot + keys)"
         );
     }
+
+    let registry_path = config.registry_state_path.as_ref().expect("checked above");
+    let registry_vk = TokenVerifyingKey::from_hex(
+        config
+            .registry_verifying_key_hex
+            .as_deref()
+            .expect("checked above"),
+    )?;
+    let registry_json = std::fs::read_to_string(registry_path)?;
+    let signed_registry: SignedRegistryStateV1 = serde_json::from_str(&registry_json)?;
+    let registry_provider = SignedStaticRegistryStateProvider::new(signed_registry, registry_vk);
+    RegistryStateProvider::get(&registry_provider)?;
+
+    let state_provider = load_signed_state_provider_from_config(config)?;
+    mprd_core::StateProvider::snapshot(&state_provider)?;
 
     Ok(())
 }

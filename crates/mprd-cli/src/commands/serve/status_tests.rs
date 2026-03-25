@@ -3,6 +3,12 @@ use super::{
     validate_serve_startup_config,
 };
 use crate::operator::api as op_api;
+use mprd_core::crypto::TokenSigningKey;
+use mprd_core::{Hash32, Value};
+use mprd_risc0_shared::{policy_exec_kind_mpb_id_v1, policy_exec_version_id_v1};
+use mprd_zk::manifest::{GuestImageEntryV1, GuestImageManifestV1};
+use mprd_zk::registry_state::{AuthorizedPolicyV1, RegistryStateV1, SignedRegistryStateV1};
+use std::collections::HashMap;
 
 fn health(status: op_api::HealthLevel) -> op_api::ComponentHealth {
     op_api::ComponentHealth {
@@ -23,6 +29,69 @@ fn components(
         ipfs: health(op_api::HealthLevel::Healthy),
         risc0: health(risc0),
         executor: health(executor),
+    }
+}
+
+fn valid_trustless_serve_config(tmp: &tempfile::TempDir) -> super::super::MprdConfigFile {
+    let registry_key = TokenSigningKey::from_seed(&[0x21; 32]);
+    let state_key = TokenSigningKey::from_seed(&[0x22; 32]);
+
+    let registry_path = tmp.path().join("registry_state.json");
+    let state_path = tmp.path().join("signed_state.json");
+
+    let manifest = GuestImageManifestV1::sign(
+        &registry_key,
+        1,
+        vec![GuestImageEntryV1 {
+            policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
+            policy_exec_version_id: policy_exec_version_id_v1(),
+            image_id: [7u8; 32],
+        }],
+    )
+    .expect("manifest");
+    let registry = SignedRegistryStateV1::sign(
+        &registry_key,
+        2,
+        RegistryStateV1 {
+            policy_epoch: 1,
+            registry_root: Hash32([9u8; 32]),
+            authorized_policies: vec![AuthorizedPolicyV1 {
+                policy_hash: Hash32([3u8; 32]),
+                policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
+                policy_exec_version_id: policy_exec_version_id_v1(),
+                policy_source_kind_id: None,
+                policy_source_hash: None,
+            }],
+            guest_image_manifest: manifest,
+        },
+    )
+    .expect("signed registry");
+    std::fs::write(
+        &registry_path,
+        serde_json::to_vec_pretty(&registry).expect("serialize registry"),
+    )
+    .expect("write registry");
+
+    let signed_state = mprd_core::state_provenance::SignedStateSnapshotV1::sign(
+        &state_key,
+        42,
+        HashMap::from([("balance".into(), Value::UInt(100))]),
+        HashMap::new(),
+    )
+    .expect("signed state");
+    std::fs::write(
+        &state_path,
+        serde_json::to_vec_pretty(&signed_state).expect("serialize state"),
+    )
+    .expect("write state");
+
+    super::super::MprdConfigFile {
+        mode: "trustless".into(),
+        registry_state_path: Some(registry_path),
+        registry_verifying_key_hex: Some(hex::encode(registry_key.verifying_key().to_bytes())),
+        state_snapshot_path: Some(state_path),
+        state_verifying_key_hex: Some(hex::encode(state_key.verifying_key().to_bytes())),
+        ..super::super::MprdConfigFile::default()
     }
 }
 
@@ -216,22 +285,32 @@ fn serve_startup_validation_rejects_trustless_mode_without_full_state_anchors() 
 #[test]
 fn serve_startup_validation_accepts_trustless_mode_with_full_state_anchors() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
-    let registry_path = tmp.path().join("registry_state.json");
-    let state_path = tmp.path().join("signed_state.json");
-    std::fs::write(&registry_path, b"{}").expect("write registry");
-    std::fs::write(&state_path, b"{}").expect("write state");
-
-    let config = super::super::MprdConfigFile {
-        mode: "trustless".into(),
-        registry_state_path: Some(registry_path),
-        registry_verifying_key_hex: Some("00".into()),
-        state_snapshot_path: Some(state_path),
-        state_verifying_key_hex: Some("11".into()),
-        ..super::super::MprdConfigFile::default()
-    };
+    let config = valid_trustless_serve_config(&tmp);
 
     validate_serve_startup_config(&config, false)
         .expect("full trust anchors should allow trustless serve startup");
+}
+
+#[test]
+fn serve_startup_validation_rejects_invalid_signed_state_snapshot() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let config = valid_trustless_serve_config(&tmp);
+    let state_path = config
+        .state_snapshot_path
+        .clone()
+        .expect("state snapshot path");
+    std::fs::write(&state_path, b"{\"version\":999}").expect("overwrite invalid state");
+
+    let err = validate_serve_startup_config(&config, false)
+        .expect_err("startup must fail closed on invalid signed state snapshot");
+    assert!(
+        err.to_string()
+            .contains("Invalid signed state snapshot JSON")
+            || err
+                .to_string()
+                .contains("unsupported signed snapshot version"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
