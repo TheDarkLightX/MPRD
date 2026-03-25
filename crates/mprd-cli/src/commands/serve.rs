@@ -1425,7 +1425,11 @@ fn validate_serve_startup_config(
 
     let state_provider = load_signed_state_provider_from_config(config)?;
     mprd_core::StateProvider::snapshot(&state_provider)?;
-    build_production_core_config(config)?;
+    let core_config = build_production_core_config(config)?;
+    let _ = mprd_core::components::wrap_executor_with_guards(
+        Box::new(mprd_core::components::LoggingExecutorAdapter::new()),
+        &core_config,
+    )?;
 
     if trustless {
         let artifacts_dir = config

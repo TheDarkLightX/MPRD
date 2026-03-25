@@ -406,6 +406,26 @@ fn serve_startup_validation_rejects_missing_persistent_nonce_store() {
 }
 
 #[test]
+fn serve_startup_validation_rejects_unusable_persistent_nonce_store() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut config = valid_trustless_serve_config(&tmp);
+    let nonce_store_path = tmp.path().join("nonce-store-file");
+    std::fs::write(&nonce_store_path, b"not a directory").expect("write blocking file");
+    config.anti_replay = Some(super::super::AntiReplayConfig {
+        nonce_store_dir: Some(nonce_store_path),
+    });
+
+    let err = validate_serve_startup_config(&config, false)
+        .expect_err("startup must fail closed when persistent anti-replay cannot initialize");
+    assert!(
+        err.to_string().contains("Failed to create nonce_store_dir")
+            || err.to_string().contains("Not a directory")
+            || err.to_string().contains("File exists"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn retention_update_rejects_retention_days_that_overflow_ms() {
     let per_day_ms = 24u128 * 60 * 60 * 1000;
     let max_days = (i64::MAX as u128) / per_day_ms;
