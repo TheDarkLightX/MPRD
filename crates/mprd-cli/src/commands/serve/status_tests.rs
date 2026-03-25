@@ -1,6 +1,6 @@
 use super::{
-    compute_system_status, select_production_serve_policy, trust_anchors_configured_with,
-    validate_retention_update, validate_serve_startup_config,
+    compute_system_status, executor_component_health, select_production_serve_policy,
+    trust_anchors_configured_with, validate_retention_update, validate_serve_startup_config,
 };
 use crate::operator::api as op_api;
 use mprd_core::crypto::TokenSigningKey;
@@ -380,6 +380,17 @@ fn serve_startup_validation_accepts_trustless_mode_with_full_state_anchors() {
 }
 
 #[test]
+fn serve_startup_validation_accepts_trustless_mode_with_idempotent_file_executor() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut config = valid_trustless_serve_config(&tmp);
+    config.execution.executor_type = "idempotent_file".into();
+    config.execution.audit_file = Some(tmp.path().join("audit_root"));
+
+    validate_serve_startup_config(&config, false)
+        .expect("trustless serve should accept idempotent file executor");
+}
+
+#[test]
 fn serve_startup_validation_rejects_invalid_signed_state_snapshot() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let config = valid_trustless_serve_config(&tmp);
@@ -449,6 +460,41 @@ fn serve_startup_validation_rejects_missing_required_policy_source_mapping() {
         err.to_string()
             .contains("authorized policy missing required policy_source mapping"),
         "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn serve_startup_validation_rejects_plain_file_executor_in_trustless_mode() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut config = valid_trustless_serve_config(&tmp);
+    config.execution.executor_type = "file".into();
+    config.execution.audit_file = Some(tmp.path().join("audit.jsonl"));
+
+    let err = validate_serve_startup_config(&config, false)
+        .expect_err("trustless serve must reject non-idempotent file executor");
+    assert!(
+        err.to_string()
+            .contains("requires execution.executor_type=idempotent_file"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn executor_component_health_reports_idempotent_file_root() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut config = super::super::MprdConfigFile::default();
+    config.execution.executor_type = "idempotent_file".into();
+    config.execution.audit_file = Some(tmp.path().join("audit_root"));
+
+    let health = executor_component_health(&config);
+    assert!(matches!(health.status, op_api::HealthLevel::Healthy));
+    assert!(
+        health
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("idempotent audit root:")),
+        "unexpected health message: {:?}",
+        health.message
     );
 }
 

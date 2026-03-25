@@ -504,7 +504,8 @@ async fn run_handler(
 
              // Inner executor selection (side effects):
              // - `noop` => logs only
-             // - `file` => append-only JSONL audit sink
+             // - `file` => append-only JSONL audit sink (local/demo only)
+             // - `idempotent_file` => one-record-per-idempotency-key file sink
              // - `http` => POST to an external executor service (must be idempotent)
              let executor_typ = config.execution.executor_type.trim().to_ascii_lowercase();
              let inner_executor: Box<dyn mprd_core::ExecutorAdapter + Send + Sync> =
@@ -517,6 +518,15 @@ async fn run_handler(
                              )
                          })?;
                          Box::new(mprd_adapters::executors::FileExecutor::new(path)?)
+                     }
+                     "idempotent_file" => {
+                         let path = config.execution.audit_file.clone().ok_or_else(|| {
+                             mprd_core::MprdError::ConfigError(
+                                 "executor_type=idempotent_file requires execution.audit_file"
+                                     .into(),
+                             )
+                         })?;
+                         Box::new(mprd_adapters::executors::IdempotentFileExecutor::new(path)?)
                      }
                      "http" => {
                          let url = config.execution.http_url.clone().ok_or_else(|| {
@@ -534,7 +544,7 @@ async fn run_handler(
                      }
                      other => {
                          return Err(mprd_core::MprdError::ConfigError(format!(
-                             "unknown executor_type: {other} (expected noop|file|http)"
+                             "unknown executor_type: {other} (expected noop|file|idempotent_file|http)"
                          )))
                      }
                  };
@@ -1354,6 +1364,24 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                 message: Some(format!("audit file: {}", path.display())),
             }
         }
+        "idempotent_file" => {
+            let Some(path) = config.execution.audit_file.as_ref() else {
+                return op_api::ComponentHealth {
+                    status: op_api::HealthLevel::Degraded,
+                    version: None,
+                    last_check: now,
+                    message: Some(
+                        "idempotent_file executor selected but audit_file not configured".into(),
+                    ),
+                };
+            };
+            op_api::ComponentHealth {
+                status: op_api::HealthLevel::Healthy,
+                version: None,
+                last_check: now,
+                message: Some(format!("idempotent audit root: {}", path.display())),
+            }
+        }
         other => op_api::ComponentHealth {
             status: op_api::HealthLevel::Degraded,
             version: None,
@@ -1453,6 +1481,38 @@ fn validate_serve_startup_config(
     )?;
 
     if trustless {
+        let executor_typ = config.execution.executor_type.trim().to_ascii_lowercase();
+        match executor_typ.as_str() {
+            "noop" => {}
+            "http" => {
+                let url = config.execution.http_url.clone().ok_or_else(|| {
+                    anyhow::anyhow!("executor_type=http requires execution.http_url")
+                })?;
+                let http_cfg = mprd_adapters::executors::HttpExecutorConfig {
+                    base_url: url,
+                    api_key: None,
+                    ..Default::default()
+                };
+                let _ = mprd_adapters::executors::HttpExecutor::new(http_cfg)?;
+            }
+            "idempotent_file" => {
+                let path = config.execution.audit_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!("executor_type=idempotent_file requires execution.audit_file")
+                })?;
+                let _ = mprd_adapters::executors::IdempotentFileExecutor::new(path)?;
+            }
+            "file" => {
+                anyhow::bail!(
+                    "trustless/private production serve requires execution.executor_type=idempotent_file for file-based side effects"
+                );
+            }
+            other => {
+                anyhow::bail!(
+                    "unknown executor_type: {other} (expected noop|file|idempotent_file|http)"
+                );
+            }
+        }
+
         let artifacts_dir = config
             .policy_artifacts_dir
             .clone()

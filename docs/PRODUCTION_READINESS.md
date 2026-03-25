@@ -87,6 +87,11 @@ status; the RC1 board separates automated green gates from still-open Tier-0 rel
   downstream services can enforce retry idempotence without re-deriving the key
   ad hoc. The remaining gap is still deployment-time enforcement by those
   downstream systems and full end-to-end at-most-once closure.
+- **Production file-side-effect sink is idempotent (SHOULD)**: trustless/private
+  `mprd serve` now rejects the plain append-only `file` executor and requires
+  `execution.executor_type = "idempotent_file"` for file-backed side effects,
+  so the shipped production file path uses the per-nonce durable audit sink
+  instead of a non-idempotent JSONL append log.
 - **Mode C minimized trust**: Mode C currently gives a strong private-boundary verification surface, but it is not full minimized trust yet because the prover or operator still sees plaintext and governance, registry authority, and source mapping remain part of the trust root.
 - **Persistent anti-replay is deployed**: configure `anti_replay.nonce_store_dir` in production deployments (not just the in-repo option).
 - **Persistent anti-replay is deployed**:

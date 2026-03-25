@@ -57,6 +57,7 @@ These gates are necessary, but not sufficient, for RC1.
 - Global at-most-once execution across crash and partition scenarios is not yet a shipped end-to-end theorem.
   - Narrowed: the tracked replay-model series now includes a crash-ordering effect-finalization packet, so the safety story no longer stops at replay ownership or visibility alone. The model shows that if a durable effect-commit barrier survives crash and retry, late nonce finalization can still complete without a second external effect emission.
   - Narrowed further: the shipped HTTP, webhook, and audit executor surfaces now all emit the same deterministic `execution_idempotency_key_v1` derived from the policy/state/action/nonce tuple, so downstream services no longer have to reconstruct that tuple ad hoc to enforce retry idempotence.
+  - Narrowed further: trustless/private production `mprd serve` now rejects the plain append-only `file` executor and requires the per-nonce `idempotent_file` sink for file-based side effects, so the shipped production file path no longer advertises a local side-effect mode that cannot act as a retry barrier.
   - Current state: this still needs tighter runtime and deployment closure before it becomes a shipped end-to-end theorem.
 
 ### Tier 1: Operational / Policy Admission

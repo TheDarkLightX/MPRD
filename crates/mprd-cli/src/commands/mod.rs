@@ -76,13 +76,13 @@ pub struct PolicyStorageConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExecutionConfig {
-    /// Executor type: noop, http, file.
+    /// Executor type: noop, http, file, idempotent_file.
     pub executor_type: String,
 
     /// HTTP executor URL.
     pub http_url: Option<String>,
 
-    /// File executor path.
+    /// File executor path or idempotent file executor root.
     pub audit_file: Option<PathBuf>,
 }
 
