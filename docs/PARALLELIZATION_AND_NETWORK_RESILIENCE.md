@@ -68,7 +68,7 @@ The tracked RC1 replay script and receipt for the current model series are:
 - `docs/receipts/rc1_network_replay_20260325.json`
 - `.github/workflows/network-replay.yml`
 
-The current receipt is green across 11 tracked safety models:
+The current receipt is green across 12 tracked safety models:
 
 - `serial_commit_network_barrier`: 1,274 distinct states, depth 12
 - `distributed_replay_claim_barrier`: 63 distinct states, depth 7
@@ -81,6 +81,7 @@ The current receipt is green across 11 tracked safety models:
 - `distributed_replay_equivocation_recovery_barrier`: 132 distinct states, depth 9
 - `distributed_replay_hidden_equivocation_barrier`: 250 distinct states, depth 13
 - `distributed_effect_finalization_barrier`: 38 distinct states, depth 10
+- `idempotent_http_effect_barrier`: 17 distinct states, depth 7
 
 Replay command:
 
@@ -541,6 +542,48 @@ java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
   -deadlock \
   -config distributed_effect_finalization_barrier.cfg \
   distributed_effect_finalization_barrier
+```
+
+The next tracked replay surface narrows that runtime story to the shipped
+adapter-facing HTTP barrier:
+
+- `docs/specs/idempotent_http_effect_barrier.tla`
+- `docs/specs/idempotent_http_effect_barrier.cfg`
+
+It is still intentionally narrow. It models one initiator attempt, one retry
+attempt, a local pending marker written before remote execution, and a local
+committed marker written only after acknowledged success. It proves the safety
+shape:
+
+- at most one remote effect can be emitted
+- retries fail closed instead of emitting a second remote effect while the
+  pending marker is unresolved
+- once the committed marker exists, retries short-circuit idempotently instead
+  of crossing the remote execute boundary again
+
+Modeling assumptions:
+
+- the local pending marker is durable before the remote attempt begins
+- retries check the same local journal before any remote attempt
+- acknowledged success is the only path that promotes pending to committed
+- this packet is safety-only and does not prove manual recovery or liveness
+
+What it still does not prove:
+
+- that every deployed remote executor honors the same idempotency key
+- end-to-end exactly-once behavior across partitions or cross-service races
+- webhook or other non-HTTP effect surfaces
+- operator recovery policy for long-lived pending barriers
+
+Replay command:
+
+```bash
+cd docs/specs
+java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
+  -cleanup \
+  -deadlock \
+  -config idempotent_http_effect_barrier.cfg \
+  idempotent_http_effect_barrier
 ```
 
 ## Mode C

@@ -95,7 +95,9 @@ status; the RC1 board separates automated green gates from still-open Tier-0 rel
   `execution.effect_journal_dir`, so the shipped production HTTP path carries a
   local pending/committed barrier keyed by `execution_idempotency_key_v1`
   instead of advertising raw retryable remote side effects with no local crash
-  barrier.
+  barrier. The tracked replay series now also includes a narrow
+  `idempotent_http_effect_barrier` packet that models the same safety shape for
+  one initiator attempt and one retry attempt.
 - **Production file-side-effect sink is idempotent (SHOULD)**: trustless/private
   `mprd serve` now rejects the plain append-only `file` executor and requires
   `execution.executor_type = "idempotent_file"` for file-backed side effects,
