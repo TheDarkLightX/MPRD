@@ -28,7 +28,7 @@ These gates are necessary, but not sufficient, for RC1.
   - Needed: constructor-gated witness chain from runtime objects into the execution boundary packet.
 - Governance-to-execution closure is still incomplete.
   - Narrowed: prepared state rails in `mprd-core` and concrete `GovernanceGateInput` packets in `mprd-zk` now share one constructor-gated governance admission rule, and the live `attest_ready -> verify -> execute_ready` path now fails closed if attestors drop or drift that admitted governance metadata before execution.
-  - Narrowed further: verified artifact-repo production-profile commits now have a constructor-gated bridge into the shipped registry-bound proving helpers, so `policy_ref` and the signed registry checkpoint no longer have to be re-derived from loose commit fields by convention.
+  - Narrowed further: verified artifact-repo production-profile commits now have a constructor-gated bridge into the shipped registry-bound attestor and verifier helpers, so `policy_ref` and the signed registry checkpoint no longer have to be re-derived from loose commit fields by convention on either side of the production pair.
   - Needed: replayable refinement from concrete registry and governance objects into the live execution authorization packet, not just a shared admission constructor.
 - Tau source to compiled artifact semantic equivalence is still open.
   - Current state: provenance and artifact witness are strong; compiler equivalence is not proved.

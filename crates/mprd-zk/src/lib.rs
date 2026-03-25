@@ -310,6 +310,26 @@ pub fn create_registry_bound_tau_compiled_v1_attestor_from_verified_repo_commit<
     Ok((policy_ref, attestor))
 }
 
+/// Create a production verifier from a verified artifact-repo commit.
+///
+/// This is a constructor-gated bridge from the concrete artifact-repo production profile into the
+/// shipped registry-bound production verifier.
+pub fn create_production_verifier_from_verified_repo_commit(
+    verified_commit: &crate::artifact_repo_integration::VerifiedRepoCommitV1,
+    registry_state_verifying_key: &mprd_core::TokenVerifyingKey,
+    manifest_verifying_key: &mprd_core::TokenVerifyingKey,
+) -> mprd_core::Result<Box<dyn mprd_core::ZkLocalVerifier>> {
+    let signed_registry_state =
+        crate::artifact_repo_integration::signed_registry_state_from_verified_repo_commit(
+            verified_commit,
+        )?;
+    create_production_verifier_from_signed_registry_state_with_manifest_key(
+        signed_registry_state,
+        registry_state_verifying_key,
+        manifest_verifying_key,
+    )
+}
+
 /// Create registry-bound mpb-v1 attestor + verifier from a signed registry checkpoint.
 ///
 /// This is the safest wiring for production deployments:
@@ -372,6 +392,70 @@ pub fn create_registry_bound_tau_compiled_v1_attestor_and_verifier_from_signed_r
         &manifest_verifying_key,
     )?;
 
+    Ok((policy_ref, attestor, verifier))
+}
+
+/// Create registry-bound mpb-v1 attestor + verifier from a verified artifact-repo commit.
+pub fn create_registry_bound_mpb_v1_attestor_and_verifier_from_verified_repo_commit<
+    S: PolicyArtifactStore + 'static,
+>(
+    verified_commit: &crate::artifact_repo_integration::VerifiedRepoCommitV1,
+    registry_state_verifying_key: mprd_core::TokenVerifyingKey,
+    manifest_verifying_key: mprd_core::TokenVerifyingKey,
+    store: S,
+    mpb_fuel_limit: u32,
+) -> mprd_core::Result<RegistryBoundAttestorAndVerifier> {
+    let policy_ref =
+        crate::artifact_repo_integration::policy_ref_from_verified_repo_commit(verified_commit)?;
+    let (derived_ref, attestor) = create_registry_bound_mpb_v1_attestor_from_verified_repo_commit(
+        verified_commit,
+        registry_state_verifying_key.clone(),
+        manifest_verifying_key.clone(),
+        store,
+        mpb_fuel_limit,
+    )?;
+    if derived_ref != policy_ref {
+        return Err(mprd_core::MprdError::ZkError(
+            "verified repo commit policy_ref drifted inside registry-bound mpb pair factory".into(),
+        ));
+    }
+    let verifier = create_production_verifier_from_verified_repo_commit(
+        verified_commit,
+        &registry_state_verifying_key,
+        &manifest_verifying_key,
+    )?;
+    Ok((policy_ref, attestor, verifier))
+}
+
+/// Create registry-bound tau_compiled_v1 attestor + verifier from a verified artifact-repo commit.
+pub fn create_registry_bound_tau_compiled_v1_attestor_and_verifier_from_verified_repo_commit<
+    S: PolicyArtifactStore + 'static,
+>(
+    verified_commit: &crate::artifact_repo_integration::VerifiedRepoCommitV1,
+    registry_state_verifying_key: mprd_core::TokenVerifyingKey,
+    manifest_verifying_key: mprd_core::TokenVerifyingKey,
+    store: S,
+) -> mprd_core::Result<RegistryBoundAttestorAndVerifier> {
+    let policy_ref =
+        crate::artifact_repo_integration::policy_ref_from_verified_repo_commit(verified_commit)?;
+    let (derived_ref, attestor) =
+        create_registry_bound_tau_compiled_v1_attestor_from_verified_repo_commit(
+            verified_commit,
+            registry_state_verifying_key.clone(),
+            manifest_verifying_key.clone(),
+            store,
+        )?;
+    if derived_ref != policy_ref {
+        return Err(mprd_core::MprdError::ZkError(
+            "verified repo commit policy_ref drifted inside registry-bound tau_compiled pair factory"
+                .into(),
+        ));
+    }
+    let verifier = create_production_verifier_from_verified_repo_commit(
+        verified_commit,
+        &registry_state_verifying_key,
+        &manifest_verifying_key,
+    )?;
     Ok((policy_ref, attestor, verifier))
 }
 
@@ -936,15 +1020,24 @@ impl ZkLocalVerifier for Risc0ZkLocalVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::artifact_repo_integration::verify_repo_commit_production_profile;
     use crate::manifest::{GuestImageEntryV1, GuestImageManifestV1};
     use crate::policy_fetch::InMemoryPolicyArtifactStore;
     use crate::registry_state::{AuthorizedPolicyV1, RegistryStateV1, SignedRegistryStateV1};
+    use mprd_core::artifact_repo::commit::CommitFields;
+    use mprd_core::artifact_repo::{
+        create_signed_commit_with_token_key, encode_blob, mst_insert, BlockStore, Key,
+        MemoryBlockStore, TrustAnchors, KEY_MANIFEST_GUEST_IMAGE_MANIFEST_V1,
+        KEY_REGISTRY_POLICY_EPOCH, KEY_REGISTRY_REGISTRY_ROOT,
+        KEY_REGISTRY_SIGNED_REGISTRY_STATE_V2,
+    };
     use mprd_core::Hash32;
     use mprd_core::PolicyRef;
-    use mprd_core::{CandidateAction, Score, Value};
+    use mprd_core::{CandidateAction, Score, TokenSigningKey, Value};
     use mprd_risc0_shared::{
         policy_exec_kind_mpb_id_v1, policy_exec_kind_tau_compiled_id_v1, policy_exec_version_id_v1,
     };
+    use sha2::{Digest, Sha256};
     use std::collections::HashMap;
 
     fn dummy_hash(byte: u8) -> Hash32 {
@@ -1005,6 +1098,136 @@ mod tests {
             score: Score(1),
             candidate_hash: dummy_hash(0x55),
         }
+    }
+
+    fn build_verified_repo_commit_for_exec_kind(
+        exec_kind_id: [u8; 32],
+        policy_hash: Hash32,
+    ) -> (
+        crate::artifact_repo_integration::VerifiedRepoCommitV1,
+        mprd_core::TokenVerifyingKey,
+        mprd_core::TokenVerifyingKey,
+        PolicyRef,
+    ) {
+        let store = MemoryBlockStore::new();
+
+        let commit_signer = TokenSigningKey::from_seed(&[0x61; 32]);
+        let manifest_signer = TokenSigningKey::from_seed(&[0x62; 32]);
+        let registry_signer = TokenSigningKey::from_seed(&[0x63; 32]);
+
+        let commit_pub = commit_signer.verifying_key().to_bytes();
+        let manifest_pub = manifest_signer.verifying_key().to_bytes();
+        let registry_pub = registry_signer.verifying_key().to_bytes();
+
+        let trust_anchors = TrustAnchors::new()
+            .with_commit_signer(commit_pub)
+            .with_manifest_signer(manifest_pub)
+            .with_registry_checkpoint_signer(registry_pub);
+
+        let policy_epoch = 7u64;
+        let registry_root = Hash32([0x39; 32]);
+
+        let entries = vec![GuestImageEntryV1 {
+            policy_exec_kind_id: exec_kind_id,
+            policy_exec_version_id: policy_exec_version_id_v1(),
+            image_id: [0x71; 32],
+        }];
+        let manifest =
+            GuestImageManifestV1::sign(&manifest_signer, 123, entries).expect("manifest sign");
+        let manifest_json = serde_json::to_vec(&manifest).expect("manifest json");
+        let manifest_signing = manifest.signing_bytes_v1().expect("manifest signing bytes");
+        let manifest_digest =
+            mprd_core::artifact_repo::Id32(Sha256::digest(&manifest_signing).into());
+
+        let state = RegistryStateV1 {
+            policy_epoch,
+            registry_root,
+            authorized_policies: vec![AuthorizedPolicyV1 {
+                policy_hash,
+                policy_exec_kind_id: exec_kind_id,
+                policy_exec_version_id: policy_exec_version_id_v1(),
+                policy_source_kind_id: None,
+                policy_source_hash: None,
+            }],
+            guest_image_manifest: manifest.clone(),
+        };
+        let signed_registry =
+            SignedRegistryStateV1::sign(&registry_signer, 456, state).expect("registry sign");
+        let signed_registry_json = serde_json::to_vec(&signed_registry).expect("registry json");
+
+        let epoch_blob = encode_blob(&policy_epoch.to_le_bytes()).unwrap();
+        let epoch_id = mprd_core::artifact_repo::compute_block_id(&epoch_blob);
+        store.put(epoch_id, epoch_blob).unwrap();
+
+        let rr_blob = encode_blob(&registry_root.0).unwrap();
+        let rr_id = mprd_core::artifact_repo::compute_block_id(&rr_blob);
+        store.put(rr_id, rr_blob).unwrap();
+
+        let manifest_blob = encode_blob(&manifest_json).unwrap();
+        let manifest_id = mprd_core::artifact_repo::compute_block_id(&manifest_blob);
+        store.put(manifest_id, manifest_blob).unwrap();
+
+        let reg_blob = encode_blob(&signed_registry_json).unwrap();
+        let reg_id = mprd_core::artifact_repo::compute_block_id(&reg_blob);
+        store.put(reg_id, reg_blob).unwrap();
+
+        let mut root = mst_insert(&store, None, &Key::new(KEY_REGISTRY_POLICY_EPOCH), epoch_id)
+            .expect("insert epoch");
+        root = mst_insert(
+            &store,
+            Some(root),
+            &Key::new(KEY_REGISTRY_REGISTRY_ROOT),
+            rr_id,
+        )
+        .expect("insert registry root");
+        root = mst_insert(
+            &store,
+            Some(root),
+            &Key::new(KEY_MANIFEST_GUEST_IMAGE_MANIFEST_V1),
+            manifest_id,
+        )
+        .expect("insert manifest");
+        root = mst_insert(
+            &store,
+            Some(root),
+            &Key::new(KEY_REGISTRY_SIGNED_REGISTRY_STATE_V2),
+            reg_id,
+        )
+        .expect("insert signed registry");
+
+        let (commit_id, commit_bytes) = create_signed_commit_with_token_key(
+            CommitFields {
+                repo_version: 1,
+                prev_commit: mprd_core::artifact_repo::Id32::ZERO,
+                commit_height: 1,
+                repo_root: root,
+                policy_epoch,
+                registry_root: mprd_core::artifact_repo::Id32(registry_root.0),
+                manifest_digest,
+                signed_at_ms: 999,
+            },
+            &commit_signer,
+        );
+        store.put(commit_id, commit_bytes.clone()).unwrap();
+
+        let verified = verify_repo_commit_production_profile(
+            &store,
+            commit_id,
+            &commit_bytes,
+            trust_anchors,
+            10_000,
+        )
+        .expect("verify");
+
+        (
+            verified,
+            registry_signer.verifying_key(),
+            manifest_signer.verifying_key(),
+            PolicyRef {
+                policy_epoch,
+                registry_root,
+            },
+        )
     }
 
     #[test]
@@ -1175,5 +1398,45 @@ mod tests {
         assert!(
             matches!(err, MprdError::InvalidInput(message) if message == "authorized policy missing required policy_source mapping")
         );
+    }
+
+    #[test]
+    fn verified_repo_commit_mpb_pair_factory_preserves_policy_ref() {
+        let policy_hash = dummy_hash(0x41);
+        let (verified, registry_vk, manifest_vk, expected_ref) =
+            build_verified_repo_commit_for_exec_kind(policy_exec_kind_mpb_id_v1(), policy_hash);
+
+        let (policy_ref, _attestor, _verifier) =
+            create_registry_bound_mpb_v1_attestor_and_verifier_from_verified_repo_commit(
+                &verified,
+                registry_vk,
+                manifest_vk,
+                InMemoryPolicyArtifactStore::default(),
+                100,
+            )
+            .expect("pair");
+
+        assert_eq!(policy_ref, expected_ref);
+    }
+
+    #[test]
+    fn verified_repo_commit_tau_pair_factory_preserves_policy_ref() {
+        let policy_hash = dummy_hash(0x51);
+        let (verified, registry_vk, manifest_vk, expected_ref) =
+            build_verified_repo_commit_for_exec_kind(
+                policy_exec_kind_tau_compiled_id_v1(),
+                policy_hash,
+            );
+
+        let (policy_ref, _attestor, _verifier) =
+            create_registry_bound_tau_compiled_v1_attestor_and_verifier_from_verified_repo_commit(
+                &verified,
+                registry_vk,
+                manifest_vk,
+                InMemoryPolicyArtifactStore::default(),
+            )
+            .expect("pair");
+
+        assert_eq!(policy_ref, expected_ref);
     }
 }
