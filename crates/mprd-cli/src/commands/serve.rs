@@ -1385,6 +1385,7 @@ fn validate_serve_startup_config(
 ) -> anyhow::Result<()> {
     use mprd_core::crypto::TokenVerifyingKey;
     use mprd_zk::registry_state::{
+        PolicyAuthorizationProvider, RegistryStatePolicyAuthorizationProvider,
         RegistryStateProvider, SignedRegistryStateV1, SignedStaticRegistryStateProvider,
     };
 
@@ -1420,8 +1421,10 @@ fn validate_serve_startup_config(
     )?;
     let registry_json = std::fs::read_to_string(registry_path)?;
     let signed_registry: SignedRegistryStateV1 = serde_json::from_str(&registry_json)?;
-    let registry_provider = SignedStaticRegistryStateProvider::new(signed_registry, registry_vk);
-    RegistryStateProvider::get(&registry_provider)?;
+    let registry_provider: Arc<dyn RegistryStateProvider> = Arc::new(
+        SignedStaticRegistryStateProvider::new(signed_registry.clone(), registry_vk.clone()),
+    );
+    let state = RegistryStateProvider::get(registry_provider.as_ref())?;
 
     let state_provider = load_signed_state_provider_from_config(config)?;
     mprd_core::StateProvider::snapshot(&state_provider)?;
@@ -1444,6 +1447,35 @@ fn validate_serve_startup_config(
                 .expect("checked above"),
             None,
             artifacts_dir,
+        )?;
+
+        let policy_ref = mprd_core::PolicyRef {
+            policy_epoch: state.policy_epoch,
+            registry_root: state.registry_root,
+        };
+        let authorization = RegistryStatePolicyAuthorizationProvider::new(
+            Arc::clone(&registry_provider),
+            registry_vk.clone(),
+        )
+        .with_required_policy_source_mapping(true);
+        for authorized in &state.authorized_policies {
+            authorization.resolve(&authorized.policy_hash, &policy_ref)?;
+        }
+
+        let artifact_store = mprd_zk::policy_fetch::DirPolicyArtifactStore::new(
+            config.policy_artifacts_dir.clone().expect("checked above"),
+        );
+        let _ = mprd_zk::create_registry_bound_mpb_v1_attestor_from_signed_registry_state(
+            signed_registry.clone(),
+            registry_vk.clone(),
+            registry_vk.clone(),
+            artifact_store,
+            mprd_risc0_shared::MPB_FUEL_LIMIT_V1,
+        )?;
+        let _ = mprd_zk::create_production_verifier_from_signed_registry_state_with_manifest_key(
+            signed_registry,
+            &registry_vk,
+            &registry_vk,
         )?;
     }
 

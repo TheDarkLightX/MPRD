@@ -87,8 +87,8 @@ fn valid_trustless_serve_config(tmp: &tempfile::TempDir) -> super::super::MprdCo
                 policy_hash,
                 policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
                 policy_exec_version_id: policy_exec_version_id_v1(),
-                policy_source_kind_id: None,
-                policy_source_hash: None,
+                policy_source_kind_id: Some([0x31u8; 32]),
+                policy_source_hash: Some(Hash32([0x41u8; 32])),
             }],
             guest_image_manifest: manifest,
         },
@@ -370,6 +370,37 @@ fn serve_startup_validation_rejects_missing_policy_artifact_bundle() {
     assert!(
         err.to_string().contains("missing policy artifact file")
             || err.to_string().contains("MissingPolicyArtifact"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn serve_startup_validation_rejects_missing_required_policy_source_mapping() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let config = valid_trustless_serve_config(&tmp);
+    let registry_path = config.registry_state_path.clone().expect("registry path");
+    let registry_json = std::fs::read_to_string(&registry_path).expect("read registry");
+    let mut signed: SignedRegistryStateV1 =
+        serde_json::from_str(&registry_json).expect("parse signed registry");
+    signed.state.authorized_policies[0].policy_source_kind_id = None;
+    signed.state.authorized_policies[0].policy_source_hash = None;
+    let resigned = SignedRegistryStateV1::sign(
+        &TokenSigningKey::from_seed(&[0x21; 32]),
+        signed.signed_at_ms,
+        signed.state,
+    )
+    .expect("re-sign registry");
+    std::fs::write(
+        &registry_path,
+        serde_json::to_vec_pretty(&resigned).expect("serialize registry"),
+    )
+    .expect("rewrite registry");
+
+    let err = validate_serve_startup_config(&config, false)
+        .expect_err("startup must fail closed on missing required policy source mapping");
+    assert!(
+        err.to_string()
+            .contains("authorized policy missing required policy_source mapping"),
         "unexpected error: {err}"
     );
 }
