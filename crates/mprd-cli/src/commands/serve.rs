@@ -419,9 +419,18 @@ async fn run_handler(
                 live_tx: live_tx.clone(),
             };
 
-            // Using no-op verifier for now since we trust our own purely-generated proof in this loop,
-            // but in a distributed setting this would verify the receipt.
-             let verifier = StubZkLocalVerifier::new();
+            // Production path must verify the locally-generated proof against the verifier-trusted
+            // signed registry checkpoint before any side effects happen.
+             let verifier = mprd_zk::create_production_verifier_from_signed_registry_state_with_manifest_key(
+                 signed_registry.clone(),
+                 &registry_vk,
+                 &registry_vk,
+             ).map_err(|e| {
+                 mprd_core::MprdError::ExecutionError(format!(
+                     "Failed to create production verifier: {}",
+                     e
+                 ))
+             })?;
 
              // Executor (wrapped with production guards).
              //
@@ -526,6 +535,18 @@ async fn run_handler(
                  }
              }
              let attestor = BoxedZkAttestor(attestor);
+
+             struct BoxedLocalVerifier(Box<dyn mprd_core::ZkLocalVerifier>);
+             impl mprd_core::ZkLocalVerifier for BoxedLocalVerifier {
+                 fn verify(
+                     &self,
+                     token: &mprd_core::DecisionToken,
+                     proof: &mprd_core::ProofBundle,
+                 ) -> mprd_core::VerificationStatus {
+                     self.0.verify(token, proof)
+                 }
+             }
+             let verifier = BoxedLocalVerifier(verifier);
 
              // RUN IT
              // Note: policy_hash currently hardcoded to what's in the registry?
