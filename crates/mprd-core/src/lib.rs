@@ -242,21 +242,20 @@ impl ExecutionBoundaryWitnessV1 {
     }
 }
 
-/// A locally verified bundle that is also admitted through the concrete execution boundary.
-#[derive(Clone, Debug)]
-pub struct ExecutionReadyBundle<'a> {
-    verified: VerifiedBundle<'a>,
+/// Constructor-gated runtime packet carried into the live execute boundary on the RC1 path.
+///
+/// This groups the concrete execution boundary witness with the optional orchestrator
+/// authorization and signed-registry bridge facts, so the shipped runtime no longer carries
+/// those as three unrelated adjacent fields.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionReadyPacketV1 {
     boundary: ExecutionBoundaryWitnessV1,
     authorization: Option<ExecutionAuthorizationWitnessV1>,
     bridge: Option<ExecutionRegistryBridgeWitnessV1>,
-    executor_admission: Option<ExecutionExecutorAdmissionWitnessV1>,
 }
 
-impl<'a> ExecutionReadyBundle<'a> {
-    pub fn verified(&self) -> &VerifiedBundle<'a> {
-        &self.verified
-    }
-
+impl ExecutionReadyPacketV1 {
     pub fn boundary(&self) -> &ExecutionBoundaryWitnessV1 {
         &self.boundary
     }
@@ -267,6 +266,36 @@ impl<'a> ExecutionReadyBundle<'a> {
 
     pub fn bridge(&self) -> Option<&ExecutionRegistryBridgeWitnessV1> {
         self.bridge.as_ref()
+    }
+}
+
+/// A locally verified bundle that is also admitted through the concrete execution boundary.
+#[derive(Clone, Debug)]
+pub struct ExecutionReadyBundle<'a> {
+    verified: VerifiedBundle<'a>,
+    packet: ExecutionReadyPacketV1,
+    executor_admission: Option<ExecutionExecutorAdmissionWitnessV1>,
+}
+
+impl<'a> ExecutionReadyBundle<'a> {
+    pub fn verified(&self) -> &VerifiedBundle<'a> {
+        &self.verified
+    }
+
+    pub fn packet(&self) -> &ExecutionReadyPacketV1 {
+        &self.packet
+    }
+
+    pub fn boundary(&self) -> &ExecutionBoundaryWitnessV1 {
+        self.packet.boundary()
+    }
+
+    pub fn authorization(&self) -> Option<&ExecutionAuthorizationWitnessV1> {
+        self.packet.authorization()
+    }
+
+    pub fn bridge(&self) -> Option<&ExecutionRegistryBridgeWitnessV1> {
+        self.packet.bridge()
     }
 
     pub fn executor_admission(&self) -> Option<&ExecutionExecutorAdmissionWitnessV1> {
@@ -990,9 +1019,11 @@ pub fn prepare_execution_ready<'a>(
     let boundary = execution_boundary_witness_v1(&verified)?;
     Ok(ExecutionReadyBundle {
         verified,
-        boundary,
-        authorization: None,
-        bridge: None,
+        packet: ExecutionReadyPacketV1 {
+            boundary,
+            authorization: None,
+            bridge: None,
+        },
         executor_admission: None,
     })
 }
@@ -1010,9 +1041,11 @@ pub fn prepare_execution_ready_with_authorization<'a>(
     let boundary = execution_boundary_witness_v1(&verified)?;
     Ok(ExecutionReadyBundle {
         verified,
-        boundary,
-        authorization: Some(authorization),
-        bridge: None,
+        packet: ExecutionReadyPacketV1 {
+            boundary,
+            authorization: Some(authorization),
+            bridge: None,
+        },
         executor_admission: None,
     })
 }
@@ -1023,7 +1056,7 @@ pub fn prepare_execution_ready_with_registry_bridge<'a>(
     bridge: ExecutionRegistryBridgeWitnessV1,
 ) -> ExecutionReadyBundle<'a> {
     let mut enriched = ready.clone();
-    enriched.bridge = Some(bridge);
+    enriched.packet.bridge = Some(bridge);
     enriched
 }
 
@@ -1555,7 +1588,9 @@ mod tests {
             ready.boundary().limits_binding().limits(),
             &limits::LimitsV1::default()
         );
+        assert_eq!(ready.packet().boundary(), ready.boundary());
         assert!(ready.authorization().is_none());
+        assert!(ready.packet().authorization().is_none());
     }
 
     #[test]
@@ -1635,6 +1670,7 @@ mod tests {
             authorization.governance().map(|g| g.update_kind()),
             Some(GovernanceUpdateKindV1::PolicyTweak)
         );
+        assert_eq!(ready.packet().authorization(), Some(authorization));
         assert!(ready.bridge().is_none());
     }
 
@@ -1671,6 +1707,7 @@ mod tests {
         let ready = prepare_execution_ready_with_registry_bridge(&ready, bridge.clone());
 
         assert_eq!(ready.bridge(), Some(&bridge));
+        assert_eq!(ready.packet().bridge(), Some(&bridge));
     }
 
     #[test]
