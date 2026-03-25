@@ -243,6 +243,73 @@ pub fn create_registry_bound_tau_compiled_v1_attestor_from_signed_registry_state
     Ok((policy_ref, Box::new(attestor)))
 }
 
+/// Create a registry-bound Risc0 MPB attestor from a verified artifact-repo commit.
+///
+/// This is a constructor-gated bridge from the concrete artifact-repo production profile into the
+/// existing registry-bound production proving path.
+pub fn create_registry_bound_mpb_v1_attestor_from_verified_repo_commit<
+    S: PolicyArtifactStore + 'static,
+>(
+    verified_commit: &crate::artifact_repo_integration::VerifiedRepoCommitV1,
+    registry_state_verifying_key: mprd_core::TokenVerifyingKey,
+    manifest_verifying_key: mprd_core::TokenVerifyingKey,
+    store: S,
+    mpb_fuel_limit: u32,
+) -> mprd_core::Result<(mprd_core::PolicyRef, Box<dyn mprd_core::ZkAttestor>)> {
+    let policy_ref =
+        crate::artifact_repo_integration::policy_ref_from_verified_repo_commit(verified_commit)?;
+    let signed_registry_state =
+        crate::artifact_repo_integration::signed_registry_state_from_verified_repo_commit(
+            verified_commit,
+        )?;
+    let (derived_ref, attestor) = create_registry_bound_mpb_v1_attestor_from_signed_registry_state(
+        signed_registry_state,
+        registry_state_verifying_key,
+        manifest_verifying_key,
+        store,
+        mpb_fuel_limit,
+    )?;
+    if derived_ref != policy_ref {
+        return Err(mprd_core::MprdError::ZkError(
+            "verified repo commit policy_ref drifted inside registry-bound attestor factory".into(),
+        ));
+    }
+    Ok((policy_ref, attestor))
+}
+
+/// Create a registry-bound Risc0 tau_compiled attestor from a verified artifact-repo commit.
+///
+/// This is a constructor-gated bridge from the concrete artifact-repo production profile into the
+/// existing registry-bound production proving path.
+pub fn create_registry_bound_tau_compiled_v1_attestor_from_verified_repo_commit<
+    S: PolicyArtifactStore + 'static,
+>(
+    verified_commit: &crate::artifact_repo_integration::VerifiedRepoCommitV1,
+    registry_state_verifying_key: mprd_core::TokenVerifyingKey,
+    manifest_verifying_key: mprd_core::TokenVerifyingKey,
+    store: S,
+) -> mprd_core::Result<(mprd_core::PolicyRef, Box<dyn mprd_core::ZkAttestor>)> {
+    let policy_ref =
+        crate::artifact_repo_integration::policy_ref_from_verified_repo_commit(verified_commit)?;
+    let signed_registry_state =
+        crate::artifact_repo_integration::signed_registry_state_from_verified_repo_commit(
+            verified_commit,
+        )?;
+    let (derived_ref, attestor) =
+        create_registry_bound_tau_compiled_v1_attestor_from_signed_registry_state(
+            signed_registry_state,
+            registry_state_verifying_key,
+            manifest_verifying_key,
+            store,
+        )?;
+    if derived_ref != policy_ref {
+        return Err(mprd_core::MprdError::ZkError(
+            "verified repo commit policy_ref drifted inside registry-bound attestor factory".into(),
+        ));
+    }
+    Ok((policy_ref, attestor))
+}
+
 /// Create registry-bound mpb-v1 attestor + verifier from a signed registry checkpoint.
 ///
 /// This is the safest wiring for production deployments:

@@ -13,7 +13,7 @@ use mprd_core::artifact_repo::{
     BlockStore, Commit, CommitConsistencyView, CommitId, Id32, RegistryCheckpointV2Fields,
     RepoArtifactVerifier, TrustAnchors, KEY_REGISTRY_SIGNED_REGISTRY_STATE_V2,
 };
-use mprd_core::{Hash32, MprdError, Result, TokenVerifyingKey};
+use mprd_core::{Hash32, MprdError, PolicyRef, Result, TokenVerifyingKey};
 use sha2::{Digest, Sha256};
 
 use crate::manifest::GuestImageManifestV1;
@@ -129,6 +129,56 @@ pub struct VerifiedRepoCommitV1 {
     pub consistency: CommitConsistencyView,
     pub manifest: GuestImageManifestV1,
     pub signed_registry_state: Option<SignedRegistryStateV1>,
+}
+
+/// Extract the signed registry checkpoint from a verified repo commit and fail closed if the
+/// concrete commit header no longer matches the signed registry bytes.
+pub fn signed_registry_state_from_verified_repo_commit(
+    verified: &VerifiedRepoCommitV1,
+) -> Result<SignedRegistryStateV1> {
+    let signed = verified.signed_registry_state.clone().ok_or_else(|| {
+        MprdError::ZkError("verified repo commit missing signed registry checkpoint".into())
+    })?;
+
+    if signed.state.policy_epoch != verified.commit.policy_epoch {
+        return Err(MprdError::ZkError(
+            "verified repo commit policy_epoch drifted from signed registry checkpoint".into(),
+        ));
+    }
+
+    if signed.state.registry_root.0 != verified.commit.registry_root.0 {
+        return Err(MprdError::ZkError(
+            "verified repo commit registry_root drifted from signed registry checkpoint".into(),
+        ));
+    }
+
+    let manifest_signing = signed
+        .state
+        .guest_image_manifest
+        .signing_bytes_v1()
+        .map_err(|e| {
+            MprdError::ZkError(format!(
+                "verified repo commit manifest signing_bytes failed: {e}"
+            ))
+        })?;
+    let manifest_digest = Id32(Sha256::digest(&manifest_signing).into());
+    if manifest_digest != verified.commit.manifest_digest {
+        return Err(MprdError::ZkError(
+            "verified repo commit manifest_digest drifted from signed registry checkpoint".into(),
+        ));
+    }
+
+    Ok(signed)
+}
+
+/// Derive the runtime `PolicyRef` from a verified repo commit only after the signed registry
+/// checkpoint has been re-checked against the verified commit header.
+pub fn policy_ref_from_verified_repo_commit(verified: &VerifiedRepoCommitV1) -> Result<PolicyRef> {
+    let signed = signed_registry_state_from_verified_repo_commit(verified)?;
+    Ok(PolicyRef {
+        policy_epoch: signed.state.policy_epoch,
+        registry_root: signed.state.registry_root,
+    })
 }
 
 /// Bootstrap the latest acceptable repo commit under the production profile.
@@ -376,6 +426,126 @@ mod tests {
             .unwrap()
             .verify_with_key(&vk)
             .expect("registry state verify");
+
+        let policy_ref = policy_ref_from_verified_repo_commit(&verified).expect("policy ref");
+        assert_eq!(policy_ref.policy_epoch, policy_epoch);
+        assert_eq!(policy_ref.registry_root, registry_root);
+    }
+
+    #[test]
+    fn policy_ref_from_verified_repo_commit_rejects_registry_epoch_drift() {
+        let store = MemoryBlockStore::new();
+
+        let commit_signer = TokenSigningKey::from_seed(&[41u8; 32]);
+        let manifest_signer = TokenSigningKey::from_seed(&[42u8; 32]);
+        let registry_signer = TokenSigningKey::from_seed(&[43u8; 32]);
+
+        let commit_pub = commit_signer.verifying_key().to_bytes();
+        let manifest_pub = manifest_signer.verifying_key().to_bytes();
+        let registry_pub = registry_signer.verifying_key().to_bytes();
+
+        let trust_anchors = TrustAnchors::new()
+            .with_commit_signer(commit_pub)
+            .with_manifest_signer(manifest_pub)
+            .with_registry_checkpoint_signer(registry_pub);
+
+        let policy_epoch = 11u64;
+        let registry_root = Hash32([19u8; 32]);
+
+        let entries = vec![GuestImageEntryV1 {
+            policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
+            policy_exec_version_id: policy_exec_version_id_v1(),
+            image_id: [7u8; 32],
+        }];
+        let manifest =
+            GuestImageManifestV1::sign(&manifest_signer, 123, entries).expect("manifest sign");
+        let manifest_json = serde_json::to_vec(&manifest).expect("manifest json");
+        let manifest_signing = manifest.signing_bytes_v1().expect("manifest signing bytes");
+        let manifest_digest = Id32(sha256(&manifest_signing));
+
+        let state = RegistryStateV1 {
+            policy_epoch,
+            registry_root,
+            authorized_policies: vec![],
+            guest_image_manifest: manifest.clone(),
+        };
+        let signed_registry =
+            SignedRegistryStateV1::sign(&registry_signer, 456, state).expect("registry sign");
+        let signed_registry_json = serde_json::to_vec(&signed_registry).expect("registry json");
+
+        let epoch_blob = encode_blob(&policy_epoch.to_le_bytes()).unwrap();
+        let epoch_id = mprd_core::artifact_repo::compute_block_id(&epoch_blob);
+        store.put(epoch_id, epoch_blob).unwrap();
+
+        let rr_blob = encode_blob(&registry_root.0).unwrap();
+        let rr_id = mprd_core::artifact_repo::compute_block_id(&rr_blob);
+        store.put(rr_id, rr_blob).unwrap();
+
+        let manifest_blob = encode_blob(&manifest_json).unwrap();
+        let manifest_id = mprd_core::artifact_repo::compute_block_id(&manifest_blob);
+        store.put(manifest_id, manifest_blob).unwrap();
+
+        let reg_blob = encode_blob(&signed_registry_json).unwrap();
+        let reg_id = mprd_core::artifact_repo::compute_block_id(&reg_blob);
+        store.put(reg_id, reg_blob).unwrap();
+
+        let mut root = mst_insert(&store, None, &Key::new(KEY_REGISTRY_POLICY_EPOCH), epoch_id)
+            .expect("insert epoch");
+        root = mst_insert(
+            &store,
+            Some(root),
+            &Key::new(KEY_REGISTRY_REGISTRY_ROOT),
+            rr_id,
+        )
+        .expect("insert registry root");
+        root = mst_insert(
+            &store,
+            Some(root),
+            &Key::new(KEY_MANIFEST_GUEST_IMAGE_MANIFEST_V1),
+            manifest_id,
+        )
+        .expect("insert manifest");
+        root = mst_insert(
+            &store,
+            Some(root),
+            &Key::new(KEY_REGISTRY_SIGNED_REGISTRY_STATE_V2),
+            reg_id,
+        )
+        .expect("insert signed registry");
+
+        let (commit_id, commit_bytes) = create_signed_commit_with_token_key(
+            CommitFields {
+                repo_version: 1,
+                prev_commit: Id32::ZERO,
+                commit_height: 1,
+                repo_root: root,
+                policy_epoch,
+                registry_root: Id32(registry_root.0),
+                manifest_digest,
+                signed_at_ms: 999,
+            },
+            &commit_signer,
+        );
+        store.put(commit_id, commit_bytes.clone()).unwrap();
+
+        let mut verified = verify_repo_commit_production_profile(
+            &store,
+            commit_id,
+            &commit_bytes,
+            trust_anchors,
+            10_000,
+        )
+        .expect("verify");
+        verified
+            .signed_registry_state
+            .as_mut()
+            .expect("signed registry")
+            .state
+            .policy_epoch += 1;
+
+        let err = policy_ref_from_verified_repo_commit(&verified).unwrap_err();
+        assert!(format!("{err}")
+            .contains("verified repo commit policy_epoch drifted from signed registry checkpoint"));
     }
 
     #[test]
