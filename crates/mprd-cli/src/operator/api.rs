@@ -125,6 +125,9 @@ pub struct ProofBundle {
     pub limits_hash: HashHex,
     pub receipt_size: u64,
     pub verified_at: i64,
+    pub attestation_metadata_hash: HashHex,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_authorization_hash: Option<HashHex>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chosen_action_preimage_storage: Option<ChosenActionPreimageStorage>,
 }

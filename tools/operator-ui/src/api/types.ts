@@ -77,6 +77,8 @@ export interface ProofBundle {
     limitsHash: string;
     receiptSize: number;
     verifiedAt: number;
+    attestationMetadataHash: string;
+    executionAuthorizationHash?: string;
     chosenActionPreimageStorage?: ChosenActionPreimageStorage;
 }
 

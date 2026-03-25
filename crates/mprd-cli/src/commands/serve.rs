@@ -1954,6 +1954,17 @@ async fn api_decision_detail(
             limits_hash: record.proof.limits_hash,
             receipt_size: record.proof.receipt_size,
             verified_at: record.proof.verified_at_ms,
+            attestation_metadata_hash: hex::encode(
+                mprd_core::decision_log::attestation_metadata_hash_v1(
+                    &record.proof.attestation_metadata,
+                )
+                .0,
+            ),
+            execution_authorization_hash: record
+                .proof
+                .attestation_metadata
+                .get(mprd_core::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1)
+                .cloned(),
             chosen_action_preimage_storage: record
                 .proof
                 .chosen_action_preimage_storage_mode

@@ -490,6 +490,59 @@ async fn decision_detail_reports_receipt_derived_chosen_preimage_storage() {
 }
 
 #[tokio::test]
+async fn decision_detail_reports_attestation_and_execution_authorization_hashes() {
+    let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state = test_state(&tmp);
+    let (token, mut proof, state_snapshot, candidates, verdicts, decision) =
+        sample_mpb_lite_decision_inputs();
+    let expected_execution_authorization_hash = hex::encode([0xabu8; 32]);
+    proof.attestation_metadata.insert(
+        mprd_core::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1.into(),
+        expected_execution_authorization_hash.clone(),
+    );
+    proof
+        .attestation_metadata
+        .insert("custom_key".into(), "custom_value".into());
+    let expected_attestation_metadata_hash = hex::encode(
+        mprd_core::decision_log::attestation_metadata_hash_v1(&proof.attestation_metadata).0,
+    );
+
+    let id = state
+        .store
+        .write_verified_decision(
+            &token,
+            &proof,
+            &state_snapshot,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .expect("write decision");
+
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/decisions/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: op_api::DecisionDetail = read_json(res).await;
+    assert_eq!(
+        body.proof.attestation_metadata_hash,
+        expected_attestation_metadata_hash
+    );
+    assert_eq!(
+        body.proof.execution_authorization_hash.as_deref(),
+        Some(expected_execution_authorization_hash.as_str())
+    );
+}
+
+#[tokio::test]
 async fn decision_export_reports_receipt_derived_chosen_preimage_storage_and_url() {
     let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
     let tmp = tempfile::TempDir::new().expect("tempdir");
