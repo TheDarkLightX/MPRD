@@ -418,6 +418,46 @@ pub fn prepare_execution_ready_from_signed_registry_and_governance_v1<'a>(
     )
 }
 
+/// Execute a locally verified bundle only after rebuilding the live ready packet from concrete
+/// registry authorization and optional concrete governance input.
+pub fn execute_verified_with_registry_and_governance_v1<E: mprd_core::ExecutorAdapter>(
+    verified: mprd_core::VerifiedBundle<'_>,
+    state: &mprd_core::StateSnapshot,
+    authorization_provider: &dyn crate::registry_state::PolicyAuthorizationProvider,
+    governance_input: Option<&crate::decentralization::GovernanceGateInput>,
+    executor: &E,
+) -> mprd_core::Result<mprd_core::ExecutionResult> {
+    let ready = prepare_execution_ready_from_registry_and_governance_v1(
+        verified,
+        state,
+        authorization_provider,
+        governance_input,
+    )?;
+    executor.execute_ready(&ready)
+}
+
+/// Convenience wrapper for the common production case where the registry authority surface is a
+/// signed checkpoint plus manifest verifying key and execution should happen immediately.
+pub fn execute_verified_from_signed_registry_and_governance_v1<E: mprd_core::ExecutorAdapter>(
+    verified: mprd_core::VerifiedBundle<'_>,
+    state: &mprd_core::StateSnapshot,
+    signed_registry_state: crate::registry_state::SignedRegistryStateV1,
+    registry_state_verifying_key: mprd_core::TokenVerifyingKey,
+    manifest_verifying_key: mprd_core::TokenVerifyingKey,
+    governance_input: Option<&crate::decentralization::GovernanceGateInput>,
+    executor: &E,
+) -> mprd_core::Result<mprd_core::ExecutionResult> {
+    let ready = prepare_execution_ready_from_signed_registry_and_governance_v1(
+        verified,
+        state,
+        signed_registry_state,
+        registry_state_verifying_key,
+        manifest_verifying_key,
+        governance_input,
+    )?;
+    executor.execute_ready(&ready)
+}
+
 /// Create registry-bound mpb-v1 attestor + verifier from a signed registry checkpoint.
 ///
 /// This is the safest wiring for production deployments:
@@ -1486,6 +1526,41 @@ mod tests {
         )
     }
 
+    struct CaptureReadyExecutor {
+        saw_authorization: Arc<std::sync::atomic::AtomicBool>,
+        saw_governance: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl mprd_core::ExecutorAdapter for CaptureReadyExecutor {
+        fn execute(
+            &self,
+            _verified: &mprd_core::VerifiedBundle<'_>,
+        ) -> mprd_core::Result<mprd_core::ExecutionResult> {
+            Ok(mprd_core::ExecutionResult {
+                success: true,
+                message: Some("raw".into()),
+            })
+        }
+
+        fn execute_ready(
+            &self,
+            ready: &mprd_core::ExecutionReadyBundle<'_>,
+        ) -> mprd_core::Result<mprd_core::ExecutionResult> {
+            self.saw_authorization.store(
+                ready.authorization().is_some(),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            self.saw_governance.store(
+                ready.authorization().and_then(|a| a.governance()).is_some(),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            Ok(mprd_core::ExecutionResult {
+                success: true,
+                message: Some("ready".into()),
+            })
+        }
+    }
+
     #[test]
     fn attestor_returns_explicit_error() {
         let attestor = Risc0ZkAttestor::new(dummy_config());
@@ -1632,6 +1707,34 @@ mod tests {
         assert!(err.to_string().contains(
             "registry_auth_image_id attestation metadata drifted from registry authorization"
         ));
+    }
+
+    #[test]
+    fn execute_verified_from_signed_registry_and_governance_threads_ready_authorization() {
+        let (token, proof, state, governance_input, signed, registry_vk, manifest_vk) =
+            ready_bridge_fixture();
+        let verified = verify_bundle(&token, &proof);
+        let saw_authorization = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let saw_governance = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let executor = CaptureReadyExecutor {
+            saw_authorization: Arc::clone(&saw_authorization),
+            saw_governance: Arc::clone(&saw_governance),
+        };
+
+        let result = execute_verified_from_signed_registry_and_governance_v1(
+            verified,
+            &state,
+            signed,
+            registry_vk,
+            manifest_vk,
+            Some(&governance_input),
+            &executor,
+        )
+        .expect("execute_verified_from_signed_registry_and_governance_v1");
+
+        assert!(result.success);
+        assert!(saw_authorization.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(saw_governance.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]
