@@ -161,11 +161,13 @@ pub fn create_registry_bound_mpb_v1_attestor_from_signed_registry_state<
     mpb_fuel_limit: u32,
 ) -> mprd_core::Result<(mprd_core::PolicyRef, Box<dyn mprd_core::ZkAttestor>)> {
     use crate::registry_state::{
-        RegistryStatePolicyAuthorizationProvider, RegistryStateProvider,
-        SignedStaticRegistryStateProvider,
+        signed_registry_checkpoint_attestation_hash_v1, RegistryStatePolicyAuthorizationProvider,
+        RegistryStateProvider, SignedStaticRegistryStateProvider,
     };
     use mprd_risc0_methods::MPRD_MPB_GUEST_ELF;
 
+    let registry_checkpoint_attestation_hash =
+        signed_registry_checkpoint_attestation_hash_v1(&signed_registry_state);
     let provider = Arc::new(SignedStaticRegistryStateProvider::new(
         signed_registry_state,
         registry_state_verifying_key,
@@ -187,6 +189,7 @@ pub fn create_registry_bound_mpb_v1_attestor_from_signed_registry_state<
         MPRD_MPB_GUEST_ELF,
         policy_ref.clone(),
         mpb_fuel_limit,
+        registry_checkpoint_attestation_hash,
         authorization,
         Arc::new(store),
     );
@@ -209,11 +212,13 @@ pub fn create_registry_bound_tau_compiled_v1_attestor_from_signed_registry_state
 ) -> mprd_core::Result<(mprd_core::PolicyRef, Box<dyn mprd_core::ZkAttestor>)> {
     use crate::policy_fetch::RegistryBoundTauCompiledPolicyProviderAdapter;
     use crate::registry_state::{
-        RegistryStatePolicyAuthorizationProvider, RegistryStateProvider,
-        SignedStaticRegistryStateProvider,
+        signed_registry_checkpoint_attestation_hash_v1, RegistryStatePolicyAuthorizationProvider,
+        RegistryStateProvider, SignedStaticRegistryStateProvider,
     };
     use mprd_risc0_methods::MPRD_TAU_COMPILED_GUEST_ELF;
 
+    let registry_checkpoint_attestation_hash =
+        signed_registry_checkpoint_attestation_hash_v1(&signed_registry_state);
     let provider = Arc::new(SignedStaticRegistryStateProvider::new(
         signed_registry_state,
         registry_state_verifying_key,
@@ -240,6 +245,7 @@ pub fn create_registry_bound_tau_compiled_v1_attestor_from_signed_registry_state
     let attestor = crate::registry_bound_attestor::RegistryBoundRisc0TauCompiledAttestor::new(
         MPRD_TAU_COMPILED_GUEST_ELF,
         policy_ref.clone(),
+        registry_checkpoint_attestation_hash,
         authorization,
         policy_provider,
     );
@@ -405,6 +411,10 @@ pub fn prepare_execution_ready_from_signed_registry_and_governance_v1<'a>(
     manifest_verifying_key: mprd_core::TokenVerifyingKey,
     governance_input: Option<&crate::decentralization::GovernanceGateInput>,
 ) -> mprd_core::Result<mprd_core::ExecutionReadyBundle<'a>> {
+    crate::registry_state::verify_signed_registry_checkpoint_attestation_metadata_v1(
+        verified.proof(),
+        &signed_registry_state,
+    )?;
     let provider = Arc::new(
         crate::registry_state::SignedStaticRegistryStateProvider::new(
             signed_registry_state,
@@ -1516,6 +1526,10 @@ mod tests {
             &mut proof.attestation_metadata,
             &resolution,
         );
+        crate::registry_state::insert_registry_checkpoint_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &crate::registry_state::signed_registry_checkpoint_attestation_hash_v1(&signed),
+        );
         mprd_core::insert_governance_attestation_metadata_v1(
             &mut proof.attestation_metadata,
             &governance,
@@ -1743,6 +1757,31 @@ mod tests {
 
         assert!(err.to_string().contains(
             "execution_authorization_hash_v1 attestation metadata drifted from admitted execution authorization"
+        ));
+    }
+
+    #[test]
+    fn prepare_execution_ready_from_registry_and_governance_rejects_registry_checkpoint_drift() {
+        let (token, mut proof, state, governance_input, signed, registry_vk, manifest_vk) =
+            ready_bridge_fixture();
+        proof.attestation_metadata.insert(
+            crate::registry_state::REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1.into(),
+            hex::encode([0xDD; 32]),
+        );
+        let verified = verify_bundle(&token, &proof);
+
+        let err = prepare_execution_ready_from_signed_registry_and_governance_v1(
+            verified,
+            &state,
+            signed,
+            registry_vk,
+            manifest_vk,
+            Some(&governance_input),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains(
+            "registry_auth_checkpoint_attestation_hash_v1 attestation metadata drifted from signed registry checkpoint"
         ));
     }
 

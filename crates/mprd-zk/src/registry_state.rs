@@ -30,9 +30,13 @@ use std::sync::Arc;
 pub const REGISTRY_AUTH_METADATA_EXEC_KIND_ID_V1: &str = "registry_auth_exec_kind_id";
 pub const REGISTRY_AUTH_METADATA_EXEC_VERSION_ID_V1: &str = "registry_auth_exec_version_id";
 pub const REGISTRY_AUTH_METADATA_IMAGE_ID_V1: &str = "registry_auth_image_id";
+pub const REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1: &str =
+    "registry_auth_checkpoint_attestation_hash_v1";
 pub const REGISTRY_AUTH_METADATA_POLICY_SOURCE_KIND_ID_V1: &str =
     "registry_auth_policy_source_kind_id";
 pub const REGISTRY_AUTH_METADATA_POLICY_SOURCE_HASH_V1: &str = "registry_auth_policy_source_hash";
+pub const REGISTRY_CHECKPOINT_ATTESTATION_DOMAIN_V1: &[u8] =
+    b"MPRD_REGISTRY_CHECKPOINT_ATTESTATION_V1";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthorizedPolicyV1 {
@@ -678,6 +682,37 @@ pub struct AuthorizedPolicyResolutionV1 {
     pub image_id: Id32,
 }
 
+pub fn registry_checkpoint_attestation_hash_v1(
+    signer_pubkey: &[u8; 32],
+    signature: &[u8],
+) -> Hash32 {
+    let mut bytes =
+        Vec::with_capacity(REGISTRY_CHECKPOINT_ATTESTATION_DOMAIN_V1.len() + 32 + signature.len());
+    bytes.extend_from_slice(REGISTRY_CHECKPOINT_ATTESTATION_DOMAIN_V1);
+    bytes.extend_from_slice(signer_pubkey);
+    bytes.extend_from_slice(signature);
+    Hash32(Sha256::digest(&bytes).into())
+}
+
+pub fn signed_registry_checkpoint_attestation_hash_v1(
+    signed_registry_state: &SignedRegistryStateV1,
+) -> Hash32 {
+    registry_checkpoint_attestation_hash_v1(
+        &signed_registry_state.signer_pubkey,
+        &signed_registry_state.signature,
+    )
+}
+
+pub fn insert_registry_checkpoint_attestation_metadata_v1(
+    metadata: &mut std::collections::HashMap<String, String>,
+    checkpoint_attestation_hash: &Hash32,
+) {
+    metadata.insert(
+        REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1.into(),
+        hex::encode(checkpoint_attestation_hash.0),
+    );
+}
+
 pub fn insert_registry_authorization_attestation_metadata_v1(
     metadata: &mut std::collections::HashMap<String, String>,
     resolution: &AuthorizedPolicyResolutionV1,
@@ -802,6 +837,23 @@ pub fn verify_registry_authorization_attestation_metadata_v1(
         }
     }
 
+    Ok(())
+}
+
+pub fn verify_signed_registry_checkpoint_attestation_metadata_v1(
+    proof: &mprd_core::ProofBundle,
+    signed_registry_state: &SignedRegistryStateV1,
+) -> Result<()> {
+    let actual = require_registry_authorization_metadata_value_v1(
+        &proof.attestation_metadata,
+        REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1,
+    )?;
+    let expected = signed_registry_checkpoint_attestation_hash_v1(signed_registry_state);
+    if actual != hex::encode(expected.0) {
+        return Err(mprd_core::MprdError::InvalidInput(
+            "registry_auth_checkpoint_attestation_hash_v1 attestation metadata drifted from signed registry checkpoint".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -1275,6 +1327,88 @@ mod tests {
                 assert_eq!(
                     msg,
                     "registry_auth_image_id attestation metadata drifted from registry authorization"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn registry_checkpoint_attestation_metadata_round_trips() {
+        let key = TokenSigningKey::from_seed(&[0x61; 32]);
+        let signed = SignedRegistryStateV1::sign(
+            &key,
+            321,
+            RegistryStateV1 {
+                policy_epoch: 7,
+                registry_root: dummy_hash(0x41),
+                authorized_policies: vec![],
+                guest_image_manifest: GuestImageManifestV1::sign(&key, 123, vec![])
+                    .expect("manifest"),
+            },
+        )
+        .expect("signed registry");
+
+        let mut proof = mprd_core::ProofBundle {
+            policy_hash: dummy_hash(0),
+            state_hash: dummy_hash(0),
+            candidate_set_hash: dummy_hash(0),
+            chosen_action_hash: dummy_hash(0),
+            limits_hash: dummy_hash(0),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
+            risc0_receipt: vec![],
+            attestation_metadata: Default::default(),
+        };
+
+        insert_registry_checkpoint_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &signed_registry_checkpoint_attestation_hash_v1(&signed),
+        );
+        verify_signed_registry_checkpoint_attestation_metadata_v1(&proof, &signed)
+            .expect("verify checkpoint metadata");
+    }
+
+    #[test]
+    fn registry_checkpoint_attestation_metadata_rejects_drift() {
+        let key = TokenSigningKey::from_seed(&[0x62; 32]);
+        let signed = SignedRegistryStateV1::sign(
+            &key,
+            654,
+            RegistryStateV1 {
+                policy_epoch: 8,
+                registry_root: dummy_hash(0x42),
+                authorized_policies: vec![],
+                guest_image_manifest: GuestImageManifestV1::sign(&key, 124, vec![])
+                    .expect("manifest"),
+            },
+        )
+        .expect("signed registry");
+
+        let mut proof = mprd_core::ProofBundle {
+            policy_hash: dummy_hash(0),
+            state_hash: dummy_hash(0),
+            candidate_set_hash: dummy_hash(0),
+            chosen_action_hash: dummy_hash(0),
+            limits_hash: dummy_hash(0),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
+            risc0_receipt: vec![],
+            attestation_metadata: Default::default(),
+        };
+
+        insert_registry_checkpoint_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &dummy_hash(0xEE),
+        );
+
+        let err =
+            verify_signed_registry_checkpoint_attestation_metadata_v1(&proof, &signed).unwrap_err();
+        match err {
+            mprd_core::MprdError::InvalidInput(msg) => {
+                assert_eq!(
+                    msg,
+                    "registry_auth_checkpoint_attestation_hash_v1 attestation metadata drifted from signed registry checkpoint"
                 );
             }
             other => panic!("unexpected error: {other:?}"),

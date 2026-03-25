@@ -10,13 +10,14 @@
 
 use crate::policy_fetch::{PolicyArtifactStore, RegistryBoundMpbPolicyProvider};
 use crate::registry_state::{
-    insert_registry_authorization_attestation_metadata_v1, PolicyAuthorizationProvider,
+    insert_registry_authorization_attestation_metadata_v1,
+    insert_registry_checkpoint_attestation_metadata_v1, PolicyAuthorizationProvider,
 };
 use crate::risc0_host::{
     MpbPolicyProvider, Risc0MpbAttestor, Risc0TauCompiledAttestor, TauCompiledPolicyProvider,
 };
 use mprd_core::{
-    Decision, DecisionToken, MprdError, PolicyRef, ProofBundle, Result, StateSnapshot,
+    Decision, DecisionToken, Hash32, MprdError, PolicyRef, ProofBundle, Result, StateSnapshot,
 };
 use std::sync::Arc;
 
@@ -25,6 +26,7 @@ pub struct RegistryBoundRisc0MpbAttestor {
     guest_elf: &'static [u8],
     policy_ref: PolicyRef,
     mpb_fuel_limit: u32,
+    registry_checkpoint_attestation_hash: Hash32,
     authorization: Arc<dyn PolicyAuthorizationProvider>,
     policy_provider: Arc<dyn MpbPolicyProvider>,
 }
@@ -34,6 +36,7 @@ impl RegistryBoundRisc0MpbAttestor {
         guest_elf: &'static [u8],
         policy_ref: PolicyRef,
         mpb_fuel_limit: u32,
+        registry_checkpoint_attestation_hash: Hash32,
         authorization: Arc<dyn PolicyAuthorizationProvider>,
         store: Arc<dyn PolicyArtifactStore>,
     ) -> Self {
@@ -46,6 +49,7 @@ impl RegistryBoundRisc0MpbAttestor {
             guest_elf,
             policy_ref,
             mpb_fuel_limit,
+            registry_checkpoint_attestation_hash,
             authorization,
             policy_provider: Arc::new(provider),
         }
@@ -96,6 +100,10 @@ impl mprd_core::ZkAttestor for RegistryBoundRisc0MpbAttestor {
             &mut proof.attestation_metadata,
             &resolution,
         );
+        insert_registry_checkpoint_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &self.registry_checkpoint_attestation_hash,
+        );
         Ok(proof)
     }
 }
@@ -104,6 +112,7 @@ impl mprd_core::ZkAttestor for RegistryBoundRisc0MpbAttestor {
 pub struct RegistryBoundRisc0TauCompiledAttestor {
     guest_elf: &'static [u8],
     policy_ref: PolicyRef,
+    registry_checkpoint_attestation_hash: Hash32,
     authorization: Arc<dyn PolicyAuthorizationProvider>,
     policy_provider: Arc<dyn TauCompiledPolicyProvider>,
 }
@@ -112,12 +121,14 @@ impl RegistryBoundRisc0TauCompiledAttestor {
     pub fn new(
         guest_elf: &'static [u8],
         policy_ref: PolicyRef,
+        registry_checkpoint_attestation_hash: Hash32,
         authorization: Arc<dyn PolicyAuthorizationProvider>,
         policy_provider: Arc<dyn TauCompiledPolicyProvider>,
     ) -> Self {
         Self {
             guest_elf,
             policy_ref,
+            registry_checkpoint_attestation_hash,
             authorization,
             policy_provider,
         }
@@ -165,6 +176,10 @@ impl mprd_core::ZkAttestor for RegistryBoundRisc0TauCompiledAttestor {
         insert_registry_authorization_attestation_metadata_v1(
             &mut proof.attestation_metadata,
             &resolution,
+        );
+        insert_registry_checkpoint_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &self.registry_checkpoint_attestation_hash,
         );
         Ok(proof)
     }
