@@ -264,11 +264,33 @@
       "status": "passed",
       "tla": "docs/specs/idempotent_http_effect_barrier.tla",
       "tlc_version": "TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)"
+    },
+    {
+      "cfg": "docs/specs/idempotent_file_effect_barrier.cfg",
+      "command": [
+        "java",
+        "-cp",
+        "${TLA2TOOLS_JAR}",
+        "tlc2.TLC",
+        "-cleanup",
+        "-deadlock",
+        "-config",
+        "docs/specs/idempotent_file_effect_barrier.cfg",
+        "docs/specs/idempotent_file_effect_barrier.tla"
+      ],
+      "distinct_states": 9,
+      "exit_code": 0,
+      "search_depth": 5,
+      "spec": "idempotent_file_effect_barrier",
+      "states_generated": 22,
+      "status": "passed",
+      "tla": "docs/specs/idempotent_file_effect_barrier.tla",
+      "tlc_version": "TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)"
     }
   ],
-  "generated_at_utc": "2026-03-25T18:58:10.844411+00:00",
-  "git_head": "d9c88f61d7f4c12bc81a69691c9dfc53b536a66d",
+  "generated_at_utc": "2026-03-25T19:21:34.709678+00:00",
+  "git_head": "2d5e0d37092ad45a5775b5ed5cae81fa95c9eb12",
   "schema": "mprd/rc1-network-replay/v1",
-  "spec_count": 12,
+  "spec_count": 13,
   "tla2tools_jar_ref": "${TLA2TOOLS_JAR}"
 }

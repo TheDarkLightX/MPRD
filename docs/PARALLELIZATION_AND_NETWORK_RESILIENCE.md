@@ -68,7 +68,7 @@ The tracked RC1 replay script and receipt for the current model series are:
 - `docs/receipts/rc1_network_replay_20260325.json`
 - `.github/workflows/network-replay.yml`
 
-The current receipt is green across 12 tracked safety models:
+The current receipt is green across 13 tracked safety models:
 
 - `serial_commit_network_barrier`: 1,274 distinct states, depth 12
 - `distributed_replay_claim_barrier`: 63 distinct states, depth 7
@@ -82,6 +82,7 @@ The current receipt is green across 12 tracked safety models:
 - `distributed_replay_hidden_equivocation_barrier`: 250 distinct states, depth 13
 - `distributed_effect_finalization_barrier`: 38 distinct states, depth 10
 - `idempotent_http_effect_barrier`: 17 distinct states, depth 7
+- `idempotent_file_effect_barrier`: 9 distinct states, depth 5
 
 Replay command:
 
@@ -584,6 +585,45 @@ java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
   -deadlock \
   -config idempotent_http_effect_barrier.cfg \
   idempotent_http_effect_barrier
+```
+
+The next tracked replay surface narrows the local file-side-effect path:
+
+- `docs/specs/idempotent_file_effect_barrier.tla`
+- `docs/specs/idempotent_file_effect_barrier.cfg`
+
+This packet is intentionally simpler than the HTTP barrier. For the shipped
+`idempotent_file` sink, the per-nonce durable file is both the side effect and
+the barrier, so the model treats the create as atomic and proves the local
+safety shape:
+
+- at most one local file effect can be emitted for the nonce
+- once the per-nonce file exists, later writers short-circuit idempotently
+- there is no separate pending state to recover because the file itself is the
+  durable commit marker
+
+Modeling assumptions:
+
+- the underlying per-nonce file create is atomic for the local sink
+- writers target the same per-nonce path
+- this is a local single-filesystem safety model, not a distributed storage
+  theorem
+
+What it still does not prove:
+
+- replicated or networked filesystem semantics
+- cross-node races on shared storage beyond the single-file atomic create
+- end-to-end exactly-once behavior across partitions or remote sinks
+
+Replay command:
+
+```bash
+cd docs/specs
+java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
+  -cleanup \
+  -deadlock \
+  -config idempotent_file_effect_barrier.cfg \
+  idempotent_file_effect_barrier
 ```
 
 ## Mode C

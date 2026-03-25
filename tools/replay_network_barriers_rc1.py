@@ -27,6 +27,7 @@ REPLAY_SPECS = [
     "distributed_replay_hidden_equivocation_barrier",
     "distributed_effect_finalization_barrier",
     "idempotent_http_effect_barrier",
+    "idempotent_file_effect_barrier",
 ]
 
 
