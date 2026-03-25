@@ -380,6 +380,12 @@ pub fn prepare_execution_ready_from_registry_and_governance_v1<'a>(
         (None, Some(from_input)) => Some(from_input),
         (None, None) => None,
     };
+    mprd_core::verify_execution_authorization_attestation_metadata_v1(
+        verified.proof(),
+        &authority,
+        &state_binding,
+        governance.as_ref(),
+    )?;
 
     mprd_core::prepare_execution_ready_with_authorization(
         verified,
@@ -1514,6 +1520,12 @@ mod tests {
             &mut proof.attestation_metadata,
             &governance,
         );
+        mprd_core::insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &token,
+            &state,
+            Some(&governance),
+        );
 
         (
             token,
@@ -1706,6 +1718,31 @@ mod tests {
 
         assert!(err.to_string().contains(
             "registry_auth_image_id attestation metadata drifted from registry authorization"
+        ));
+    }
+
+    #[test]
+    fn prepare_execution_ready_from_registry_and_governance_rejects_execution_auth_hash_drift() {
+        let (token, mut proof, state, governance_input, signed, registry_vk, manifest_vk) =
+            ready_bridge_fixture();
+        proof.attestation_metadata.insert(
+            mprd_core::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1.into(),
+            hex::encode([0xCC; 32]),
+        );
+        let verified = verify_bundle(&token, &proof);
+
+        let err = prepare_execution_ready_from_signed_registry_and_governance_v1(
+            verified,
+            &state,
+            signed,
+            registry_vk,
+            manifest_vk,
+            Some(&governance_input),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains(
+            "execution_authorization_hash_v1 attestation metadata drifted from admitted execution authorization"
         ));
     }
 
