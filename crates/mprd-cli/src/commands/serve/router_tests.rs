@@ -496,6 +496,11 @@ async fn decision_detail_reports_attestation_and_execution_authorization_hashes(
     let state = test_state(&tmp);
     let (token, mut proof, state_snapshot, candidates, verdicts, decision) =
         sample_mpb_lite_decision_inputs();
+    let expected_registry_checkpoint_attestation_hash = hex::encode([0xcdu8; 32]);
+    proof.attestation_metadata.insert(
+        mprd_zk::registry_state::REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1.into(),
+        expected_registry_checkpoint_attestation_hash.clone(),
+    );
     let expected_execution_authorization_hash = hex::encode([0xabu8; 32]);
     proof.attestation_metadata.insert(
         mprd_core::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1.into(),
@@ -539,6 +544,10 @@ async fn decision_detail_reports_attestation_and_execution_authorization_hashes(
     assert_eq!(
         body.proof.execution_authorization_hash.as_deref(),
         Some(expected_execution_authorization_hash.as_str())
+    );
+    assert_eq!(
+        body.proof.registry_checkpoint_attestation_hash.as_deref(),
+        Some(expected_registry_checkpoint_attestation_hash.as_str())
     );
 }
 

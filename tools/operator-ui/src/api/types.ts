@@ -78,6 +78,7 @@ export interface ProofBundle {
     receiptSize: number;
     verifiedAt: number;
     attestationMetadataHash: string;
+    registryCheckpointAttestationHash?: string;
     executionAuthorizationHash?: string;
     chosenActionPreimageStorage?: ChosenActionPreimageStorage;
 }

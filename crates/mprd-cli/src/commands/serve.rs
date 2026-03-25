@@ -2015,6 +2015,11 @@ async fn api_decision_detail(
                 )
                 .0,
             ),
+            registry_checkpoint_attestation_hash: record
+                .proof
+                .attestation_metadata
+                .get(mprd_zk::registry_state::REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1)
+                .cloned(),
             execution_authorization_hash: record
                 .proof
                 .attestation_metadata
