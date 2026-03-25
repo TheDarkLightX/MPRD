@@ -41,6 +41,9 @@ The tracked workflow is:
 
 - [fuzz-smoke.yml](../.github/workflows/fuzz-smoke.yml)
 
+That workflow now runs automatically on pull requests and pushes that touch the tracked Tier-0 fuzz
+surfaces, while `workflow_dispatch` remains available for longer or ASDE-inclusive runs.
+
 The RC1 release claim should use a successful summary artifact from that workflow (or an equivalent
 local replay using the same script) on the candidate commit.
 

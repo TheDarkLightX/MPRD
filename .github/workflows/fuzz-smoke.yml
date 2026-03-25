@@ -1,6 +1,34 @@
 name: Fuzz Smoke
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/fuzz-smoke.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'fuzz/**'
+      - 'methods/**'
+      - 'tools/fuzz.sh'
+      - 'tools/fuzz_smoke_rc1.sh'
+      - 'docs/FUZZING.md'
+      - 'docs/RC1_BLOCKERS.md'
+      - 'docs/TIER0_BOUNDARY_MATRIX.md'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/fuzz-smoke.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'fuzz/**'
+      - 'methods/**'
+      - 'tools/fuzz.sh'
+      - 'tools/fuzz_smoke_rc1.sh'
+      - 'docs/FUZZING.md'
+      - 'docs/RC1_BLOCKERS.md'
+      - 'docs/TIER0_BOUNDARY_MATRIX.md'
   workflow_dispatch:
     inputs:
       time_per_target:
@@ -22,17 +50,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install nightly toolchain
-        run: rustup toolchain install nightly --profile minimal
+      - name: Resolve pinned fuzz toolchain
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import tomllib
+          from pathlib import Path
+
+          data = tomllib.loads(Path("fuzz/rust-toolchain.toml").read_text())
+          print(f"FUZZ_TOOLCHAIN={data['toolchain']['channel']}")
+          PY
+
+      - name: Install pinned nightly toolchain
+        run: rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked --version 0.13.1
+        run: cargo +"$FUZZ_TOOLCHAIN" install cargo-fuzz --locked --version 0.13.1
 
       - name: Run RC1 fuzz smoke campaign
         env:
-          TIME_PER_TARGET: ${{ inputs.time_per_target }}
-          INCLUDE_ASDE: ${{ inputs.include_asde }}
+          TIME_PER_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.time_per_target || '10' }}
+          INCLUDE_ASDE: ${{ github.event_name == 'workflow_dispatch' && inputs.include_asde || 'false' }}
         run: |
+          set -euo pipefail
           time_arg="${TIME_PER_TARGET:-10}"
           if [[ -z "${time_arg}" ]]; then
             time_arg="10"
@@ -49,10 +89,12 @@ jobs:
             --summary fuzz/artifacts/rc1_fuzz_smoke_summary.json
 
       - name: Upload fuzz smoke summary
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rc1-fuzz-smoke-summary
           path: fuzz/artifacts/rc1_fuzz_smoke_summary.json
+          if-no-files-found: ignore
 
       - name: Upload fuzz crash artifacts
         if: always()

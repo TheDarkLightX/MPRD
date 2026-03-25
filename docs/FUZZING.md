@@ -85,6 +85,10 @@ The tracked GitHub workflow is:
 
 - `.github/workflows/fuzz-smoke.yml`
 
+It now runs automatically on pull requests and pushes that touch the tracked Tier-0 fuzz surfaces
+or the fuzz-gate wiring itself, and it remains manually dispatchable for longer or ASDE-inclusive
+campaigns.
+
 A current tracked smoke receipt is checked in at:
 
 - `docs/receipts/rc1_fuzz_smoke_20260325.json`
