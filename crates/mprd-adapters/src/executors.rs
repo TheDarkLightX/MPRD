@@ -26,7 +26,8 @@
 //! - Execution result is recorded for audit
 
 use mprd_core::{
-    DecisionToken, ExecutionResult, ExecutorAdapter, MprdError, Result, VerifiedBundle,
+    DecisionToken, ExecutionReadyBundle, ExecutionResult, ExecutorAdapter, MprdError, ProofBundle,
+    Result, VerifiedBundle,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -41,6 +42,54 @@ fn require_action_preimage(verified: &VerifiedBundle<'_>) -> Result<Vec<u8>> {
     Ok(mprd_core::execution_boundary_witness_v1(verified)?
         .chosen_action_preimage()
         .to_vec())
+}
+
+fn require_ready_action_preimage(ready: &ExecutionReadyBundle<'_>) -> Vec<u8> {
+    ready.boundary().chosen_action_preimage().to_vec()
+}
+
+fn execute_payload_from_parts(
+    token: &DecisionToken,
+    proof: &ProofBundle,
+    action_preimage: &[u8],
+) -> ExecutePayload {
+    ExecutePayload {
+        policy_hash: hex::encode(token.policy_hash.0),
+        policy_epoch: token.policy_ref.policy_epoch,
+        registry_root: hex::encode(token.policy_ref.registry_root.0),
+        state_hash: hex::encode(token.state_hash.0),
+        action_hash: hex::encode(token.chosen_action_hash.0),
+        action_preimage_hex: hex::encode(action_preimage),
+        nonce_or_tx_hash: hex::encode(token.nonce_or_tx_hash.0),
+        timestamp_ms: token.timestamp_ms,
+        token_signature_hex: hex::encode(&token.signature),
+        proof_receipt_hex: hex::encode(&proof.risc0_receipt),
+        proof_metadata: proof.attestation_metadata.clone(),
+    }
+}
+
+fn webhook_payload_from_parts(
+    token: &DecisionToken,
+    proof: &ProofBundle,
+    action_preimage: &[u8],
+) -> serde_json::Value {
+    serde_json::json!({
+        "event": "mprd_action_executed",
+        "policy_hash": hex::encode(token.policy_hash.0),
+        "policy_epoch": token.policy_ref.policy_epoch,
+        "registry_root": hex::encode(token.policy_ref.registry_root.0),
+        "state_hash": hex::encode(token.state_hash.0),
+        "action_hash": hex::encode(token.chosen_action_hash.0),
+        "action_preimage_hex": hex::encode(action_preimage),
+        "nonce_or_tx_hash": hex::encode(token.nonce_or_tx_hash.0),
+        "timestamp_ms": token.timestamp_ms,
+        "token_signature_hex": hex::encode(&token.signature),
+        "proof": {
+            "candidate_set_hash": hex::encode(proof.candidate_set_hash.0),
+            "receipt_hex": hex::encode(&proof.risc0_receipt),
+            "metadata": proof.attestation_metadata.clone(),
+        }
+    })
 }
 
 // =============================================================================
@@ -110,6 +159,102 @@ impl HttpExecutor {
     pub fn localhost() -> Result<Self> {
         Self::new(HttpExecutorConfig::default())
     }
+
+    fn execute_payload(
+        &self,
+        token: &DecisionToken,
+        payload: &ExecutePayload,
+    ) -> Result<ExecutionResult> {
+        let url = format!("{}/execute", self.config.base_url);
+
+        let mut last_error = None;
+        let mut total_delay: u64 = 0;
+
+        for attempt in 0..=self.config.retry_count {
+            let mut request = self.client.post(&url).json(payload);
+
+            if let Some(ref api_key) = self.config.api_key {
+                request = request.header("X-API-Key", api_key);
+            }
+            request = request.header("Idempotency-Key", hex::encode(token.nonce_or_tx_hash.0));
+
+            match request.send() {
+                Ok(response) => {
+                    let status = response.status();
+                    if status.is_success() {
+                        if let Some(content_length) = response.content_length() {
+                            if content_length > MAX_RESPONSE_BYTES as u64 {
+                                return Err(MprdError::BoundedValueExceeded(format!(
+                                    "executor response too large: {} bytes (max {})",
+                                    content_length, MAX_RESPONSE_BYTES
+                                )));
+                            }
+                        }
+
+                        let mut limited_reader = response.take((MAX_RESPONSE_BYTES + 1) as u64);
+                        let mut buf = Vec::with_capacity(MAX_RESPONSE_BYTES);
+                        limited_reader.read_to_end(&mut buf).map_err(|e| {
+                            MprdError::ExecutionError(format!(
+                                "Failed to read executor response: {}",
+                                e
+                            ))
+                        })?;
+
+                        if buf.len() > MAX_RESPONSE_BYTES {
+                            return Err(MprdError::BoundedValueExceeded(format!(
+                                "executor response too large: >{} bytes (max {})",
+                                MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES
+                            )));
+                        }
+
+                        let resp: ExecuteResponse = serde_json::from_slice(&buf).map_err(|e| {
+                            MprdError::ExecutionError(format!("Failed to parse response: {}", e))
+                        })?;
+
+                        return Ok(ExecutionResult {
+                            success: resp.success,
+                            message: resp.message,
+                        });
+                    } else if status.is_client_error() {
+                        return Err(MprdError::ExecutionError(format!(
+                            "HTTP client error (non-retryable): {}",
+                            status
+                        )));
+                    } else if status.is_server_error() {
+                        last_error = Some(format!("HTTP server error: {}", status));
+                    } else {
+                        return Err(MprdError::ExecutionError(format!(
+                            "HTTP non-retryable response: {}",
+                            status
+                        )));
+                    }
+                }
+                Err(e) => {
+                    last_error = Some(format!("Network error: {}", e));
+                }
+            }
+
+            if attempt < self.config.retry_count {
+                let delay = std::cmp::min(
+                    BASE_RETRY_DELAY_MS * (1u64 << attempt),
+                    MAX_SINGLE_RETRY_DELAY_MS,
+                );
+
+                if total_delay + delay > MAX_TOTAL_RETRY_DELAY_MS {
+                    break;
+                }
+
+                total_delay += delay;
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+            }
+        }
+
+        Err(MprdError::ExecutionError(format!(
+            "All {} attempts failed: {:?}",
+            self.config.retry_count + 1,
+            last_error
+        )))
+    }
 }
 
 /// Payload sent to the execution endpoint.
@@ -157,118 +302,16 @@ impl ExecutorAdapter for HttpExecutor {
         let proof = verified.proof();
         let action_preimage = require_action_preimage(verified)?;
 
-        let payload = ExecutePayload {
-            policy_hash: hex::encode(token.policy_hash.0),
-            policy_epoch: token.policy_ref.policy_epoch,
-            registry_root: hex::encode(token.policy_ref.registry_root.0),
-            state_hash: hex::encode(token.state_hash.0),
-            action_hash: hex::encode(token.chosen_action_hash.0),
-            action_preimage_hex: hex::encode(&action_preimage),
-            nonce_or_tx_hash: hex::encode(token.nonce_or_tx_hash.0),
-            timestamp_ms: token.timestamp_ms,
-            token_signature_hex: hex::encode(&token.signature),
-            proof_receipt_hex: hex::encode(&proof.risc0_receipt),
-            proof_metadata: proof.attestation_metadata.clone(),
-        };
+        let payload = execute_payload_from_parts(token, proof, &action_preimage);
+        self.execute_payload(token, &payload)
+    }
 
-        let url = format!("{}/execute", self.config.base_url);
-
-        let mut last_error = None;
-        let mut total_delay: u64 = 0;
-
-        for attempt in 0..=self.config.retry_count {
-            let mut request = self.client.post(&url).json(&payload);
-
-            if let Some(ref api_key) = self.config.api_key {
-                request = request.header("X-API-Key", api_key);
-            }
-            request = request.header("Idempotency-Key", hex::encode(token.nonce_or_tx_hash.0));
-
-            match request.send() {
-                Ok(response) => {
-                    let status = response.status();
-                    if status.is_success() {
-                        // Check Content-Length before reading body (DoS prevention fast path).
-                        if let Some(content_length) = response.content_length() {
-                            if content_length > MAX_RESPONSE_BYTES as u64 {
-                                return Err(MprdError::BoundedValueExceeded(format!(
-                                    "executor response too large: {} bytes (max {})",
-                                    content_length, MAX_RESPONSE_BYTES
-                                )));
-                            }
-                        }
-
-                        // Bounded streaming read: stop reading if we exceed the limit.
-                        let mut limited_reader = response.take((MAX_RESPONSE_BYTES + 1) as u64);
-                        let mut buf = Vec::with_capacity(MAX_RESPONSE_BYTES);
-                        limited_reader.read_to_end(&mut buf).map_err(|e| {
-                            MprdError::ExecutionError(format!(
-                                "Failed to read executor response: {}",
-                                e
-                            ))
-                        })?;
-
-                        if buf.len() > MAX_RESPONSE_BYTES {
-                            return Err(MprdError::BoundedValueExceeded(format!(
-                                "executor response too large: >{} bytes (max {})",
-                                MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES
-                            )));
-                        }
-
-                        let resp: ExecuteResponse = serde_json::from_slice(&buf).map_err(|e| {
-                            MprdError::ExecutionError(format!("Failed to parse response: {}", e))
-                        })?;
-
-                        return Ok(ExecutionResult {
-                            success: resp.success,
-                            message: resp.message,
-                        });
-                    } else if status.is_client_error() {
-                        // SECURITY: 4xx errors are non-retryable client errors
-                        // Retrying would cause duplicate submissions on idempotent endpoints
-                        return Err(MprdError::ExecutionError(format!(
-                            "HTTP client error (non-retryable): {}",
-                            status
-                        )));
-                    } else if status.is_server_error() {
-                        // 5xx errors are retryable server errors
-                        last_error = Some(format!("HTTP server error: {}", status));
-                    } else {
-                        return Err(MprdError::ExecutionError(format!(
-                            "HTTP non-retryable response: {}",
-                            status
-                        )));
-                    }
-                }
-                Err(e) => {
-                    // Network errors are retryable
-                    last_error = Some(format!("Network error: {}", e));
-                }
-            }
-
-            // Exponential backoff with cap
-            if attempt < self.config.retry_count {
-                // Calculate delay: base * 2^attempt, capped at MAX_SINGLE_RETRY_DELAY_MS
-                let delay = std::cmp::min(
-                    BASE_RETRY_DELAY_MS * (1u64 << attempt),
-                    MAX_SINGLE_RETRY_DELAY_MS,
-                );
-
-                // Check if total delay would exceed cap
-                if total_delay + delay > MAX_TOTAL_RETRY_DELAY_MS {
-                    break; // Stop retrying to avoid excessive delay
-                }
-
-                total_delay += delay;
-                std::thread::sleep(std::time::Duration::from_millis(delay));
-            }
-        }
-
-        Err(MprdError::ExecutionError(format!(
-            "All {} attempts failed: {:?}",
-            self.config.retry_count + 1,
-            last_error
-        )))
+    fn execute_ready(&self, ready: &ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
+        let token = ready.token();
+        let proof = ready.proof();
+        let action_preimage = require_ready_action_preimage(ready);
+        let payload = execute_payload_from_parts(token, proof, &action_preimage);
+        self.execute_payload(token, &payload)
     }
 }
 
@@ -310,23 +353,31 @@ impl ExecutorAdapter for WebhookExecutor {
         let token = verified.token();
         let proof = verified.proof();
         let action_preimage = require_action_preimage(verified)?;
-        let payload = serde_json::json!({
-            "event": "mprd_action_executed",
-            "policy_hash": hex::encode(token.policy_hash.0),
-            "policy_epoch": token.policy_ref.policy_epoch,
-            "registry_root": hex::encode(token.policy_ref.registry_root.0),
-            "state_hash": hex::encode(token.state_hash.0),
-            "action_hash": hex::encode(token.chosen_action_hash.0),
-            "action_preimage_hex": hex::encode(&action_preimage),
-            "nonce_or_tx_hash": hex::encode(token.nonce_or_tx_hash.0),
-            "timestamp_ms": token.timestamp_ms,
-            "token_signature_hex": hex::encode(&token.signature),
-            "proof": {
-                "candidate_set_hash": hex::encode(proof.candidate_set_hash.0),
-                "receipt_hex": hex::encode(&proof.risc0_receipt),
-                "metadata": proof.attestation_metadata,
+        let payload = webhook_payload_from_parts(token, proof, &action_preimage);
+
+        match self.client.post(&self.webhook_url).json(&payload).send() {
+            Ok(response) => {
+                if response.status().is_success() || response.status().as_u16() == 202 {
+                    Ok(ExecutionResult {
+                        success: true,
+                        message: Some(format!("Webhook accepted ({})", response.status())),
+                    })
+                } else {
+                    Ok(ExecutionResult {
+                        success: false,
+                        message: Some(format!("Webhook rejected ({})", response.status())),
+                    })
+                }
             }
-        });
+            Err(e) => Err(MprdError::ExecutionError(format!("Webhook failed: {}", e))),
+        }
+    }
+
+    fn execute_ready(&self, ready: &ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
+        let token = ready.token();
+        let proof = ready.proof();
+        let action_preimage = require_ready_action_preimage(ready);
+        let payload = webhook_payload_from_parts(token, proof, &action_preimage);
 
         match self.client.post(&self.webhook_url).json(&payload).send() {
             Ok(response) => {
@@ -390,6 +441,23 @@ struct AuditRecord {
     proof_metadata: HashMap<String, String>,
 }
 
+fn audit_record_from_parts(
+    token: &DecisionToken,
+    proof: &ProofBundle,
+    action_preimage: &[u8],
+) -> AuditRecord {
+    AuditRecord {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        policy_hash: hex::encode(token.policy_hash.0),
+        state_hash: hex::encode(token.state_hash.0),
+        action_hash: hex::encode(token.chosen_action_hash.0),
+        action_preimage_hex: Some(hex::encode(action_preimage)),
+        nonce_or_tx_hash: hex::encode(token.nonce_or_tx_hash.0),
+        token_timestamp_ms: token.timestamp_ms,
+        proof_metadata: proof.attestation_metadata.clone(),
+    }
+}
+
 impl ExecutorAdapter for FileExecutor {
     fn execute(&self, verified: &VerifiedBundle<'_>) -> Result<ExecutionResult> {
         // SECURITY: this executor writes an append-only audit line. The file is a side-effecting
@@ -398,16 +466,33 @@ impl ExecutorAdapter for FileExecutor {
         let token = verified.token();
         let proof = verified.proof();
         let action_preimage = require_action_preimage(verified)?;
-        let record = AuditRecord {
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            policy_hash: hex::encode(token.policy_hash.0),
-            state_hash: hex::encode(token.state_hash.0),
-            action_hash: hex::encode(token.chosen_action_hash.0),
-            action_preimage_hex: Some(hex::encode(action_preimage)),
-            nonce_or_tx_hash: hex::encode(token.nonce_or_tx_hash.0),
-            token_timestamp_ms: token.timestamp_ms,
-            proof_metadata: proof.attestation_metadata.clone(),
-        };
+        let record = audit_record_from_parts(token, proof, &action_preimage);
+
+        let json = serde_json::to_string(&record)
+            .map_err(|e| MprdError::ExecutionError(format!("Failed to serialize record: {}", e)))?;
+
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| MprdError::ExecutionError("File lock poisoned".into()))?;
+
+        writeln!(file, "{}", json)
+            .map_err(|e| MprdError::ExecutionError(format!("Failed to write to file: {}", e)))?;
+
+        file.flush()
+            .map_err(|e| MprdError::ExecutionError(format!("Failed to flush file: {}", e)))?;
+
+        Ok(ExecutionResult {
+            success: true,
+            message: Some(format!("Recorded to {}", self.path.display())),
+        })
+    }
+
+    fn execute_ready(&self, ready: &ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
+        let token = ready.token();
+        let proof = ready.proof();
+        let action_preimage = require_ready_action_preimage(ready);
+        let record = audit_record_from_parts(token, proof, &action_preimage);
 
         let json = serde_json::to_string(&record)
             .map_err(|e| MprdError::ExecutionError(format!("Failed to serialize record: {}", e)))?;
@@ -465,16 +550,7 @@ impl ExecutorAdapter for IdempotentFileExecutor {
         let token = verified.token();
         let proof = verified.proof();
         let action_preimage = require_action_preimage(verified)?;
-        let record = AuditRecord {
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            policy_hash: hex::encode(token.policy_hash.0),
-            state_hash: hex::encode(token.state_hash.0),
-            action_hash: hex::encode(token.chosen_action_hash.0),
-            action_preimage_hex: Some(hex::encode(action_preimage)),
-            nonce_or_tx_hash: hex::encode(token.nonce_or_tx_hash.0),
-            token_timestamp_ms: token.timestamp_ms,
-            proof_metadata: proof.attestation_metadata.clone(),
-        };
+        let record = audit_record_from_parts(token, proof, &action_preimage);
 
         let path = self.record_path(token);
         if let Some(parent) = path.parent() {
@@ -484,6 +560,50 @@ impl ExecutorAdapter for IdempotentFileExecutor {
         }
 
         // Fail-closed on IO errors; succeed idempotently if already recorded.
+        let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Ok(ExecutionResult {
+                    success: true,
+                    message: Some(format!("Already recorded: {}", path.display())),
+                });
+            }
+            Err(e) => {
+                return Err(MprdError::ExecutionError(format!(
+                    "Failed to create audit record: {}",
+                    e
+                )));
+            }
+        };
+
+        let json = serde_json::to_vec(&record)
+            .map_err(|e| MprdError::ExecutionError(format!("Failed to serialize record: {}", e)))?;
+        file.write_all(&json)
+            .map_err(|e| MprdError::ExecutionError(format!("Failed to write: {}", e)))?;
+        file.write_all(b"\n")
+            .map_err(|e| MprdError::ExecutionError(format!("Failed to write: {}", e)))?;
+        file.flush()
+            .map_err(|e| MprdError::ExecutionError(format!("Failed to flush: {}", e)))?;
+
+        Ok(ExecutionResult {
+            success: true,
+            message: Some(format!("Recorded to {}", path.display())),
+        })
+    }
+
+    fn execute_ready(&self, ready: &ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
+        let token = ready.token();
+        let proof = ready.proof();
+        let action_preimage = require_ready_action_preimage(ready);
+        let record = audit_record_from_parts(token, proof, &action_preimage);
+
+        let path = self.record_path(token);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                MprdError::ExecutionError(format!("Failed to create audit dir: {}", e))
+            })?;
+        }
+
         let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -579,6 +699,37 @@ impl ExecutorAdapter for CompositeExecutor {
             message: Some(messages.join("; ")),
         })
     }
+
+    fn execute_ready(&self, ready: &ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
+        let mut messages = Vec::new();
+        let mut all_success = true;
+
+        for (i, executor) in self.executors.iter().enumerate() {
+            match executor.execute_ready(ready) {
+                Ok(result) => {
+                    if !result.success {
+                        all_success = false;
+                    }
+                    if let Some(msg) = result.message {
+                        messages.push(format!("[{}] {}", i, msg));
+                    }
+                }
+                Err(e) => {
+                    all_success = false;
+                    messages.push(format!("[{}] ERROR: {}", i, e));
+
+                    if !self.best_effort {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        Ok(ExecutionResult {
+            success: all_success,
+            message: Some(messages.join("; ")),
+        })
+    }
 }
 
 // =============================================================================
@@ -590,6 +741,13 @@ pub struct NoOpExecutor;
 
 impl ExecutorAdapter for NoOpExecutor {
     fn execute(&self, _verified: &VerifiedBundle<'_>) -> Result<ExecutionResult> {
+        Ok(ExecutionResult {
+            success: true,
+            message: Some("no-op".into()),
+        })
+    }
+
+    fn execute_ready(&self, _ready: &ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
         Ok(ExecutionResult {
             success: true,
             message: Some("no-op".into()),
@@ -687,13 +845,29 @@ mod tests {
         verify_for_execution(&AcceptAllVerifier, token, proof).expect("verify_for_execution")
     }
 
+    fn ready<'a>(
+        token: &'a DecisionToken,
+        proof: &'a ProofBundle,
+    ) -> mprd_core::ExecutionReadyBundle<'a> {
+        mprd_core::prepare_execution_ready(verified(token, proof)).expect("prepare_execution_ready")
+    }
+
     struct CountingExecutor {
-        calls: Arc<AtomicUsize>,
+        raw_calls: Arc<AtomicUsize>,
+        ready_calls: Arc<AtomicUsize>,
     }
 
     impl ExecutorAdapter for CountingExecutor {
         fn execute(&self, _verified: &VerifiedBundle<'_>) -> Result<ExecutionResult> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.raw_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ExecutionResult {
+                success: true,
+                message: Some("counting".into()),
+            })
+        }
+
+        fn execute_ready(&self, _ready: &ExecutionReadyBundle<'_>) -> Result<ExecutionResult> {
+            self.ready_calls.fetch_add(1, Ordering::SeqCst);
             Ok(ExecutionResult {
                 success: true,
                 message: Some("counting".into()),
@@ -733,6 +907,20 @@ mod tests {
     }
 
     #[test]
+    fn file_executor_execute_ready_creates_audit_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mprd_test_ready.jsonl");
+
+        let executor = FileExecutor::new(&path).unwrap();
+        let token = dummy_token();
+        let proof = dummy_proof();
+        let result = executor.execute_ready(&ready(&token, &proof)).unwrap();
+
+        assert!(result.success);
+        assert!(path.exists());
+    }
+
+    #[test]
     fn composite_executor_chains_multiple() {
         let executors: Vec<Box<dyn ExecutorAdapter + Send + Sync>> =
             vec![Box::new(NoOpExecutor), Box::new(NoOpExecutor)];
@@ -747,12 +935,20 @@ mod tests {
 
     #[test]
     fn composite_executor_strict_fails_closed_and_stops_on_first_error() {
-        let c1 = Arc::new(AtomicUsize::new(0));
-        let c2 = Arc::new(AtomicUsize::new(0));
+        let c1_raw = Arc::new(AtomicUsize::new(0));
+        let c1_ready = Arc::new(AtomicUsize::new(0));
+        let c2_raw = Arc::new(AtomicUsize::new(0));
+        let c2_ready = Arc::new(AtomicUsize::new(0));
         let executors: Vec<Box<dyn ExecutorAdapter + Send + Sync>> = vec![
-            Box::new(CountingExecutor { calls: c1.clone() }),
+            Box::new(CountingExecutor {
+                raw_calls: c1_raw.clone(),
+                ready_calls: c1_ready.clone(),
+            }),
             Box::new(FailingExecutor),
-            Box::new(CountingExecutor { calls: c2.clone() }),
+            Box::new(CountingExecutor {
+                raw_calls: c2_raw.clone(),
+                ready_calls: c2_ready.clone(),
+            }),
         ];
 
         let composite = CompositeExecutor::new(executors);
@@ -761,18 +957,28 @@ mod tests {
         let err = composite.execute(&verified(&token, &proof)).unwrap_err();
         assert!(matches!(err, MprdError::ExecutionError(_)));
 
-        assert_eq!(c1.load(Ordering::SeqCst), 1);
-        assert_eq!(c2.load(Ordering::SeqCst), 0);
+        assert_eq!(c1_raw.load(Ordering::SeqCst), 1);
+        assert_eq!(c1_ready.load(Ordering::SeqCst), 0);
+        assert_eq!(c2_raw.load(Ordering::SeqCst), 0);
+        assert_eq!(c2_ready.load(Ordering::SeqCst), 0);
     }
 
     #[test]
     fn composite_executor_best_effort_continues_after_error() {
-        let c1 = Arc::new(AtomicUsize::new(0));
-        let c2 = Arc::new(AtomicUsize::new(0));
+        let c1_raw = Arc::new(AtomicUsize::new(0));
+        let c1_ready = Arc::new(AtomicUsize::new(0));
+        let c2_raw = Arc::new(AtomicUsize::new(0));
+        let c2_ready = Arc::new(AtomicUsize::new(0));
         let executors: Vec<Box<dyn ExecutorAdapter + Send + Sync>> = vec![
-            Box::new(CountingExecutor { calls: c1.clone() }),
+            Box::new(CountingExecutor {
+                raw_calls: c1_raw.clone(),
+                ready_calls: c1_ready.clone(),
+            }),
             Box::new(FailingExecutor),
-            Box::new(CountingExecutor { calls: c2.clone() }),
+            Box::new(CountingExecutor {
+                raw_calls: c2_raw.clone(),
+                ready_calls: c2_ready.clone(),
+            }),
         ];
 
         let composite = CompositeExecutor::best_effort(executors);
@@ -782,8 +988,39 @@ mod tests {
         assert!(!result.success);
         assert!(result.message.unwrap_or_default().contains("ERROR"));
 
-        assert_eq!(c1.load(Ordering::SeqCst), 1);
-        assert_eq!(c2.load(Ordering::SeqCst), 1);
+        assert_eq!(c1_raw.load(Ordering::SeqCst), 1);
+        assert_eq!(c1_ready.load(Ordering::SeqCst), 0);
+        assert_eq!(c2_raw.load(Ordering::SeqCst), 1);
+        assert_eq!(c2_ready.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn composite_executor_execute_ready_uses_child_ready_path() {
+        let c1_raw = Arc::new(AtomicUsize::new(0));
+        let c1_ready = Arc::new(AtomicUsize::new(0));
+        let c2_raw = Arc::new(AtomicUsize::new(0));
+        let c2_ready = Arc::new(AtomicUsize::new(0));
+        let executors: Vec<Box<dyn ExecutorAdapter + Send + Sync>> = vec![
+            Box::new(CountingExecutor {
+                raw_calls: c1_raw.clone(),
+                ready_calls: c1_ready.clone(),
+            }),
+            Box::new(CountingExecutor {
+                raw_calls: c2_raw.clone(),
+                ready_calls: c2_ready.clone(),
+            }),
+        ];
+
+        let composite = CompositeExecutor::new(executors);
+        let token = dummy_token();
+        let proof = dummy_proof();
+        let result = composite.execute_ready(&ready(&token, &proof)).unwrap();
+
+        assert!(result.success);
+        assert_eq!(c1_raw.load(Ordering::SeqCst), 0);
+        assert_eq!(c1_ready.load(Ordering::SeqCst), 1);
+        assert_eq!(c2_raw.load(Ordering::SeqCst), 0);
+        assert_eq!(c2_ready.load(Ordering::SeqCst), 1);
     }
 
     #[test]
