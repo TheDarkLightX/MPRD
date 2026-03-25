@@ -75,11 +75,23 @@ export function verifyTrustAnchors(anchors: TrustAnchors): TrustAnchorVerificati
         warnings.push('MPRD_OPERATOR_MANIFEST_KEY_HEX not configured');
     }
 
-    // All three must be present for configured = true
+    const stateSnapshotPath = anchors.stateSnapshotPath ?? null;
+    if (!stateSnapshotPath) {
+        warnings.push('MPRD_OPERATOR_STATE_SNAPSHOT_PATH not configured');
+    }
+
+    const stateKeyFingerprint = anchors.stateKeyFingerprint ?? null;
+    if (!stateKeyFingerprint) {
+        warnings.push('MPRD_OPERATOR_STATE_KEY_HEX not configured');
+    }
+
+    // Registry and signed-state anchors must be present for configured = true
     const configured = Boolean(
         registryStatePath &&
         registryKeyFingerprint &&
-        manifestKeyFingerprint
+        manifestKeyFingerprint &&
+        stateSnapshotPath &&
+        stateKeyFingerprint
     );
 
     return {
@@ -99,12 +111,16 @@ export function createTrustAnchorsFromEnv(env: {
     registryStatePath?: string;
     registryKeyHex?: string;
     manifestKeyHex?: string;
+    stateSnapshotPath?: string;
+    stateKeyHex?: string;
 }): TrustAnchors {
     return {
         registryStatePath: env.registryStatePath,
         registryKeyFingerprint: computeFingerprint(env.registryKeyHex) ?? undefined,
         manifestKeyFingerprint: computeFingerprint(env.manifestKeyHex) ??
             computeFingerprint(env.registryKeyHex) ?? undefined,
+        stateSnapshotPath: env.stateSnapshotPath,
+        stateKeyFingerprint: computeFingerprint(env.stateKeyHex) ?? undefined,
     };
 }
 
@@ -115,6 +131,8 @@ export function areTrustAnchorsConfigured(anchors: TrustAnchors): boolean {
     return Boolean(
         anchors.registryStatePath &&
         anchors.registryKeyFingerprint &&
-        anchors.manifestKeyFingerprint
+        anchors.manifestKeyFingerprint &&
+        anchors.stateSnapshotPath &&
+        anchors.stateKeyFingerprint
     );
 }

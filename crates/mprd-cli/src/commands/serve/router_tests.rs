@@ -8,7 +8,7 @@ use axum::http::{Request, StatusCode};
 use mprd_core::orchestrator::ExecutionReadyBridge;
 use mprd_core::{
     CandidateAction, Decision, DecisionToken, Hash32, PolicyRef, ProofBundle, RuleVerdict, Score,
-    StateRef, StateSnapshot, VerificationStatus, ZkAttestor, ZkLocalVerifier,
+    StateProvider, StateRef, StateSnapshot, VerificationStatus, ZkAttestor, ZkLocalVerifier,
 };
 use mprd_risc0_shared::{policy_exec_kind_mpb_id_v1, policy_exec_version_id_v1};
 use mprd_zk::manifest::{GuestImageEntryV1, GuestImageManifestV1};
@@ -306,6 +306,51 @@ fn signed_registry_ready_bridge_rejects_unvalidated_governance_witness() {
             .contains("requires a concrete governance gate packet"),
         "unexpected error: {err}"
     );
+}
+
+#[test]
+fn production_request_state_is_rejected() {
+    let err = super::require_no_request_state_in_production(Some(&HashMap::new()))
+        .expect_err("production path must reject caller-supplied state");
+    assert!(
+        err.to_string()
+            .contains("request-supplied state is demo-only"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn load_signed_state_provider_from_config_accepts_signed_snapshot() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let key = mprd_core::crypto::TokenSigningKey::from_seed(&[77u8; 32]);
+    let vk = key.verifying_key();
+    let snapshot_path = tmp.path().join("signed_state.json");
+    let signed = mprd_core::state_provenance::SignedStateSnapshotV1::sign(
+        &key,
+        42,
+        HashMap::from([("balance".into(), mprd_core::Value::UInt(100))]),
+        HashMap::new(),
+    )
+    .expect("sign snapshot");
+    std::fs::write(
+        &snapshot_path,
+        serde_json::to_vec_pretty(&signed).expect("serialize snapshot"),
+    )
+    .expect("write snapshot");
+
+    let mut config = super::super::MprdConfigFile::default();
+    config.state_snapshot_path = Some(snapshot_path);
+    config.state_verifying_key_hex = Some(hex::encode(vk.to_bytes()));
+
+    let provider =
+        super::load_signed_state_provider_from_config(&config).expect("provider must load");
+    let state = provider.snapshot().expect("provider snapshot");
+
+    assert_eq!(
+        state.state_ref.state_source_id,
+        mprd_core::state_provenance::state_source_id_signed_snapshot_v1()
+    );
+    assert_eq!(state.state_ref.state_epoch, 42);
 }
 
 #[tokio::test]
@@ -788,6 +833,40 @@ async fn settings_update_applies_when_only_one_field_is_present() {
     ));
     assert_eq!(out.decision_max, desired);
     assert_eq!(store.decision_max(), desired);
+}
+
+#[tokio::test]
+async fn settings_report_state_trust_anchors_when_configured() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let registry_path = tmp.path().join("registry_state.json");
+    let state_path = tmp.path().join("signed_state.json");
+    std::fs::write(&registry_path, b"{}").expect("write registry");
+    std::fs::write(&state_path, b"{}").expect("write state");
+
+    let mut state = test_state(&tmp);
+    state.config.registry_state_path = Some(registry_path);
+    state.config.registry_verifying_key_hex = Some("00".into());
+    state.config.state_snapshot_path = Some(state_path);
+    state.config.state_verifying_key_hex = Some("11".into());
+
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/settings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let out: op_api::OperatorSettings = read_json(res).await;
+    assert!(out.trust_anchors_configured);
+    assert!(out.trust_anchors.registry_state_path.is_some());
+    assert!(out.trust_anchors.state_snapshot_path.is_some());
+    assert!(out.trust_anchors.registry_key_fingerprint.is_some());
+    assert!(out.trust_anchors.state_key_fingerprint.is_some());
 }
 
 #[tokio::test]

@@ -26,20 +26,45 @@ fn components(
 #[test]
 fn trust_anchors_configured_requires_existing_path_and_decodable_key() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
-    let state_path = tmp.path().join("registry_state.json");
-    std::fs::write(&state_path, b"{}").expect("write");
+    let registry_path = tmp.path().join("registry_state.json");
+    let signed_state_path = tmp.path().join("signed_state.json");
+    std::fs::write(&registry_path, b"{}").expect("write registry");
+    std::fs::write(&signed_state_path, b"{}").expect("write state");
 
-    assert!(!trust_anchors_configured_with(None, Some("00")));
     assert!(!trust_anchors_configured_with(
-        Some(state_path.to_str().unwrap()),
-        None
+        None,
+        Some("00"),
+        Some(signed_state_path.as_path()),
+        Some("00")
     ));
     assert!(!trust_anchors_configured_with(
-        Some(state_path.to_str().unwrap()),
+        Some(registry_path.as_path()),
+        None,
+        Some(signed_state_path.as_path()),
+        Some("00")
+    ));
+    assert!(!trust_anchors_configured_with(
+        Some(registry_path.as_path()),
+        Some("not-hex"),
+        Some(signed_state_path.as_path()),
+        Some("00")
+    ));
+    assert!(!trust_anchors_configured_with(
+        Some(registry_path.as_path()),
+        Some("00"),
+        None,
+        Some("00")
+    ));
+    assert!(!trust_anchors_configured_with(
+        Some(registry_path.as_path()),
+        Some("00"),
+        Some(signed_state_path.as_path()),
         Some("not-hex")
     ));
     assert!(trust_anchors_configured_with(
-        Some(state_path.to_str().unwrap()),
+        Some(registry_path.as_path()),
+        Some("00"),
+        Some(signed_state_path.as_path()),
         Some("00")
     ));
 }

@@ -248,6 +248,8 @@ export interface TrustAnchors {
     registryStatePath?: string;
     registryKeyFingerprint?: string;
     manifestKeyFingerprint?: string;
+    stateSnapshotPath?: string;
+    stateKeyFingerprint?: string;
 }
 
 export interface OperatorSettings {

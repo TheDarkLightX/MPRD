@@ -240,6 +240,14 @@ enum Commands {
         #[arg(long)]
         registry_key: Option<String>,
 
+        /// Signed state snapshot file path (production mode)
+        #[arg(long)]
+        state_snapshot: Option<PathBuf>,
+
+        /// State snapshot verifying key hex (production mode)
+        #[arg(long)]
+        state_key: Option<String>,
+
         /// Token signing key hex (production mode)
         #[arg(long)]
         signing_key: Option<String>,
@@ -881,6 +889,8 @@ fn main() -> Result<()> {
             bind,
             registry_state,
             registry_key,
+            state_snapshot,
+            state_key,
             signing_key,
             artifacts_dir,
             policy_dir,
@@ -892,6 +902,12 @@ fn main() -> Result<()> {
             }
             if let Some(k) = registry_key {
                 config.registry_verifying_key_hex = Some(k);
+            }
+            if let Some(p) = state_snapshot {
+                config.state_snapshot_path = Some(p);
+            }
+            if let Some(k) = state_key {
+                config.state_verifying_key_hex = Some(k);
             }
             if let Some(k) = signing_key {
                 config.token_signing_key_hex = Some(k);

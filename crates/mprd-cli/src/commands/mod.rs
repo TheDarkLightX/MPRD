@@ -49,6 +49,12 @@ pub struct MprdConfigFile {
     /// Registry verifying key (hex).
     pub registry_verifying_key_hex: Option<String>,
 
+    /// Signed state snapshot path.
+    pub state_snapshot_path: Option<PathBuf>,
+
+    /// State snapshot verifying key (hex).
+    pub state_verifying_key_hex: Option<String>,
+
     /// Token signing key (hex).
     pub token_signing_key_hex: Option<String>,
 
@@ -109,6 +115,8 @@ impl Default for MprdConfigFile {
             }),
             registry_state_path: None,
             registry_verifying_key_hex: None,
+            state_snapshot_path: None,
+            state_verifying_key_hex: None,
             token_signing_key_hex: None,
             policy_artifacts_dir: None,
         }

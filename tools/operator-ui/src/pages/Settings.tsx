@@ -595,6 +595,18 @@ export function SettingsPage() {
                             {settings?.trustAnchors.manifestKeyFingerprint ?? 'Not configured'}
                         </span>
                     </div>
+                    <div className="flex items-center justify-between py-2 border-t border-dark-700">
+                        <span className="text-dark-400">State Snapshot</span>
+                        <span className="font-mono text-sm text-gray-200">
+                            {settings?.trustAnchors.stateSnapshotPath ?? 'Not configured'}
+                        </span>
+                    </div>
+                    <div className="flex items-center justify-between py-2">
+                        <span className="text-dark-400">State Key FP</span>
+                        <span className="font-mono text-gray-200">
+                            {settings?.trustAnchors.stateKeyFingerprint ?? 'Not configured'}
+                        </span>
+                    </div>
                 </div>
             </Card>
 

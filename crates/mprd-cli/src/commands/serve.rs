@@ -146,6 +146,44 @@ struct RunResponse {
     message: Option<String>,
 }
 
+fn require_no_request_state_in_production(
+    request_state: Option<&HashMap<String, serde_json::Value>>,
+) -> CoreResult<()> {
+    if request_state.is_some() {
+        return Err(mprd_core::MprdError::InvalidInput(
+            "production serve requires configured signed state snapshot; request-supplied state is demo-only".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn load_signed_state_provider_from_config(
+    config: &super::MprdConfigFile,
+) -> CoreResult<mprd_core::state_provenance::SignedSnapshotStateProvider> {
+    use mprd_core::crypto::TokenVerifyingKey;
+    use mprd_core::state_provenance::{SignedSnapshotStateProvider, SignedStateSnapshotV1};
+
+    let snapshot_path = config.state_snapshot_path.as_ref().ok_or_else(|| {
+        mprd_core::MprdError::ConfigError("Missing state_snapshot_path for production serve".into())
+    })?;
+    let state_key_hex = config.state_verifying_key_hex.as_ref().ok_or_else(|| {
+        mprd_core::MprdError::ConfigError(
+            "Missing state_verifying_key_hex for production serve".into(),
+        )
+    })?;
+
+    let state_vk = TokenVerifyingKey::from_hex(state_key_hex)
+        .map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
+    let json = std::fs::read_to_string(snapshot_path).map_err(|e| {
+        mprd_core::MprdError::ExecutionError(format!("Failed to read signed state snapshot: {}", e))
+    })?;
+    let signed: SignedStateSnapshotV1 = serde_json::from_str(&json).map_err(|e| {
+        mprd_core::MprdError::ExecutionError(format!("Invalid signed state snapshot JSON: {}", e))
+    })?;
+
+    Ok(SignedSnapshotStateProvider::new(signed, state_vk))
+}
+
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "ok",
@@ -159,32 +197,30 @@ async fn run_handler(
 ) -> Json<RunResponse> {
     if !state.insecure_demo
         && !trust_anchors_configured_with(
-            state
-                .config
-                .registry_state_path
-                .as_deref()
-                .map(|p| p.to_string_lossy())
-                .as_deref(),
+            state.config.registry_state_path.as_deref(),
             state.config.registry_verifying_key_hex.as_deref(),
+            state.config.state_snapshot_path.as_deref(),
+            state.config.state_verifying_key_hex.as_deref(),
         )
     {
         return Json(RunResponse {
             success: false,
             message: Some(
-                "Production mode requires configured trust anchors (registry state + keys). Check your config.".into()
+                "Production mode requires configured trust anchors (registry checkpoint + signed state snapshot + keys). Check your config.".into()
             ),
         });
     }
 
-    let fields = match build_state_fields(req.state) {
-        Ok(f) => f,
-        Err(e) => {
+    if !state.insecure_demo {
+        if let Err(e) = require_no_request_state_in_production(req.state.as_ref()) {
             return Json(RunResponse {
                 success: false,
                 message: Some(e.to_string()),
             });
         }
-    };
+    }
+
+    let request_state = req.state;
 
     let store = state.store.clone();
     let live_tx = state.live_tx.clone();
@@ -194,6 +230,8 @@ async fn run_handler(
     let join = tokio::task::spawn_blocking(move || {
         if insecure_demo {
             // Keep the demo pipeline running, but record operator-facing detail so the UI can be wired.
+            let fields = build_state_fields(request_state)
+                .map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
             let state_provider = SimpleStateProvider::new(fields);
 
             let proposer = SimpleProposer::single(
@@ -319,10 +357,10 @@ async fn run_handler(
             use mprd_risc0_shared::MPB_FUEL_LIMIT_V1;
 
             // 1. Load Trust Anchors
-            let registry_path = config.registry_state_path.ok_or_else(|| anyhow::anyhow!("Missing registry_state_path")).map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
-            let registry_vk_hex = config.registry_verifying_key_hex.ok_or_else(|| anyhow::anyhow!("Missing registry_verifying_key_hex")).map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
-            let signing_key_hex = config.token_signing_key_hex.ok_or_else(|| anyhow::anyhow!("Missing token_signing_key_hex")).map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
-            let artifacts_dir = config.policy_artifacts_dir.ok_or_else(|| anyhow::anyhow!("Missing policy_artifacts_dir")).map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
+            let registry_path = config.registry_state_path.clone().ok_or_else(|| anyhow::anyhow!("Missing registry_state_path")).map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
+            let registry_vk_hex = config.registry_verifying_key_hex.clone().ok_or_else(|| anyhow::anyhow!("Missing registry_verifying_key_hex")).map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
+            let signing_key_hex = config.token_signing_key_hex.clone().ok_or_else(|| anyhow::anyhow!("Missing token_signing_key_hex")).map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
+            let artifacts_dir = config.policy_artifacts_dir.clone().ok_or_else(|| anyhow::anyhow!("Missing policy_artifacts_dir")).map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
 
             let registry_vk = TokenVerifyingKey::from_hex(&registry_vk_hex).map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
             let signing_key = TokenSigningKey::from_hex(&signing_key_hex).map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
@@ -361,8 +399,8 @@ async fn run_handler(
             // The Attestor will fail if the policy (loaded from registry) actually denies it.
             let policy_engine = CliAllowAllPolicyEngine; // HOST HINT ONLY.
 
-             // 5. Setup Proposer & State (from Request)
-            let state_provider = SimpleStateProvider::new(fields);
+             // 5. Setup Proposer & State (from signed production snapshot)
+            let state_provider = load_signed_state_provider_from_config(&config)?;
             // Propose a schema-valid v1 action type so the executor boundary can enforce
             // preimage/limits/schema binding (fail-closed).
             let proposer = SimpleProposer::single("noop", HashMap::new(), 0);
@@ -440,6 +478,10 @@ async fn run_handler(
              core_config.crypto.require_signatures = true;
              core_config.crypto.signing_key_hex = Some(signing_key_hex.clone());
              core_config.execution.circuit_breaker.enabled = true;
+             core_config.state_provenance.require_provenance = true;
+             core_config.state_provenance.allowed_state_source_ids_hex = vec![hex::encode(
+                 mprd_core::state_provenance::state_source_id_signed_snapshot_v1().0,
+             )];
              core_config.anti_replay.nonce_store_dir = config
                  .anti_replay
                  .as_ref()
@@ -747,10 +789,19 @@ impl DecisionsQuery {
 
 async fn api_settings(State(state): State<AppState>) -> Json<op_api::OperatorSettings> {
     let api_key_required = env_opt("MPRD_OPERATOR_API_KEY").is_some();
-    let registry_state_path = env_opt("MPRD_OPERATOR_REGISTRY_STATE_PATH");
-    let registry_key_hex = env_opt("MPRD_OPERATOR_REGISTRY_KEY_HEX");
-    let manifest_key_hex =
-        env_opt("MPRD_OPERATOR_MANIFEST_KEY_HEX").or_else(|| registry_key_hex.clone());
+    let registry_state_path = state
+        .config
+        .registry_state_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string());
+    let registry_key_hex = state.config.registry_verifying_key_hex.clone();
+    let manifest_key_hex = registry_key_hex.clone();
+    let state_snapshot_path = state
+        .config
+        .state_snapshot_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string());
+    let state_key_hex = state.config.state_verifying_key_hex.clone();
     let store_sensitive_enabled = state.store.store_sensitive_enabled();
     let decision_retention_days = state.store.decision_retention_days();
     let decision_max = state.store.decision_max();
@@ -769,9 +820,17 @@ async fn api_settings(State(state): State<AppState>) -> Json<op_api::OperatorSet
         .as_deref()
         .and_then(|hex_key| hex::decode(hex_key).ok())
         .map(|b| fingerprint_hex(&b));
+    let state_key_fingerprint = state_key_hex
+        .as_deref()
+        .and_then(|hex_key| hex::decode(hex_key).ok())
+        .map(|b| fingerprint_hex(&b));
 
-    let trust_anchors_configured =
-        trust_anchors_configured_with(registry_state_path.as_deref(), registry_key_hex.as_deref());
+    let trust_anchors_configured = trust_anchors_configured_with(
+        state.config.registry_state_path.as_deref(),
+        registry_key_hex.as_deref(),
+        state.config.state_snapshot_path.as_deref(),
+        state_key_hex.as_deref(),
+    );
 
     Json(op_api::OperatorSettings {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -788,6 +847,8 @@ async fn api_settings(State(state): State<AppState>) -> Json<op_api::OperatorSet
             registry_state_path,
             registry_key_fingerprint,
             manifest_key_fingerprint,
+            state_snapshot_path,
+            state_key_fingerprint,
         },
     })
 }
@@ -855,7 +916,14 @@ fn autopilot_transition_allowed(
 ) -> bool {
     let mode = state.config.mode.trim().to_ascii_lowercase();
     let trustless = mode == "trustless" || mode == "private";
-    if trustless && !trust_anchors_configured() {
+    if trustless
+        && !trust_anchors_configured_with(
+            state.config.registry_state_path.as_deref(),
+            state.config.registry_verifying_key_hex.as_deref(),
+            state.config.state_snapshot_path.as_deref(),
+            state.config.state_verifying_key_hex.as_deref(),
+        )
+    {
         return false;
     }
     let now = now_ms();
@@ -878,7 +946,14 @@ fn autopilot_degradation_target(
 ) -> Option<(op_api::AutopilotMode, String)> {
     let mode = state.config.mode.trim().to_ascii_lowercase();
     let trustless = mode == "trustless" || mode == "private";
-    if trustless && !trust_anchors_configured() {
+    if trustless
+        && !trust_anchors_configured_with(
+            state.config.registry_state_path.as_deref(),
+            state.config.registry_verifying_key_hex.as_deref(),
+            state.config.state_snapshot_path.as_deref(),
+            state.config.state_verifying_key_hex.as_deref(),
+        )
+    {
         return Some((
             op_api::AutopilotMode::Manual,
             "trust_anchors_missing".into(),
@@ -1277,22 +1352,21 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
     }
 }
 
-fn trust_anchors_configured() -> bool {
-    trust_anchors_configured_with(
-        env_opt("MPRD_OPERATOR_REGISTRY_STATE_PATH").as_deref(),
-        env_opt("MPRD_OPERATOR_REGISTRY_KEY_HEX").as_deref(),
-    )
-}
-
 fn trust_anchors_configured_with(
-    registry_state_path: Option<&str>,
+    registry_state_path: Option<&std::path::Path>,
     registry_key_hex: Option<&str>,
+    state_snapshot_path: Option<&std::path::Path>,
+    state_key_hex: Option<&str>,
 ) -> bool {
-    let path_ok = registry_state_path.is_some_and(|p| std::path::Path::new(p).exists());
-    let key_ok = registry_key_hex
+    let registry_path_ok = registry_state_path.is_some_and(|p| p.exists());
+    let registry_key_ok = registry_key_hex
         .and_then(|hex_key| hex::decode(hex_key).ok())
         .is_some();
-    path_ok && key_ok
+    let state_path_ok = state_snapshot_path.is_some_and(|p| p.exists());
+    let state_key_ok = state_key_hex
+        .and_then(|hex_key| hex::decode(hex_key).ok())
+        .is_some();
+    registry_path_ok && registry_key_ok && state_path_ok && state_key_ok
 }
 
 fn compute_system_status(
@@ -1341,7 +1415,13 @@ async fn api_status(State(state): State<AppState>) -> Json<op_api::SystemStatus>
 
     let mode = config.mode.trim().to_ascii_lowercase();
     let trustless = mode == "trustless" || mode == "private";
-    let anchors_ok = !trustless || trust_anchors_configured();
+    let anchors_ok = !trustless
+        || trust_anchors_configured_with(
+            config.registry_state_path.as_deref(),
+            config.registry_verifying_key_hex.as_deref(),
+            config.state_snapshot_path.as_deref(),
+            config.state_verifying_key_hex.as_deref(),
+        );
 
     let components = op_api::SystemComponents {
         tau,

@@ -37,13 +37,15 @@ const DEFAULT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
  * Check if trust anchors are fully configured.
  * 
  * @precondition anchors is a valid TrustAnchors object
- * @postcondition Returns true iff all three anchor fields are present
+ * @postcondition Returns true iff registry and signed-state anchor fields are present
  */
 function areAnchorsConfigured(anchors: TrustAnchors): boolean {
     return Boolean(
         anchors.registryStatePath &&
         anchors.registryKeyFingerprint &&
-        anchors.manifestKeyFingerprint
+        anchors.manifestKeyFingerprint &&
+        anchors.stateSnapshotPath &&
+        anchors.stateKeyFingerprint
     );
 }
 

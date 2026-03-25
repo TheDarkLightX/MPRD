@@ -226,6 +226,10 @@ pub struct TrustAnchors {
     pub registry_key_fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manifest_key_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_snapshot_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_key_fingerprint: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

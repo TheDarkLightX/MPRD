@@ -47,7 +47,9 @@ function areAnchorsConfigured(anchors: TrustAnchors): boolean {
     return Boolean(
         anchors.registryStatePath &&
         anchors.registryKeyFingerprint &&
-        anchors.manifestKeyFingerprint
+        anchors.manifestKeyFingerprint &&
+        anchors.stateSnapshotPath &&
+        anchors.stateKeyFingerprint
     );
 }
 
