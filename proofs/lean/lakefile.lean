@@ -23,6 +23,7 @@ lean_lib MPRDLeanProofs where
     `MPRD_GovernanceGateAuthorization,
     `MPRD_GovernanceStateLinkage,
     `MPRD_GovernanceExecutionBridge,
+    `MPRD_SignedRegistryCheckpointBridge,
     `MPRD_RegistryPolicyAuthority,
     `MPRD_ParallelIndependenceOracle,
     `TauTables_SelectSet

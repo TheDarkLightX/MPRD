@@ -16,6 +16,7 @@ import MPRD_GovernedSourceArtifactWitness
 import MPRD_GovernanceGateAuthorization
 import MPRD_GovernanceStateLinkage
 import MPRD_GovernanceExecutionBridge
+import MPRD_SignedRegistryCheckpointBridge
 import MPRD_RegistryPolicyAuthority
 import MPRD_ParallelIndependenceOracle
 import TauTables_SelectSet
