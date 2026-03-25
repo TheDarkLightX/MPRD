@@ -1,11 +1,13 @@
 use super::{
-    compute_system_status, trust_anchors_configured_with, validate_retention_update,
-    validate_serve_startup_config,
+    compute_system_status, select_production_serve_policy, trust_anchors_configured_with,
+    validate_retention_update, validate_serve_startup_config,
 };
 use crate::operator::api as op_api;
 use mprd_core::crypto::TokenSigningKey;
 use mprd_core::{Hash32, Value};
-use mprd_risc0_shared::{policy_exec_kind_mpb_id_v1, policy_exec_version_id_v1};
+use mprd_risc0_shared::{
+    policy_exec_kind_mpb_id_v1, policy_exec_kind_tau_compiled_id_v1, policy_exec_version_id_v1,
+};
 use mprd_zk::manifest::{GuestImageEntryV1, GuestImageManifestV1};
 use mprd_zk::registry_state::{AuthorizedPolicyV1, RegistryStateV1, SignedRegistryStateV1};
 use std::collections::HashMap;
@@ -123,6 +125,51 @@ fn valid_trustless_serve_config(tmp: &tempfile::TempDir) -> super::super::MprdCo
         policy_artifacts_dir: Some(artifacts_dir),
         ..super::super::MprdConfigFile::default()
     }
+}
+
+#[test]
+fn production_serve_policy_selection_prefers_authorized_mpb_policy() {
+    let key = TokenSigningKey::from_seed(&[0x51; 32]);
+    let manifest = GuestImageManifestV1::sign(
+        &key,
+        1,
+        vec![
+            GuestImageEntryV1 {
+                policy_exec_kind_id: policy_exec_kind_tau_compiled_id_v1(),
+                policy_exec_version_id: policy_exec_version_id_v1(),
+                image_id: [0x11; 32],
+            },
+            GuestImageEntryV1 {
+                policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
+                policy_exec_version_id: policy_exec_version_id_v1(),
+                image_id: [0x22; 32],
+            },
+        ],
+    )
+    .expect("manifest");
+    let tau_policy = AuthorizedPolicyV1 {
+        policy_hash: Hash32([0x10; 32]),
+        policy_exec_kind_id: policy_exec_kind_tau_compiled_id_v1(),
+        policy_exec_version_id: policy_exec_version_id_v1(),
+        policy_source_kind_id: Some([0x61; 32]),
+        policy_source_hash: Some(Hash32([0x71; 32])),
+    };
+    let mpb_policy = AuthorizedPolicyV1 {
+        policy_hash: Hash32([0x20; 32]),
+        policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
+        policy_exec_version_id: policy_exec_version_id_v1(),
+        policy_source_kind_id: Some([0x62; 32]),
+        policy_source_hash: Some(Hash32([0x72; 32])),
+    };
+    let state = RegistryStateV1 {
+        policy_epoch: 1,
+        registry_root: Hash32([0x33; 32]),
+        authorized_policies: vec![tau_policy, mpb_policy.clone()],
+        guest_image_manifest: manifest,
+    };
+
+    let selected = select_production_serve_policy(&state).expect("select mpb policy");
+    assert_eq!(selected.policy_hash, mpb_policy.policy_hash);
 }
 
 #[test]

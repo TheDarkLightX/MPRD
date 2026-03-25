@@ -601,12 +601,13 @@ async fn run_handler(
              let verifier = BoxedLocalVerifier(verifier);
 
              // RUN IT
-             // Note: policy_hash currently hardcoded to what's in the registry?
-             // Since we're using a single-action simple proposer, we need to pick *some* policy.
-             // In a real system, the Proposer proposes for a *specific* policy.
-             // We'll use the *first* authorized policy from the registry as the target.
-             let registry_state = mprd_zk::registry_state::RegistryStateProvider::get(registry_provider.as_ref()).unwrap();
-             let target_policy = registry_state.authorized_policies.first().ok_or_else(|| mprd_core::MprdError::ExecutionError("Registry has no policies".into()))?;
+             // This shipped production serve path is currently MPB-specific because it wires
+             // the registry-bound MPB attestor above. Select the first authorized MPB policy
+             // explicitly instead of assuming the first authorized policy matches.
+             let registry_state =
+                 mprd_zk::registry_state::RegistryStateProvider::get(registry_provider.as_ref())
+                     .unwrap();
+             let target_policy = select_production_serve_policy(&registry_state)?;
 
              orchestrator::run_once_with_ready_bridge(orchestrator::RunOnceInputs {
                 state_provider: &state_provider,
@@ -1379,6 +1380,23 @@ fn trust_anchors_configured_with(
     registry_path_ok && registry_key_ok && state_path_ok && state_key_ok
 }
 
+fn select_production_serve_policy(
+    state: &mprd_zk::registry_state::RegistryStateV1,
+) -> mprd_core::Result<&mprd_zk::registry_state::AuthorizedPolicyV1> {
+    state
+        .authorized_policies
+        .iter()
+        .find(|policy| {
+            policy.policy_exec_kind_id == mprd_risc0_shared::policy_exec_kind_mpb_id_v1()
+                && policy.policy_exec_version_id == mprd_risc0_shared::policy_exec_version_id_v1()
+        })
+        .ok_or_else(|| {
+            mprd_core::MprdError::ExecutionError(
+                "Registry has no authorized mpb-v1 policy for production serve".into(),
+            )
+        })
+}
+
 fn validate_serve_startup_config(
     config: &super::MprdConfigFile,
     insecure_demo: bool,
@@ -1453,6 +1471,7 @@ fn validate_serve_startup_config(
             policy_epoch: state.policy_epoch,
             registry_root: state.registry_root,
         };
+        select_production_serve_policy(&state)?;
         let authorization = RegistryStatePolicyAuthorizationProvider::new(
             Arc::clone(&registry_provider),
             registry_vk.clone(),
