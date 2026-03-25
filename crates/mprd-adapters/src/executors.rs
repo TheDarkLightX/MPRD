@@ -58,6 +58,9 @@ fn execute_payload_from_parts(
         policy_epoch: token.policy_ref.policy_epoch,
         registry_root: hex::encode(token.policy_ref.registry_root.0),
         state_hash: hex::encode(token.state_hash.0),
+        state_source_id: hex::encode(token.state_ref.state_source_id.0),
+        state_epoch: token.state_ref.state_epoch,
+        state_attestation_hash: hex::encode(token.state_ref.state_attestation_hash.0),
         action_hash: hex::encode(token.chosen_action_hash.0),
         action_preimage_hex: hex::encode(action_preimage),
         nonce_or_tx_hash: hex::encode(token.nonce_or_tx_hash.0),
@@ -79,6 +82,9 @@ fn webhook_payload_from_parts(
         "policy_epoch": token.policy_ref.policy_epoch,
         "registry_root": hex::encode(token.policy_ref.registry_root.0),
         "state_hash": hex::encode(token.state_hash.0),
+        "state_source_id": hex::encode(token.state_ref.state_source_id.0),
+        "state_epoch": token.state_ref.state_epoch,
+        "state_attestation_hash": hex::encode(token.state_ref.state_attestation_hash.0),
         "action_hash": hex::encode(token.chosen_action_hash.0),
         "action_preimage_hex": hex::encode(action_preimage),
         "nonce_or_tx_hash": hex::encode(token.nonce_or_tx_hash.0),
@@ -264,6 +270,9 @@ struct ExecutePayload {
     policy_epoch: u64,
     registry_root: String,
     state_hash: String,
+    state_source_id: String,
+    state_epoch: u64,
+    state_attestation_hash: String,
     action_hash: String,
     action_preimage_hex: String,
     nonce_or_tx_hash: String,
@@ -434,6 +443,9 @@ struct AuditRecord {
     timestamp: String,
     policy_hash: String,
     state_hash: String,
+    state_source_id: String,
+    state_epoch: u64,
+    state_attestation_hash: String,
     action_hash: String,
     action_preimage_hex: Option<String>,
     nonce_or_tx_hash: String,
@@ -450,6 +462,9 @@ fn audit_record_from_parts(
         timestamp: chrono::Utc::now().to_rfc3339(),
         policy_hash: hex::encode(token.policy_hash.0),
         state_hash: hex::encode(token.state_hash.0),
+        state_source_id: hex::encode(token.state_ref.state_source_id.0),
+        state_epoch: token.state_ref.state_epoch,
+        state_attestation_hash: hex::encode(token.state_ref.state_attestation_hash.0),
         action_hash: hex::encode(token.chosen_action_hash.0),
         action_preimage_hex: Some(hex::encode(action_preimage)),
         nonce_or_tx_hash: hex::encode(token.nonce_or_tx_hash.0),
@@ -907,6 +922,53 @@ mod tests {
     }
 
     #[test]
+    fn execute_payload_includes_state_ref_provenance() {
+        let token = dummy_token();
+        let proof = dummy_proof();
+        let action_preimage = dummy_http_call_action_preimage();
+
+        let payload = execute_payload_from_parts(&token, &proof, &action_preimage);
+        assert_eq!(
+            payload.state_source_id,
+            hex::encode(token.state_ref.state_source_id.0)
+        );
+        assert_eq!(payload.state_epoch, token.state_ref.state_epoch);
+        assert_eq!(
+            payload.state_attestation_hash,
+            hex::encode(token.state_ref.state_attestation_hash.0)
+        );
+    }
+
+    #[test]
+    fn webhook_payload_includes_state_ref_provenance() {
+        let token = dummy_token();
+        let proof = dummy_proof();
+        let action_preimage = dummy_http_call_action_preimage();
+        let expected_state_source_id = hex::encode(token.state_ref.state_source_id.0);
+        let expected_state_attestation_hash = hex::encode(token.state_ref.state_attestation_hash.0);
+
+        let payload = webhook_payload_from_parts(&token, &proof, &action_preimage);
+        assert_eq!(
+            payload
+                .get("state_source_id")
+                .and_then(serde_json::Value::as_str),
+            Some(expected_state_source_id.as_str())
+        );
+        assert_eq!(
+            payload
+                .get("state_epoch")
+                .and_then(serde_json::Value::as_u64),
+            Some(token.state_ref.state_epoch)
+        );
+        assert_eq!(
+            payload
+                .get("state_attestation_hash")
+                .and_then(serde_json::Value::as_str),
+            Some(expected_state_attestation_hash.as_str())
+        );
+    }
+
+    #[test]
     fn file_executor_execute_ready_creates_audit_record() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mprd_test_ready.jsonl");
@@ -918,6 +980,41 @@ mod tests {
 
         assert!(result.success);
         assert!(path.exists());
+    }
+
+    #[test]
+    fn file_executor_record_includes_state_ref_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mprd_test_state_ref.jsonl");
+
+        let executor = FileExecutor::new(&path).unwrap();
+        let token = dummy_token();
+        let proof = dummy_proof();
+        let expected_state_source_id = hex::encode(token.state_ref.state_source_id.0);
+        let expected_state_attestation_hash = hex::encode(token.state_ref.state_attestation_hash.0);
+        let result = executor.execute_ready(&ready(&token, &proof)).unwrap();
+
+        assert!(result.success);
+        let line = std::fs::read_to_string(&path).expect("read audit file");
+        let record: serde_json::Value = serde_json::from_str(line.trim()).expect("json record");
+        assert_eq!(
+            record
+                .get("state_source_id")
+                .and_then(serde_json::Value::as_str),
+            Some(expected_state_source_id.as_str())
+        );
+        assert_eq!(
+            record
+                .get("state_epoch")
+                .and_then(serde_json::Value::as_u64),
+            Some(token.state_ref.state_epoch)
+        );
+        assert_eq!(
+            record
+                .get("state_attestation_hash")
+                .and_then(serde_json::Value::as_str),
+            Some(expected_state_attestation_hash.as_str())
+        );
     }
 
     #[test]
