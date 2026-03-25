@@ -442,7 +442,9 @@ impl ZkAttestor for RobustMpbAttestor {
         ready: &mprd_core::AttestationReadyBundle<'_>,
         candidates: &[CandidateAction],
     ) -> Result<ProofBundle> {
-        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+        let mut proof = self.attest(ready.token(), ready.decision(), ready.state(), candidates)?;
+        mprd_core::attach_governance_attestation_to_proof_v1(&mut proof, ready);
+        Ok(proof)
     }
 
     #[instrument(skip(self, decision, state, candidates), fields(mode = "B-Lite"))]
@@ -987,7 +989,9 @@ impl ZkAttestor for RobustRisc0Attestor {
         ready: &mprd_core::AttestationReadyBundle<'_>,
         candidates: &[CandidateAction],
     ) -> Result<ProofBundle> {
-        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+        let mut proof = self.attest(ready.token(), ready.decision(), ready.state(), candidates)?;
+        mprd_core::attach_governance_attestation_to_proof_v1(&mut proof, ready);
+        Ok(proof)
     }
 
     #[instrument(skip(self, decision, state, candidates), fields(mode = "B-Full"))]
@@ -1315,7 +1319,9 @@ impl ZkAttestor for RobustPrivateAttestor {
         ready: &mprd_core::AttestationReadyBundle<'_>,
         candidates: &[CandidateAction],
     ) -> Result<ProofBundle> {
-        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+        let mut proof = self.attest(ready.token(), ready.decision(), ready.state(), candidates)?;
+        mprd_core::attach_governance_attestation_to_proof_v1(&mut proof, ready);
+        Ok(proof)
     }
 
     #[instrument(skip(self, decision, state, candidates), fields(mode = "C"))]

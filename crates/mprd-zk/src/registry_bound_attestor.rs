@@ -56,7 +56,9 @@ impl mprd_core::ZkAttestor for RegistryBoundRisc0MpbAttestor {
         ready: &mprd_core::AttestationReadyBundle<'_>,
         candidates: &[mprd_core::CandidateAction],
     ) -> Result<ProofBundle> {
-        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+        let mut proof = self.attest(ready.token(), ready.decision(), ready.state(), candidates)?;
+        mprd_core::attach_governance_attestation_to_proof_v1(&mut proof, ready);
+        Ok(proof)
     }
 
     fn attest(
@@ -121,7 +123,9 @@ impl mprd_core::ZkAttestor for RegistryBoundRisc0TauCompiledAttestor {
         ready: &mprd_core::AttestationReadyBundle<'_>,
         candidates: &[mprd_core::CandidateAction],
     ) -> Result<ProofBundle> {
-        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+        let mut proof = self.attest(ready.token(), ready.decision(), ready.state(), candidates)?;
+        mprd_core::attach_governance_attestation_to_proof_v1(&mut proof, ready);
+        Ok(proof)
     }
 
     fn attest(

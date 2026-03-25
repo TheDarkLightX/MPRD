@@ -829,40 +829,7 @@ mod tests {
                 "nonce_or_tx_hash".into(),
                 hex::encode(token.nonce_or_tx_hash.0),
             );
-            if let Some(governance) = ready.governance() {
-                metadata.insert(
-                    "governance_update_kind".into(),
-                    governance.update_kind().as_str().into(),
-                );
-                metadata.insert(
-                    "governance_profile_app_ok".into(),
-                    if governance.profile_app_ok() {
-                        "true"
-                    } else {
-                        "false"
-                    }
-                    .into(),
-                );
-                metadata.insert(
-                    "governance_profile_safety_ok".into(),
-                    if governance.profile_safety_ok() {
-                        "true"
-                    } else {
-                        "false"
-                    }
-                    .into(),
-                );
-                metadata.insert(
-                    "governance_link_ok".into(),
-                    if governance.link_ok() {
-                        "true"
-                    } else {
-                        "false"
-                    }
-                    .into(),
-                );
-            }
-            Ok(ProofBundle {
+            let mut proof = ProofBundle {
                 policy_hash: decision.policy_hash,
                 state_hash: state.state_hash,
                 candidate_set_hash: dummy_hash(4),
@@ -874,7 +841,9 @@ mod tests {
                 ),
                 risc0_receipt: vec![],
                 attestation_metadata: metadata,
-            })
+            };
+            crate::attach_governance_attestation_to_proof_v1(&mut proof, ready);
+            Ok(proof)
         }
     }
 
@@ -949,6 +918,41 @@ mod tests {
             Ok(StateSnapshot {
                 fields: HashMap::new(),
                 policy_inputs: HashMap::new(),
+                state_hash: dummy_hash(1),
+                state_ref: crate::StateRef::unknown(),
+            })
+        }
+    }
+
+    struct GovernanceStateProvider;
+
+    impl StateProvider for GovernanceStateProvider {
+        fn snapshot(&self) -> Result<StateSnapshot> {
+            Ok(StateSnapshot {
+                fields: HashMap::new(),
+                policy_inputs: HashMap::from([
+                    (
+                        crate::GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1.into(),
+                        b"1".to_vec(),
+                    ),
+                    (
+                        crate::GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1.into(),
+                        b"0".to_vec(),
+                    ),
+                    (
+                        crate::GOVERNANCE_INPUT_IS_CAP_EXPAND_V1.into(),
+                        b"0".to_vec(),
+                    ),
+                    (
+                        crate::GOVERNANCE_INPUT_PROFILE_APP_OK_V1.into(),
+                        b"1".to_vec(),
+                    ),
+                    (
+                        crate::GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1.into(),
+                        b"0".to_vec(),
+                    ),
+                    (crate::GOVERNANCE_INPUT_LINK_OK_V1.into(), b"1".to_vec()),
+                ]),
                 state_hash: dummy_hash(1),
                 state_ref: crate::StateRef::unknown(),
             })
@@ -1304,6 +1308,44 @@ mod tests {
         assert!(result.success);
         assert!(saw_authorization.load(Ordering::SeqCst));
         assert!(!saw_governance.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn run_once_fails_closed_when_attestor_drops_governance_metadata() {
+        let state_provider = GovernanceStateProvider;
+        let proposer = ValidHttpCallProposer;
+        let policy_engine = AllowAllPolicyEngine;
+        let selector = DummySelector;
+        let token_factory = DummyTokenFactory;
+        let attestor = DummyAttestor;
+        let verifier = DummyVerifier;
+        let executor = DummyExecutor;
+        let policy_hash = Hash32([9u8; 32]);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: Hash32([8u8; 32]),
+        };
+
+        let err = run_once(RunOnceInputs {
+            state_provider: &state_provider,
+            proposer: &proposer,
+            policy_engine: &policy_engine,
+            selector: &selector,
+            token_factory: &token_factory,
+            attestor: &attestor,
+            verifier: &verifier,
+            executor: &executor,
+            policy_hash: &policy_hash,
+            policy_ref,
+            nonce_or_tx_hash: None,
+            metrics: None,
+            audit_recorder: None,
+        })
+        .unwrap_err();
+
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "missing governance_update_kind attestation metadata")
+        );
     }
 
     #[test]

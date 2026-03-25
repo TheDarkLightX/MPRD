@@ -368,6 +368,12 @@ impl GovernanceAdmissionWitnessV1 {
     }
 }
 
+pub const GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1: &str = "governance_update_kind";
+pub const GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1: &str = "governance_profile_app_ok";
+pub const GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1: &str =
+    "governance_profile_safety_ok";
+pub const GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1: &str = "governance_link_ok";
+
 /// Concrete policy authority witness carried on the RC1 path.
 ///
 /// This binds the exact `(policy_hash, policy_ref)` pair the orchestrator was authorized to use
@@ -558,6 +564,112 @@ pub fn governance_admission_witness_from_fields_v1(
     })
 }
 
+fn governance_attestation_bool_v1(value: bool) -> &'static str {
+    if value {
+        "true"
+    } else {
+        "false"
+    }
+}
+
+/// Emit canonical governance attestation metadata for the admitted governance witness.
+pub fn insert_governance_attestation_metadata_v1(
+    metadata: &mut HashMap<String, String>,
+    governance: &GovernanceAdmissionWitnessV1,
+) {
+    metadata.insert(
+        GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1.into(),
+        governance.update_kind().as_str().into(),
+    );
+    metadata.insert(
+        GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1.into(),
+        governance_attestation_bool_v1(governance.profile_app_ok()).into(),
+    );
+    metadata.insert(
+        GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1.into(),
+        governance_attestation_bool_v1(governance.profile_safety_ok()).into(),
+    );
+    metadata.insert(
+        GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1.into(),
+        governance_attestation_bool_v1(governance.link_ok()).into(),
+    );
+}
+
+fn require_governance_attestation_metadata_value_v1<'a>(
+    metadata: &'a HashMap<String, String>,
+    key: &'static str,
+) -> Result<&'a str> {
+    metadata
+        .get(key)
+        .map(String::as_str)
+        .ok_or_else(|| MprdError::InvalidInput(format!("missing {key} attestation metadata")))
+}
+
+/// Verify that proof metadata preserved the same admitted governance witness.
+pub fn verify_governance_attestation_metadata_v1(
+    proof: &ProofBundle,
+    governance: &GovernanceAdmissionWitnessV1,
+) -> Result<()> {
+    let metadata = &proof.attestation_metadata;
+    let expected_update_kind = governance.update_kind().as_str();
+    let actual_update_kind = require_governance_attestation_metadata_value_v1(
+        metadata,
+        GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1,
+    )?;
+    if actual_update_kind != expected_update_kind {
+        return Err(MprdError::InvalidInput(
+            "governance_update_kind attestation metadata drifted from admitted governance".into(),
+        ));
+    }
+
+    let expected_profile_app_ok = governance_attestation_bool_v1(governance.profile_app_ok());
+    let actual_profile_app_ok = require_governance_attestation_metadata_value_v1(
+        metadata,
+        GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1,
+    )?;
+    if actual_profile_app_ok != expected_profile_app_ok {
+        return Err(MprdError::InvalidInput(
+            "governance_profile_app_ok attestation metadata drifted from admitted governance"
+                .into(),
+        ));
+    }
+
+    let expected_profile_safety_ok = governance_attestation_bool_v1(governance.profile_safety_ok());
+    let actual_profile_safety_ok = require_governance_attestation_metadata_value_v1(
+        metadata,
+        GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1,
+    )?;
+    if actual_profile_safety_ok != expected_profile_safety_ok {
+        return Err(MprdError::InvalidInput(
+            "governance_profile_safety_ok attestation metadata drifted from admitted governance"
+                .into(),
+        ));
+    }
+
+    let expected_link_ok = governance_attestation_bool_v1(governance.link_ok());
+    let actual_link_ok = require_governance_attestation_metadata_value_v1(
+        metadata,
+        GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1,
+    )?;
+    if actual_link_ok != expected_link_ok {
+        return Err(MprdError::InvalidInput(
+            "governance_link_ok attestation metadata drifted from admitted governance".into(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Attach canonical governance attestation metadata to a proof when governance is modeled.
+pub fn attach_governance_attestation_to_proof_v1(
+    proof: &mut ProofBundle,
+    ready: &AttestationReadyBundle<'_>,
+) {
+    if let Some(governance) = ready.governance() {
+        insert_governance_attestation_metadata_v1(&mut proof.attestation_metadata, governance);
+    }
+}
+
 fn decode_policy_input_bool_v1(raw: &[u8]) -> Result<bool> {
     if raw == [0u8] {
         return Ok(false);
@@ -737,6 +849,9 @@ pub fn execution_authorization_witness_v1(
 ) -> Result<ExecutionAuthorizationWitnessV1> {
     verify_token_policy_authority_v1(authority, verified.token())?;
     crate::state_provenance::verify_token_state_binding_v1(state_binding, verified.token())?;
+    if let Some(governance) = governance.as_ref() {
+        verify_governance_attestation_metadata_v1(verified.proof(), governance)?;
+    }
     Ok(ExecutionAuthorizationWitnessV1 {
         policy_authority: authority.clone(),
         state_binding: state_binding.clone(),
@@ -1355,6 +1470,8 @@ mod tests {
         let governance = governance_admission_witness_v1(&state)
             .expect("governance")
             .expect("governance witness");
+        let mut proof = proof;
+        insert_governance_attestation_metadata_v1(&mut proof.attestation_metadata, &governance);
 
         let ready = prepare_execution_ready_with_authorization(
             VerifiedBundle::new(&token, &proof),
@@ -1381,6 +1498,202 @@ mod tests {
         assert_eq!(
             authorization.governance().map(|g| g.update_kind()),
             Some(GovernanceUpdateKindV1::PolicyTweak)
+        );
+    }
+
+    #[test]
+    fn prepare_execution_ready_with_authorization_rejects_missing_governance_metadata() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: governance_policy_inputs(
+                GovernanceUpdateKindV1::PolicyTweak,
+                true,
+                false,
+                true,
+            ),
+            state_hash: dummy_hash(0x71),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0x72),
+                state_epoch: 9,
+                state_attestation_hash: dummy_hash(0x73),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x74),
+            policy_ref: PolicyRef {
+                policy_epoch: 4,
+                registry_root: dummy_hash(0x75),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x76),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0x77),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let governance = governance_admission_witness_v1(&state)
+            .expect("governance")
+            .expect("governance witness");
+
+        let err = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            Some(governance),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "missing governance_update_kind attestation metadata")
+        );
+    }
+
+    #[test]
+    fn prepare_execution_ready_with_authorization_rejects_governance_metadata_drift() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: governance_policy_inputs(
+                GovernanceUpdateKindV1::AgentCapabilityExpand,
+                true,
+                true,
+                true,
+            ),
+            state_hash: dummy_hash(0x81),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0x82),
+                state_epoch: 10,
+                state_attestation_hash: dummy_hash(0x83),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x84),
+            policy_ref: PolicyRef {
+                policy_epoch: 5,
+                registry_root: dummy_hash(0x85),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x86),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let mut proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0x87),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let governance = governance_admission_witness_v1(&state)
+            .expect("governance")
+            .expect("governance witness");
+        insert_governance_attestation_metadata_v1(&mut proof.attestation_metadata, &governance);
+        proof.attestation_metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1.into(),
+            "false".into(),
+        );
+
+        let err = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            Some(governance),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "governance_profile_safety_ok attestation metadata drifted from admitted governance")
+        );
+    }
+
+    #[test]
+    fn prepare_execution_ready_with_authorization_rejects_governance_update_kind_drift() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: governance_policy_inputs(
+                GovernanceUpdateKindV1::PolicyTweak,
+                true,
+                false,
+                true,
+            ),
+            state_hash: dummy_hash(0x91),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0x92),
+                state_epoch: 11,
+                state_attestation_hash: dummy_hash(0x93),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x94),
+            policy_ref: PolicyRef {
+                policy_epoch: 6,
+                registry_root: dummy_hash(0x95),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x96),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let mut proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0x97),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let governance = governance_admission_witness_v1(&state)
+            .expect("governance")
+            .expect("governance witness");
+        insert_governance_attestation_metadata_v1(&mut proof.attestation_metadata, &governance);
+        proof.attestation_metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1.into(),
+            GovernanceUpdateKindV1::SafetyRuleChange.as_str().into(),
+        );
+
+        let err = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            Some(governance),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "governance_update_kind attestation metadata drifted from admitted governance")
         );
     }
 

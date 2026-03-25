@@ -248,7 +248,9 @@ impl ZkAttestor for MpbTrustlessAttestor {
         ready: &mprd_core::AttestationReadyBundle<'_>,
         candidates: &[CandidateAction],
     ) -> Result<ProofBundle> {
-        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+        let mut proof = self.attest(ready.token(), ready.decision(), ready.state(), candidates)?;
+        mprd_core::attach_governance_attestation_to_proof_v1(&mut proof, ready);
+        Ok(proof)
     }
 
     fn attest(
@@ -375,7 +377,9 @@ impl ZkAttestor for Risc0TrustlessAttestor {
         ready: &mprd_core::AttestationReadyBundle<'_>,
         candidates: &[CandidateAction],
     ) -> Result<ProofBundle> {
-        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+        let mut proof = self.attest(ready.token(), ready.decision(), ready.state(), candidates)?;
+        mprd_core::attach_governance_attestation_to_proof_v1(&mut proof, ready);
+        Ok(proof)
     }
 
     fn attest(
@@ -542,7 +546,9 @@ impl ZkAttestor for PrivateAttestor {
         ready: &mprd_core::AttestationReadyBundle<'_>,
         candidates: &[CandidateAction],
     ) -> Result<ProofBundle> {
-        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+        let mut proof = self.attest(ready.token(), ready.decision(), ready.state(), candidates)?;
+        mprd_core::attach_governance_attestation_to_proof_v1(&mut proof, ready);
+        Ok(proof)
     }
 
     fn attest(
@@ -629,7 +635,9 @@ impl ZkAttestor for LegacyLocalTrustedAttestorDisabled {
         ready: &mprd_core::AttestationReadyBundle<'_>,
         candidates: &[CandidateAction],
     ) -> Result<ProofBundle> {
-        self.attest(ready.token(), ready.decision(), ready.state(), candidates)
+        let mut proof = self.attest(ready.token(), ready.decision(), ready.state(), candidates)?;
+        mprd_core::attach_governance_attestation_to_proof_v1(&mut proof, ready);
+        Ok(proof)
     }
 
     fn attest(

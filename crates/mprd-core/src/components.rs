@@ -343,41 +343,7 @@ impl ZkAttestor for StubZkAttestor {
             "nonce_or_tx_hash".into(),
             hex::encode(token.nonce_or_tx_hash.0),
         );
-        if let Some(governance) = ready.governance() {
-            metadata.insert(
-                "governance_update_kind".into(),
-                governance.update_kind().as_str().into(),
-            );
-            metadata.insert(
-                "governance_profile_app_ok".into(),
-                if governance.profile_app_ok() {
-                    "true"
-                } else {
-                    "false"
-                }
-                .into(),
-            );
-            metadata.insert(
-                "governance_profile_safety_ok".into(),
-                if governance.profile_safety_ok() {
-                    "true"
-                } else {
-                    "false"
-                }
-                .into(),
-            );
-            metadata.insert(
-                "governance_link_ok".into(),
-                if governance.link_ok() {
-                    "true"
-                } else {
-                    "false"
-                }
-                .into(),
-            );
-        }
-
-        Ok(ProofBundle {
+        let mut proof = ProofBundle {
             policy_hash: decision.policy_hash,
             state_hash: state.state_hash,
             candidate_set_hash,
@@ -387,7 +353,9 @@ impl ZkAttestor for StubZkAttestor {
             chosen_action_preimage,
             risc0_receipt: stub_receipt,
             attestation_metadata: metadata,
-        })
+        };
+        crate::attach_governance_attestation_to_proof_v1(&mut proof, ready);
+        Ok(proof)
     }
 }
 
