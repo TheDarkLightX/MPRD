@@ -1394,6 +1394,10 @@ fn validate_serve_startup_config(
 
     let mode = config.mode.trim().to_ascii_lowercase();
     let trustless = mode == "trustless" || mode == "private";
+    if !trustless {
+        return Ok(());
+    }
+
     if trustless
         && !trust_anchors_configured_with(
             config.registry_state_path.as_deref(),

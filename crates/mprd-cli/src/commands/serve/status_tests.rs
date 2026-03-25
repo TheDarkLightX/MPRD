@@ -313,6 +313,17 @@ fn serve_startup_validation_rejects_trustless_mode_without_full_state_anchors() 
 }
 
 #[test]
+fn serve_startup_validation_accepts_local_mode_without_trust_anchors() {
+    let config = super::super::MprdConfigFile {
+        mode: "local".into(),
+        ..super::super::MprdConfigFile::default()
+    };
+
+    validate_serve_startup_config(&config, false)
+        .expect("local mode should not require production trust anchors at startup");
+}
+
+#[test]
 fn serve_startup_validation_accepts_trustless_mode_with_full_state_anchors() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let config = valid_trustless_serve_config(&tmp);
