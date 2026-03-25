@@ -54,7 +54,8 @@ These gates are necessary, but not sufficient, for RC1.
   - Narrowed: the tracked replay-model series now has a consolidated RC1 receipt at `docs/receipts/rc1_network_replay_20260325.json`, so the remaining gap is no longer "network safety evidence is scattered".
   - Missing: replayable chaos campaigns for stale checkpoints, checkpoint withholding, quorum degradation, Tau/API outages, and related partition schedules.
 - Global at-most-once execution across crash and partition scenarios is not yet a shipped end-to-end theorem.
-  - Current state: strong replay barrier packet series exists, but this still needs tighter runtime and deployment closure.
+  - Narrowed: the tracked replay-model series now includes a crash-ordering effect-finalization packet, so the safety story no longer stops at replay ownership or visibility alone. The model shows that if a durable effect-commit barrier survives crash and retry, late nonce finalization can still complete without a second external effect emission.
+  - Current state: this still needs tighter runtime and deployment closure before it becomes a shipped end-to-end theorem.
 
 ### Tier 1: Operational / Policy Admission
 

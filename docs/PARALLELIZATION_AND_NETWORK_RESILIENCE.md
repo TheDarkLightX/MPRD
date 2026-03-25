@@ -68,7 +68,7 @@ The tracked RC1 replay script and receipt for the current model series are:
 - `docs/receipts/rc1_network_replay_20260325.json`
 - `.github/workflows/network-replay.yml`
 
-The current receipt is green across 10 tracked safety models:
+The current receipt is green across 11 tracked safety models:
 
 - `serial_commit_network_barrier`: 1,274 distinct states, depth 12
 - `distributed_replay_claim_barrier`: 63 distinct states, depth 7
@@ -80,6 +80,7 @@ The current receipt is green across 10 tracked safety models:
 - `distributed_replay_quorum_equivocation_barrier`: 150 distinct states, depth 13
 - `distributed_replay_equivocation_recovery_barrier`: 132 distinct states, depth 9
 - `distributed_replay_hidden_equivocation_barrier`: 250 distinct states, depth 13
+- `distributed_effect_finalization_barrier`: 38 distinct states, depth 10
 
 Replay command:
 
@@ -495,6 +496,51 @@ java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
   -deadlock \
   -config distributed_replay_hidden_equivocation_barrier.cfg \
   distributed_replay_hidden_equivocation_barrier
+```
+
+The next tracked replay surface isolates crash ordering between external effect
+emission and nonce finalization:
+
+- `docs/specs/distributed_effect_finalization_barrier.tla`
+- `docs/specs/distributed_effect_finalization_barrier.cfg`
+
+It is still intentionally narrow. It models one logical effect id, an initial
+attempt plus one retry attempt, a durable effect-commit barrier that is written
+atomically with the first external effect emission, and late nonce finalization
+that may only complete after crash or recovery. It proves the safety shape:
+
+- at most one external effect can be committed
+- once the durable effect-commit barrier is written, retries cannot cross the
+  execute barrier again before late finalization
+- recovery may complete nonce finalization for an already committed effect
+  without requiring a second external effect emission
+
+Modeling assumptions:
+
+- the durable effect-commit barrier is written atomically with the first
+  external effect emission
+- retries re-check that durable barrier before any new effect emission
+- finalization may lag effect emission and may happen only after crash recovery
+- this packet is safety-only and does not prove liveness or eventual cleanup
+
+What it still does not prove:
+
+- that the shipped runtime already implements this durable effect-commit
+  barrier end to end
+- atomicity or idempotence of any real external system beyond the modeled
+  single effect id
+- replicated or partitioned effect-log behavior
+- multi-effect batches or cross-chain side-effect workflows
+
+Replay command:
+
+```bash
+cd docs/specs
+java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
+  -cleanup \
+  -deadlock \
+  -config distributed_effect_finalization_barrier.cfg \
+  distributed_effect_finalization_barrier
 ```
 
 ## Mode C

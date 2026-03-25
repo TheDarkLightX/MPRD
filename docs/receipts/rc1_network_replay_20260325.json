@@ -220,11 +220,33 @@
       "status": "passed",
       "tla": "docs/specs/distributed_replay_hidden_equivocation_barrier.tla",
       "tlc_version": "TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)"
+    },
+    {
+      "cfg": "docs/specs/distributed_effect_finalization_barrier.cfg",
+      "command": [
+        "java",
+        "-cp",
+        "${TLA2TOOLS_JAR}",
+        "tlc2.TLC",
+        "-cleanup",
+        "-deadlock",
+        "-config",
+        "docs/specs/distributed_effect_finalization_barrier.cfg",
+        "docs/specs/distributed_effect_finalization_barrier.tla"
+      ],
+      "distinct_states": 38,
+      "exit_code": 0,
+      "search_depth": 10,
+      "spec": "distributed_effect_finalization_barrier",
+      "states_generated": 111,
+      "status": "passed",
+      "tla": "docs/specs/distributed_effect_finalization_barrier.tla",
+      "tlc_version": "TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)"
     }
   ],
-  "generated_at_utc": "2026-03-25T04:50:38.625761+00:00",
-  "git_head": "a39e5258908be41f84417d28d2380e4d750b5a32",
+  "generated_at_utc": "2026-03-25T17:58:32.571618+00:00",
+  "git_head": "46bc30e972559b5cc458bcee03566d81c9612cb3",
   "schema": "mprd/rc1-network-replay/v1",
-  "spec_count": 10,
+  "spec_count": 11,
   "tla2tools_jar_ref": "${TLA2TOOLS_JAR}"
 }

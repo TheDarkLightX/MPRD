@@ -72,6 +72,13 @@ status; the RC1 board separates automated green gates from still-open Tier-0 rel
   checkpoint withholding, quorum degradation, distributed replay races, Tau/API
   outages, or similar partitioned schedules. See
   `docs/PARALLELIZATION_AND_NETWORK_RESILIENCE.md`.
+- **Crash-ordering at-most-once closure (SHOULD)**: the tracked replay-model
+  series now includes a narrow crash-ordering packet for external effect
+  emission versus late nonce finalization, proving that retries stay
+  single-effect only when a durable effect-commit barrier survives crash and is
+  re-checked before any retry emits a second effect. The remaining gap is still
+  runtime and deployment closure for that barrier in the shipped adapters and
+  external effect surfaces.
 - **Mode C minimized trust**: Mode C currently gives a strong private-boundary verification surface, but it is not full minimized trust yet because the prover or operator still sees plaintext and governance, registry authority, and source mapping remain part of the trust root.
 - **Persistent anti-replay is deployed**: configure `anti_replay.nonce_store_dir` in production deployments (not just the in-repo option).
 - **Persistent anti-replay is deployed**:
