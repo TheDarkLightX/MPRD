@@ -1369,6 +1369,32 @@ fn trust_anchors_configured_with(
     registry_path_ok && registry_key_ok && state_path_ok && state_key_ok
 }
 
+fn validate_serve_startup_config(
+    config: &super::MprdConfigFile,
+    insecure_demo: bool,
+) -> anyhow::Result<()> {
+    if insecure_demo {
+        return Ok(());
+    }
+
+    let mode = config.mode.trim().to_ascii_lowercase();
+    let trustless = mode == "trustless" || mode == "private";
+    if trustless
+        && !trust_anchors_configured_with(
+            config.registry_state_path.as_deref(),
+            config.registry_verifying_key_hex.as_deref(),
+            config.state_snapshot_path.as_deref(),
+            config.state_verifying_key_hex.as_deref(),
+        )
+    {
+        anyhow::bail!(
+            "production serve startup requires configured trust anchors (registry checkpoint + signed state snapshot + keys)"
+        );
+    }
+
+    Ok(())
+}
+
 fn compute_system_status(
     config: &super::MprdConfigFile,
     now: i64,
@@ -2525,9 +2551,10 @@ pub fn run(
     insecure_demo: bool,
     config: Option<super::MprdConfigFile>,
 ) -> Result<()> {
-    // Be tolerant here: the operator console should come up even if the local config file
-    // is missing/old/partially invalid. The UI can still surface degraded status.
+    // Stay tolerant for local/demo modes, but do not let trustless/private production serve
+    // start in a configuration that can never satisfy the live fail-closed trust-anchor boundary.
     let config = config.unwrap_or_default();
+    validate_serve_startup_config(&config, insecure_demo)?;
 
     let policy_dir = policy_dir.unwrap_or_else(|| {
         config

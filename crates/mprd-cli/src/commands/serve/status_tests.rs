@@ -1,4 +1,7 @@
-use super::{compute_system_status, trust_anchors_configured_with, validate_retention_update};
+use super::{
+    compute_system_status, trust_anchors_configured_with, validate_retention_update,
+    validate_serve_startup_config,
+};
 use crate::operator::api as op_api;
 
 fn health(status: op_api::HealthLevel) -> op_api::ComponentHealth {
@@ -186,6 +189,49 @@ fn system_status_degrades_on_tau_unavailable_only_when_tau_binary_configured() {
         true,
     );
     assert!(matches!(out2.overall, op_api::OverallStatus::Operational));
+}
+
+#[test]
+fn serve_startup_validation_rejects_trustless_mode_without_full_state_anchors() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let registry_path = tmp.path().join("registry_state.json");
+    std::fs::write(&registry_path, b"{}").expect("write registry");
+
+    let config = super::super::MprdConfigFile {
+        mode: "trustless".into(),
+        registry_state_path: Some(registry_path),
+        registry_verifying_key_hex: Some("00".into()),
+        ..super::super::MprdConfigFile::default()
+    };
+
+    let err = validate_serve_startup_config(&config, false)
+        .expect_err("trustless serve must fail closed without signed state anchors");
+    assert!(
+        err.to_string()
+            .contains("requires configured trust anchors"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn serve_startup_validation_accepts_trustless_mode_with_full_state_anchors() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let registry_path = tmp.path().join("registry_state.json");
+    let state_path = tmp.path().join("signed_state.json");
+    std::fs::write(&registry_path, b"{}").expect("write registry");
+    std::fs::write(&state_path, b"{}").expect("write state");
+
+    let config = super::super::MprdConfigFile {
+        mode: "trustless".into(),
+        registry_state_path: Some(registry_path),
+        registry_verifying_key_hex: Some("00".into()),
+        state_snapshot_path: Some(state_path),
+        state_verifying_key_hex: Some("11".into()),
+        ..super::super::MprdConfigFile::default()
+    };
+
+    validate_serve_startup_config(&config, false)
+        .expect("full trust anchors should allow trustless serve startup");
 }
 
 #[test]
