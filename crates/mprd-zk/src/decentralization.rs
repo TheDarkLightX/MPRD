@@ -446,6 +446,35 @@ impl GovernanceProfile {
     }
 }
 
+/// Bridge a concrete governance gate packet into the shared RC1 core witness surface.
+///
+/// This keeps `mprd-zk` and `mprd-core` on one governance-admission rule instead of maintaining
+/// parallel accept/reject semantics.
+pub fn governance_admission_witness_from_gate_input_v1(
+    input: &GovernanceGateInput,
+) -> mprd_core::Result<mprd_core::GovernanceAdmissionWitnessV1> {
+    let update_kind = match UpdateKind::from_u8(input.update_kind) {
+        Some(UpdateKind::PolicyTweak) => mprd_core::GovernanceUpdateKindV1::PolicyTweak,
+        Some(UpdateKind::SafetyRuleChange) => mprd_core::GovernanceUpdateKindV1::SafetyRuleChange,
+        Some(UpdateKind::AgentCapabilityExpand) => {
+            mprd_core::GovernanceUpdateKindV1::AgentCapabilityExpand
+        }
+        None => {
+            return Err(MprdError::InvalidInput(format!(
+                "unsupported governance update kind: {}",
+                input.update_kind
+            )));
+        }
+    };
+
+    mprd_core::governance_admission_witness_from_fields_v1(
+        update_kind,
+        input.profile_app_ok,
+        input.profile_safety_ok,
+        input.link_ok,
+    )
+}
+
 // =============================================================================
 // Tau Governance Runner
 // =============================================================================
@@ -2501,6 +2530,181 @@ mod tests {
             let input = profile.check_authorization(kind, &sigs, &sigs, false);
             assert!(!GovernanceProfile::would_accept(&input));
         }
+    }
+
+    #[test]
+    fn governance_gate_input_witness_matches_core_state_projection_for_policy_tweak() {
+        let profile = GovernanceProfile::hybrid(
+            1,
+            vec![test_pubkey(1)],
+            1,
+            vec![test_pubkey(2)],
+            "chain",
+            "app",
+        )
+        .expect("should create");
+
+        let input = profile.check_authorization(
+            UpdateKind::PolicyTweak,
+            &[(test_pubkey(1), vec![])],
+            &[],
+            true,
+        );
+        assert!(GovernanceProfile::would_accept(&input));
+
+        let witness_from_gate =
+            governance_admission_witness_from_gate_input_v1(&input).expect("gate witness");
+        let state = mprd_core::StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::from([
+                (
+                    mprd_core::GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1.into(),
+                    b"1".to_vec(),
+                ),
+                (
+                    mprd_core::GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1.into(),
+                    b"0".to_vec(),
+                ),
+                (
+                    mprd_core::GOVERNANCE_INPUT_IS_CAP_EXPAND_V1.into(),
+                    b"0".to_vec(),
+                ),
+                (
+                    mprd_core::GOVERNANCE_INPUT_PROFILE_APP_OK_V1.into(),
+                    b"1".to_vec(),
+                ),
+                (
+                    mprd_core::GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1.into(),
+                    b"0".to_vec(),
+                ),
+                (mprd_core::GOVERNANCE_INPUT_LINK_OK_V1.into(), b"1".to_vec()),
+            ]),
+            state_hash: Hash32([0x41; 32]),
+            state_ref: mprd_core::StateRef {
+                state_source_id: Hash32([0x42; 32]),
+                state_epoch: 7,
+                state_attestation_hash: Hash32([0x43; 32]),
+            },
+        };
+        let witness_from_state = mprd_core::governance_admission_witness_v1(&state)
+            .expect("state witness result")
+            .expect("state witness");
+
+        assert_eq!(witness_from_gate, witness_from_state);
+        assert_eq!(
+            witness_from_gate.update_kind(),
+            mprd_core::GovernanceUpdateKindV1::PolicyTweak
+        );
+    }
+
+    #[test]
+    fn governance_gate_input_witness_rejects_invalid_update_kind() {
+        let err = governance_admission_witness_from_gate_input_v1(&GovernanceGateInput {
+            update_kind: 0x00,
+            profile_app_ok: true,
+            profile_safety_ok: true,
+            link_ok: true,
+        })
+        .unwrap_err();
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "unsupported governance update kind: 0")
+        );
+    }
+
+    #[test]
+    fn governance_gate_input_witness_matches_core_rejection_for_invalid_capability_expand() {
+        let input = GovernanceGateInput {
+            update_kind: UpdateKind::AgentCapabilityExpand.to_bv8(),
+            profile_app_ok: true,
+            profile_safety_ok: false,
+            link_ok: true,
+        };
+        assert!(!GovernanceProfile::would_accept(&input));
+
+        let gate_err = governance_admission_witness_from_gate_input_v1(&input).unwrap_err();
+        let state = mprd_core::StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::from([
+                (
+                    mprd_core::GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1.into(),
+                    b"0".to_vec(),
+                ),
+                (
+                    mprd_core::GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1.into(),
+                    b"0".to_vec(),
+                ),
+                (
+                    mprd_core::GOVERNANCE_INPUT_IS_CAP_EXPAND_V1.into(),
+                    b"1".to_vec(),
+                ),
+                (
+                    mprd_core::GOVERNANCE_INPUT_PROFILE_APP_OK_V1.into(),
+                    b"1".to_vec(),
+                ),
+                (
+                    mprd_core::GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1.into(),
+                    b"0".to_vec(),
+                ),
+                (mprd_core::GOVERNANCE_INPUT_LINK_OK_V1.into(), b"1".to_vec()),
+            ]),
+            state_hash: Hash32([0x52; 32]),
+            state_ref: mprd_core::StateRef {
+                state_source_id: Hash32([0x53; 32]),
+                state_epoch: 11,
+                state_attestation_hash: Hash32([0x54; 32]),
+            },
+        };
+        let state_err = mprd_core::governance_admission_witness_v1(&state).unwrap_err();
+
+        assert_eq!(gate_err.to_string(), state_err.to_string());
+    }
+
+    #[test]
+    fn governance_gate_input_witness_matches_core_link_rejection() {
+        let input = GovernanceGateInput {
+            update_kind: UpdateKind::PolicyTweak.to_bv8(),
+            profile_app_ok: true,
+            profile_safety_ok: false,
+            link_ok: false,
+        };
+        assert!(!GovernanceProfile::would_accept(&input));
+
+        let gate_err = governance_admission_witness_from_gate_input_v1(&input).unwrap_err();
+        let state = mprd_core::StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::from([
+                (
+                    mprd_core::GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1.into(),
+                    b"1".to_vec(),
+                ),
+                (
+                    mprd_core::GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1.into(),
+                    b"0".to_vec(),
+                ),
+                (
+                    mprd_core::GOVERNANCE_INPUT_IS_CAP_EXPAND_V1.into(),
+                    b"0".to_vec(),
+                ),
+                (
+                    mprd_core::GOVERNANCE_INPUT_PROFILE_APP_OK_V1.into(),
+                    b"1".to_vec(),
+                ),
+                (
+                    mprd_core::GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1.into(),
+                    b"0".to_vec(),
+                ),
+                (mprd_core::GOVERNANCE_INPUT_LINK_OK_V1.into(), b"0".to_vec()),
+            ]),
+            state_hash: Hash32([0x61; 32]),
+            state_ref: mprd_core::StateRef {
+                state_source_id: Hash32([0x62; 32]),
+                state_epoch: 13,
+                state_attestation_hash: Hash32([0x63; 32]),
+            },
+        };
+        let state_err = mprd_core::governance_admission_witness_v1(&state).unwrap_err();
+
+        assert_eq!(gate_err.to_string(), state_err.to_string());
     }
 
     #[test]

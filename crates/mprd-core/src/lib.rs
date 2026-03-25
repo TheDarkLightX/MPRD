@@ -509,6 +509,55 @@ pub fn policy_authority_witness_v1(
     })
 }
 
+/// Construct a concrete governance-admission witness from canonical governance gate fields.
+///
+/// This is the single RC1 admission rule once the update kind and gate booleans have been parsed
+/// from any concrete source.
+pub fn governance_admission_witness_from_fields_v1(
+    update_kind: GovernanceUpdateKindV1,
+    profile_app_ok: bool,
+    profile_safety_ok: bool,
+    link_ok: bool,
+) -> Result<GovernanceAdmissionWitnessV1> {
+    if !link_ok {
+        return Err(MprdError::InvalidInput(
+            "governance admission requires link_ok".into(),
+        ));
+    }
+
+    match update_kind {
+        GovernanceUpdateKindV1::PolicyTweak => {
+            if !profile_app_ok {
+                return Err(MprdError::InvalidInput(
+                    "governance policy_tweak admission requires profile_app_ok".into(),
+                ));
+            }
+        }
+        GovernanceUpdateKindV1::SafetyRuleChange => {
+            if !profile_safety_ok {
+                return Err(MprdError::InvalidInput(
+                    "governance safety_rule_change admission requires profile_safety_ok".into(),
+                ));
+            }
+        }
+        GovernanceUpdateKindV1::AgentCapabilityExpand => {
+            if !(profile_app_ok && profile_safety_ok) {
+                return Err(MprdError::InvalidInput(
+                    "governance agent_capability_expand admission requires both profile thresholds"
+                        .into(),
+                ));
+            }
+        }
+    }
+
+    Ok(GovernanceAdmissionWitnessV1 {
+        update_kind,
+        profile_app_ok,
+        profile_safety_ok,
+        link_ok,
+    })
+}
+
 fn decode_policy_input_bool_v1(raw: &[u8]) -> Result<bool> {
     if raw == [0u8] {
         return Ok(false);
@@ -568,42 +617,22 @@ pub fn governance_admission_witness_v1(
             "governance prepared lane is not one-hot".into(),
         ));
     }
-    if !link_ok {
-        return Err(MprdError::InvalidInput(
-            "governance admission requires link_ok".into(),
-        ));
-    }
 
     let update_kind = if is_policy_tweak {
-        if !profile_app_ok {
-            return Err(MprdError::InvalidInput(
-                "governance policy_tweak admission requires profile_app_ok".into(),
-            ));
-        }
         GovernanceUpdateKindV1::PolicyTweak
     } else if is_safety_change {
-        if !profile_safety_ok {
-            return Err(MprdError::InvalidInput(
-                "governance safety_rule_change admission requires profile_safety_ok".into(),
-            ));
-        }
         GovernanceUpdateKindV1::SafetyRuleChange
     } else {
-        if !(profile_app_ok && profile_safety_ok) {
-            return Err(MprdError::InvalidInput(
-                "governance agent_capability_expand admission requires both profile thresholds"
-                    .into(),
-            ));
-        }
         GovernanceUpdateKindV1::AgentCapabilityExpand
     };
 
-    Ok(Some(GovernanceAdmissionWitnessV1 {
+    governance_admission_witness_from_fields_v1(
         update_kind,
         profile_app_ok,
         profile_safety_ok,
         link_ok,
-    }))
+    )
+    .map(Some)
 }
 
 /// Construct the concrete token-binding witness from the orchestrator's authority, state, and
@@ -1838,6 +1867,63 @@ mod tests {
         };
 
         let err = prepare_attestation_ready(&token, &decision, &state).unwrap_err();
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "governance admission requires link_ok")
+        );
+    }
+
+    #[test]
+    fn governance_admission_witness_from_fields_accepts_policy_tweak() {
+        let witness = governance_admission_witness_from_fields_v1(
+            GovernanceUpdateKindV1::PolicyTweak,
+            true,
+            false,
+            true,
+        )
+        .expect("witness");
+        assert_eq!(witness.update_kind(), GovernanceUpdateKindV1::PolicyTweak);
+        assert!(witness.profile_app_ok());
+        assert!(!witness.profile_safety_ok());
+        assert!(witness.link_ok());
+    }
+
+    #[test]
+    fn governance_admission_witness_from_fields_rejects_capability_expand_without_both_profiles() {
+        let err = governance_admission_witness_from_fields_v1(
+            GovernanceUpdateKindV1::AgentCapabilityExpand,
+            true,
+            false,
+            true,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "governance agent_capability_expand admission requires both profile thresholds")
+        );
+    }
+
+    #[test]
+    fn governance_admission_witness_from_fields_rejects_safety_change_without_safety_profile() {
+        let err = governance_admission_witness_from_fields_v1(
+            GovernanceUpdateKindV1::SafetyRuleChange,
+            true,
+            false,
+            true,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "governance safety_rule_change admission requires profile_safety_ok")
+        );
+    }
+
+    #[test]
+    fn governance_admission_witness_from_fields_rejects_missing_link_ok() {
+        let err = governance_admission_witness_from_fields_v1(
+            GovernanceUpdateKindV1::PolicyTweak,
+            true,
+            false,
+            false,
+        )
+        .unwrap_err();
         assert!(
             matches!(err, MprdError::InvalidInput(message) if message == "governance admission requires link_ok")
         );

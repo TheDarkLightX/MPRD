@@ -25,7 +25,8 @@ These gates are necessary, but not sufficient, for RC1.
 - Runtime refinement still stops short of one top-level concrete execution theorem.
   - Needed: constructor-gated witness chain from runtime objects into the execution boundary packet.
 - Governance-to-execution closure is still incomplete.
-  - Needed: replayable refinement from concrete registry and governance objects into execution-time `governance_ok`.
+  - Narrowed: prepared state rails in `mprd-core` and concrete `GovernanceGateInput` packets in `mprd-zk` now share one constructor-gated governance admission rule.
+  - Needed: replayable refinement from concrete registry and governance objects into the live execution authorization packet, not just a shared admission constructor.
 - Tau source to compiled artifact semantic equivalence is still open.
   - Current state: provenance and artifact witness are strong; compiler equivalence is not proved.
 - Mode C is not yet full minimized trust.

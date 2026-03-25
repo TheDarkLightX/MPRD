@@ -91,6 +91,7 @@ pub use mpb_lite::{MpbLiteArtifactV1, MPB_LITE_ARTIFACT_VERSION_V1};
 
 // Re-export decentralization primitives
 pub use decentralization::{
+    governance_admission_witness_from_gate_input_v1,
     AggregatedAttestation,
     AnchorType,
     CommitmentAnchor,
