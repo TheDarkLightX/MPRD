@@ -27,11 +27,12 @@ enum BundleCheckError {
     MissingPolicyArtifact { policy_hash_hex: String },
 }
 
-pub fn check_bundle(
+fn check_bundle_impl(
     registry_state_path: PathBuf,
     registry_key_hex: String,
     manifest_key_hex: Option<String>,
     policy_artifacts_dir: PathBuf,
+    emit_summary: bool,
 ) -> Result<()> {
     let registry_vk =
         TokenVerifyingKey::from_hex(&registry_key_hex).context("Invalid --registry-key-hex")?;
@@ -100,23 +101,55 @@ pub fn check_bundle(
         }
     }
 
-    println!("✅ Bundle check passed");
-    println!("   policy_epoch:  {}", policy_ref.policy_epoch);
-    println!(
-        "   registry_root: {}",
-        hex::encode(policy_ref.registry_root.0)
-    );
-    println!(
-        "   policies: {} validated, {} skipped, {} total",
-        ok,
-        skipped,
-        state.authorized_policies.len()
-    );
-    println!(
-        "   policy_artifacts_dir: {}",
-        policy_artifacts_dir.display()
-    );
+    if emit_summary {
+        println!("✅ Bundle check passed");
+        println!("   policy_epoch:  {}", policy_ref.policy_epoch);
+        println!(
+            "   registry_root: {}",
+            hex::encode(policy_ref.registry_root.0)
+        );
+        println!(
+            "   policies: {} validated, {} skipped, {} total",
+            ok,
+            skipped,
+            state.authorized_policies.len()
+        );
+        println!(
+            "   policy_artifacts_dir: {}",
+            policy_artifacts_dir.display()
+        );
+    }
     Ok(())
+}
+
+pub fn check_bundle(
+    registry_state_path: PathBuf,
+    registry_key_hex: String,
+    manifest_key_hex: Option<String>,
+    policy_artifacts_dir: PathBuf,
+) -> Result<()> {
+    check_bundle_impl(
+        registry_state_path,
+        registry_key_hex,
+        manifest_key_hex,
+        policy_artifacts_dir,
+        true,
+    )
+}
+
+pub(crate) fn check_bundle_quiet(
+    registry_state_path: PathBuf,
+    registry_key_hex: String,
+    manifest_key_hex: Option<String>,
+    policy_artifacts_dir: PathBuf,
+) -> Result<()> {
+    check_bundle_impl(
+        registry_state_path,
+        registry_key_hex,
+        manifest_key_hex,
+        policy_artifacts_dir,
+        false,
+    )
 }
 
 fn validate_mpb_policy_artifact(

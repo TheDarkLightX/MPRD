@@ -32,12 +32,40 @@ fn components(
     }
 }
 
+fn encode_mpb_artifact(bytecode: &[u8], vars: &[(&str, u8)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&(bytecode.len() as u32).to_le_bytes());
+    out.extend_from_slice(bytecode);
+    out.extend_from_slice(&(vars.len() as u32).to_le_bytes());
+    for (name, reg) in vars {
+        out.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        out.extend_from_slice(name.as_bytes());
+        out.push(*reg);
+    }
+    out
+}
+
 fn valid_trustless_serve_config(tmp: &tempfile::TempDir) -> super::super::MprdConfigFile {
     let registry_key = TokenSigningKey::from_seed(&[0x21; 32]);
     let state_key = TokenSigningKey::from_seed(&[0x22; 32]);
+    let token_seed = [0x23; 32];
 
     let registry_path = tmp.path().join("registry_state.json");
     let state_path = tmp.path().join("signed_state.json");
+    let artifacts_dir = tmp.path().join("policy_artifacts");
+    std::fs::create_dir_all(&artifacts_dir).expect("artifact dir");
+
+    let bytecode = mprd_core::mpb::BytecodeBuilder::new()
+        .push_i64(1)
+        .halt()
+        .build();
+    let policy_hash = Hash32(mprd_mpb::policy_hash_v1(&bytecode, &[]));
+    let artifact_bytes = encode_mpb_artifact(&bytecode, &[]);
+    std::fs::write(
+        artifacts_dir.join(hex::encode(policy_hash.0)),
+        artifact_bytes,
+    )
+    .expect("write artifact");
 
     let manifest = GuestImageManifestV1::sign(
         &registry_key,
@@ -56,7 +84,7 @@ fn valid_trustless_serve_config(tmp: &tempfile::TempDir) -> super::super::MprdCo
             policy_epoch: 1,
             registry_root: Hash32([9u8; 32]),
             authorized_policies: vec![AuthorizedPolicyV1 {
-                policy_hash: Hash32([3u8; 32]),
+                policy_hash,
                 policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
                 policy_exec_version_id: policy_exec_version_id_v1(),
                 policy_source_kind_id: None,
@@ -91,6 +119,8 @@ fn valid_trustless_serve_config(tmp: &tempfile::TempDir) -> super::super::MprdCo
         registry_verifying_key_hex: Some(hex::encode(registry_key.verifying_key().to_bytes())),
         state_snapshot_path: Some(state_path),
         state_verifying_key_hex: Some(hex::encode(state_key.verifying_key().to_bytes())),
+        token_signing_key_hex: Some(hex::encode(token_seed)),
+        policy_artifacts_dir: Some(artifacts_dir),
         ..super::super::MprdConfigFile::default()
     }
 }
@@ -309,6 +339,26 @@ fn serve_startup_validation_rejects_invalid_signed_state_snapshot() {
             || err
                 .to_string()
                 .contains("unsupported signed snapshot version"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn serve_startup_validation_rejects_missing_policy_artifact_bundle() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let config = valid_trustless_serve_config(&tmp);
+    let artifacts_dir = config
+        .policy_artifacts_dir
+        .clone()
+        .expect("policy artifacts dir");
+    std::fs::remove_dir_all(&artifacts_dir).expect("remove artifacts dir");
+    std::fs::create_dir_all(&artifacts_dir).expect("recreate empty artifacts dir");
+
+    let err = validate_serve_startup_config(&config, false)
+        .expect_err("startup must fail closed on missing artifact bundle");
+    assert!(
+        err.to_string().contains("missing policy artifact file")
+            || err.to_string().contains("MissingPolicyArtifact"),
         "unexpected error: {err}"
     );
 }

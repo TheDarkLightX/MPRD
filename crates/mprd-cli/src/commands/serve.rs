@@ -184,6 +184,32 @@ fn load_signed_state_provider_from_config(
     Ok(SignedSnapshotStateProvider::new(signed, state_vk))
 }
 
+fn build_production_core_config(
+    config: &super::MprdConfigFile,
+) -> CoreResult<mprd_core::MprdConfig> {
+    let signing_key_hex = config
+        .token_signing_key_hex
+        .clone()
+        .ok_or_else(|| mprd_core::MprdError::ConfigError("Missing token_signing_key_hex".into()))?;
+
+    let mut core_config = mprd_core::MprdConfig::default();
+    core_config.crypto.require_signatures = true;
+    core_config.crypto.signing_key_hex = Some(signing_key_hex);
+    core_config.execution.circuit_breaker.enabled = true;
+    core_config.state_provenance.require_provenance = true;
+    core_config.state_provenance.allowed_state_source_ids_hex = vec![hex::encode(
+        mprd_core::state_provenance::state_source_id_signed_snapshot_v1().0,
+    )];
+    core_config.anti_replay.nonce_store_dir = config
+        .anti_replay
+        .as_ref()
+        .and_then(|ar| ar.nonce_store_dir.as_ref())
+        .map(|p| p.to_string_lossy().to_string());
+
+    core_config.validate_production()?;
+    Ok(core_config)
+}
+
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "ok",
@@ -474,23 +500,7 @@ async fn run_handler(
              //
              // SECURITY: the executor is the side-effect chokepoint. Even in this single-process
              // node, wrap with the same fail-closed guards that production deployments require.
-             let mut core_config = mprd_core::MprdConfig::default();
-             core_config.crypto.require_signatures = true;
-             core_config.crypto.signing_key_hex = Some(signing_key_hex.clone());
-             core_config.execution.circuit_breaker.enabled = true;
-             core_config.state_provenance.require_provenance = true;
-             core_config.state_provenance.allowed_state_source_ids_hex = vec![hex::encode(
-                 mprd_core::state_provenance::state_source_id_signed_snapshot_v1().0,
-             )];
-             core_config.anti_replay.nonce_store_dir = config
-                 .anti_replay
-                 .as_ref()
-                 .and_then(|ar| ar.nonce_store_dir.as_ref())
-                 .map(|p| p.to_string_lossy().to_string());
-
-             core_config
-                 .validate_production()
-                 .map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
+             let core_config = build_production_core_config(&config)?;
 
              // Inner executor selection (side effects):
              // - `noop` => logs only
@@ -1411,6 +1421,23 @@ fn validate_serve_startup_config(
 
     let state_provider = load_signed_state_provider_from_config(config)?;
     mprd_core::StateProvider::snapshot(&state_provider)?;
+    build_production_core_config(config)?;
+
+    if trustless {
+        let artifacts_dir = config
+            .policy_artifacts_dir
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Missing policy_artifacts_dir"))?;
+        super::deploy::check_bundle_quiet(
+            registry_path.to_path_buf(),
+            config
+                .registry_verifying_key_hex
+                .clone()
+                .expect("checked above"),
+            None,
+            artifacts_dir,
+        )?;
+    }
 
     Ok(())
 }
