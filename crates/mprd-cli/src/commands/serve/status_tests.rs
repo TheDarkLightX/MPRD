@@ -375,6 +375,37 @@ fn serve_startup_validation_rejects_missing_policy_artifact_bundle() {
 }
 
 #[test]
+fn serve_startup_validation_rejects_missing_token_signing_key() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut config = valid_trustless_serve_config(&tmp);
+    config.token_signing_key_hex = None;
+
+    let err = validate_serve_startup_config(&config, false)
+        .expect_err("startup must fail closed when token signing key is missing");
+    assert!(
+        err.to_string().contains("Missing token_signing_key_hex"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn serve_startup_validation_rejects_missing_persistent_nonce_store() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut config = valid_trustless_serve_config(&tmp);
+    config.anti_replay = Some(super::super::AntiReplayConfig {
+        nonce_store_dir: None,
+    });
+
+    let err = validate_serve_startup_config(&config, false)
+        .expect_err("startup must fail closed without persistent anti-replay");
+    assert!(
+        err.to_string()
+            .contains("Production requires anti_replay.nonce_store_dir"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn retention_update_rejects_retention_days_that_overflow_ms() {
     let per_day_ms = 24u128 * 60 * 60 * 1000;
     let max_days = (i64::MAX as u128) / per_day_ms;
