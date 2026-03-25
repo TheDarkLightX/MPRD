@@ -558,20 +558,28 @@ impl ZkAttestor for RobustMpbAttestor {
             return Err(MprdError::ZkError("MPB policy denied chosen action".into()));
         }
 
-        // Record candidate hashes (enables verifier recomputation of candidate_set_hash).
-        let candidate_hashes: Vec<[u8; 32]> =
-            candidates.iter().map(|c| c.candidate_hash.0).collect();
+        let candidate_preimages: Vec<Vec<u8>> = candidates
+            .iter()
+            .map(mprd_core::hash::candidate_hash_preimage)
+            .collect();
+        if candidate_preimages
+            .iter()
+            .any(|b| b.len() > mprd_risc0_shared::MAX_CANDIDATE_PREIMAGE_BYTES_V1)
+        {
+            return Err(MprdError::BoundedValueExceeded(
+                "candidate_preimage too large".into(),
+            ));
+        }
 
-        let artifact = crate::mpb_lite::MpbLiteArtifactV1 {
-            version: crate::mpb_lite::MPB_LITE_ARTIFACT_VERSION_V1,
+        let artifact = crate::mpb_lite::MpbLiteArtifactV3 {
+            version: crate::mpb_lite::MPB_LITE_CURRENT_ARTIFACT_VERSION,
             mpb_register_mapping_id: mprd_risc0_shared::mpb_register_mapping_id_v1(),
             policy_variables: self.policy_variables.clone(),
             state_preimage,
-            candidate_hashes,
+            candidate_preimages,
             chosen_index,
             mpb_proof_bundle,
             limits_bytes: limits_bytes.clone(),
-            chosen_action_preimage: chosen_action_preimage.clone(),
         };
 
         let artifact_bytes = bincode::serialize(&artifact)
@@ -580,7 +588,7 @@ impl ZkAttestor for RobustMpbAttestor {
         let mut metadata = HashMap::new();
         metadata.insert("mode".into(), self.config.mode.as_str().into());
         metadata.insert("proof_type".into(), "MPB".into());
-        metadata.insert("proof_backend".into(), "mpb_lite_v1".into());
+        metadata.insert("proof_backend".into(), "mpb_lite_v3".into());
         metadata.insert(
             "spot_checks".into(),
             self.config.mpb_spot_checks.to_string(),
@@ -671,15 +679,14 @@ fn decode_mpb_artifact(
             "missing mpb lite proof artifact".into(),
         ));
     }
-    let artifact: crate::mpb_lite::MpbLiteArtifactV1 =
-        match crate::bounded_deser::deserialize_mpb_artifact(&proof.risc0_receipt) {
-            Ok(a) => a,
-            Err(e) => {
-                return Err(VerificationStatus::Failure(format!(
-                    "mpb artifact decode failed: {e}"
-                )))
-            }
-        };
+    let artifact = match crate::mpb_lite::deserialize_artifact(&proof.risc0_receipt) {
+        Ok(a) => a,
+        Err(e) => {
+            return Err(VerificationStatus::Failure(format!(
+                "mpb artifact decode failed: {e}"
+            )))
+        }
+    };
     if let Err(e) = crate::mpb_lite::verify_artifact_header(&artifact) {
         return Err(VerificationStatus::Failure(format!(
             "mpb artifact invalid: {e}"
@@ -1859,7 +1866,7 @@ mod tests {
         );
         assert_eq!(
             proof.attestation_metadata.get("proof_backend"),
-            Some(&"mpb_lite_v1".to_string())
+            Some(&"mpb_lite_v3".to_string())
         );
         assert!(!proof.risc0_receipt.is_empty());
     }

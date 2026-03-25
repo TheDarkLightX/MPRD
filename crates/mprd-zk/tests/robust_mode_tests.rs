@@ -295,7 +295,7 @@ fn robust_mpb_attestor_generates_binding_commitment() {
 
     assert_eq!(
         proof.attestation_metadata.get("proof_backend"),
-        Some(&"mpb_lite_v1".to_string())
+        Some(&"mpb_lite_v3".to_string())
     );
     assert!(!proof.risc0_receipt.is_empty());
     assert!(!proof.limits_bytes.is_empty());

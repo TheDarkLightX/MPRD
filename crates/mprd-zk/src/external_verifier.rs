@@ -368,10 +368,10 @@ impl ExternalVerifier {
         let mut log = StepLogger::new(steps);
 
         Self::verify_mpb_lite_marker(request, &mut log)?;
-        Self::verify_mpb_lite_backend(request, &mut log)?;
+        let backend_version = Self::verify_mpb_lite_backend(request, &mut log)?;
         let meta = Self::parse_mpb_lite_meta(request, &mut log)?;
         let artifact = Self::decode_mpb_lite_artifact(request, &mut log)?;
-        Self::verify_mpb_lite_header(&artifact, &mut log)?;
+        Self::verify_mpb_lite_header(&artifact, backend_version, &mut log)?;
         Self::verify_mpb_lite_bindings(request, &meta, &artifact, &mut log)?;
         let bindings = Self::verify_mpb_registers(&artifact, &mut log)?;
         Self::verify_mpb_proof_bundle(&artifact, &meta, &bindings, &mut log)?;
@@ -399,17 +399,19 @@ impl ExternalVerifier {
     fn verify_mpb_lite_backend(
         request: &VerificationRequest,
         log: &mut StepLogger<'_>,
-    ) -> Result<(), String> {
+    ) -> Result<u32, String> {
         let backend = request.metadata.get("proof_backend").map(|s| s.as_str());
-        if backend != Some("mpb_lite_v1") {
+        let version = backend.and_then(crate::mpb_lite::artifact_version_from_backend_name);
+        if version.is_none() {
             return log.fail_with(
                 "MPB backend",
-                Some(format!("expected mpb_lite_v1, got: {:?}", backend)),
+                Some(format!("expected mpb_lite_v1|v2|v3, got: {:?}", backend)),
                 ERR_MPB_METADATA_MISSING,
             );
         }
-        log.pass("MPB backend", Some("mpb_lite_v1".into()));
-        Ok(())
+        let backend = backend.expect("backend version checked above");
+        log.pass("MPB backend", Some(backend.into()));
+        Ok(version.expect("backend version checked above"))
     }
 
     fn parse_mpb_lite_meta(
@@ -449,12 +451,12 @@ impl ExternalVerifier {
         request: &VerificationRequest,
         log: &mut StepLogger<'_>,
     ) -> Result<crate::mpb_lite::MpbLiteArtifactV1, String> {
-        let artifact = match crate::bounded_deser::deserialize_mpb_artifact(&request.proof_data) {
+        let artifact = match crate::mpb_lite::deserialize_artifact(&request.proof_data) {
             Ok(a) => a,
             Err(e) => {
                 return log.fail_with(
                     "MPB artifact decode",
-                    Some(e.to_string()),
+                    Some(e),
                     ERR_FAILED_DECODE_MPB_ARTIFACT,
                 );
             }
@@ -468,6 +470,7 @@ impl ExternalVerifier {
 
     fn verify_mpb_lite_header(
         artifact: &crate::mpb_lite::MpbLiteArtifactV1,
+        expected_version: u32,
         log: &mut StepLogger<'_>,
     ) -> Result<(), String> {
         if let Err(e) = crate::mpb_lite::verify_artifact_header(artifact) {
@@ -477,7 +480,20 @@ impl ExternalVerifier {
                 ERR_MPB_ARTIFACT_INVALID,
             );
         }
-        log.pass("MPB artifact header", Some("ok".into()));
+        if artifact.version != expected_version {
+            return log.fail_with(
+                "MPB artifact header",
+                Some(format!(
+                    "proof_backend version {} drifted from artifact version {}",
+                    expected_version, artifact.version
+                )),
+                ERR_MPB_ARTIFACT_INVALID,
+            );
+        }
+        log.pass(
+            "MPB artifact header",
+            Some(format!("version={}", artifact.version)),
+        );
         Ok(())
     }
 
@@ -1171,7 +1187,7 @@ mod tests {
             metadata: HashMap::from([
                 ("mode".into(), "B-Lite".into()),
                 ("proof_type".into(), "MPB".into()),
-                ("proof_backend".into(), "mpb_lite_v1".into()),
+                ("proof_backend".into(), "mpb_lite_v3".into()),
                 ("spot_checks".into(), "64".into()),
                 ("fuel_limit".into(), "10000".into()),
             ]),
@@ -1276,6 +1292,96 @@ mod tests {
             response.steps, response.error
         );
         assert_eq!(response.error, None);
+    }
+
+    #[test]
+    fn external_verifier_rejects_mpb_backend_version_drift_from_artifact() {
+        use mprd_core::hash::{hash_candidate, hash_state};
+        use mprd_core::{
+            CandidateAction, Decision, DecisionToken, Hash32, PolicyRef, Score, StateRef,
+            StateSnapshot, Value, ZkAttestor,
+        };
+
+        let bytecode = mprd_core::mpb::BytecodeBuilder::new()
+            .push_i64(1)
+            .halt()
+            .build();
+        let policy_hash = crate::mpb_lite::policy_hash_from_artifact_v1(&bytecode, &[]);
+
+        let mut config = crate::modes_v2::ModeConfig::mode_b_lite_with_checks(16);
+        config.mpb_max_fuel = 10_000;
+        config.mpb_policy_bytecode = Some(bytecode);
+        config.mpb_policy_variables = Some(vec![]);
+        let attestor = crate::modes_v2::RobustMpbAttestor::new(config).expect("attestor");
+
+        let mut state = StateSnapshot {
+            fields: HashMap::from([("x".into(), Value::Int(1))]),
+            policy_inputs: HashMap::new(),
+            state_hash: Hash32([0u8; 32]),
+            state_ref: StateRef {
+                state_source_id: Hash32([7u8; 32]),
+                state_epoch: 123,
+                state_attestation_hash: Hash32([6u8; 32]),
+            },
+        };
+        state.state_hash = hash_state(&state);
+
+        let mut action = CandidateAction {
+            action_type: "noop".into(),
+            params: HashMap::new(),
+            score: Score(42),
+            candidate_hash: Hash32([0u8; 32]),
+        };
+        action.candidate_hash = hash_candidate(&action);
+        let candidates = vec![action.clone()];
+
+        let token = DecisionToken {
+            policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 1,
+                registry_root: Hash32([9u8; 32]),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: action.candidate_hash,
+            nonce_or_tx_hash: Hash32([8u8; 32]),
+            timestamp_ms: 0,
+            signature: Vec::new(),
+        };
+
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: action.clone(),
+            policy_hash,
+            decision_commitment: Hash32([1u8; 32]),
+        };
+
+        let proof = attestor
+            .attest(&token, &decision, &state, &candidates)
+            .expect("attest");
+
+        let verifier = ExternalVerifier::new();
+        let mut metadata = proof.attestation_metadata.clone();
+        metadata.insert("proof_backend".into(), "mpb_lite_v1".into());
+        let request = VerificationRequest {
+            mode: DeploymentMode::TrustlessLite,
+            policy_hash: token.policy_hash.0,
+            policy_epoch: token.policy_ref.policy_epoch,
+            registry_root: token.policy_ref.registry_root.0,
+            state_source_id: token.state_ref.state_source_id.0,
+            state_epoch: token.state_ref.state_epoch,
+            state_attestation_hash: token.state_ref.state_attestation_hash.0,
+            state_hash: token.state_hash.0,
+            candidate_set_hash: proof.candidate_set_hash.0,
+            chosen_action_hash: token.chosen_action_hash.0,
+            nonce_or_tx_hash: token.nonce_or_tx_hash.0,
+            proof_data: proof.risc0_receipt.clone(),
+            metadata,
+        };
+
+        let response = verifier.verify(&request);
+        assert!(!response.valid, "{:?}", response.steps);
+        assert_eq!(response.error.as_deref(), Some(ERR_MPB_ARTIFACT_INVALID));
     }
 
     #[test]

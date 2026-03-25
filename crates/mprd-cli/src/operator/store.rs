@@ -350,9 +350,9 @@ impl OperatorStore {
             .attestation_metadata
             .get("proof_backend")
             .map(|s| s.as_str());
-        if backend != Some("mpb_lite_v1")
-            && backend != Some("mpb_lite_v2")
-            && backend != Some("mpb_lite_v3")
+        if backend
+            .and_then(mprd_zk::mpb_lite::artifact_version_from_backend_name)
+            .is_none()
         {
             return false;
         }
@@ -1352,9 +1352,8 @@ mod tests {
     }
 
     fn rewrite_receipt_as_mpb_lite_v2_compat(store: &OperatorStore, id: &str, proof: &ProofBundle) {
-        let artifact: mprd_zk::MpbLiteArtifactV1 =
-            mprd_zk::bounded_deser::deserialize_mpb_artifact(&proof.risc0_receipt)
-                .expect("decode v1 artifact");
+        let artifact =
+            mprd_zk::mpb_lite::deserialize_artifact(&proof.risc0_receipt).expect("decode artifact");
         let compat = MpbLiteArtifactV2Compat {
             version: mprd_zk::mpb_lite::MPB_LITE_ARTIFACT_VERSION_V2,
             mpb_register_mapping_id: artifact.mpb_register_mapping_id,
@@ -1372,9 +1371,8 @@ mod tests {
     }
 
     fn rewrite_receipt_as_mpb_lite_v3_compat(store: &OperatorStore, id: &str, proof: &ProofBundle) {
-        let artifact: mprd_zk::MpbLiteArtifactV1 =
-            mprd_zk::bounded_deser::deserialize_mpb_artifact(&proof.risc0_receipt)
-                .expect("decode v1 artifact");
+        let artifact =
+            mprd_zk::mpb_lite::deserialize_artifact(&proof.risc0_receipt).expect("decode artifact");
         let compat = MpbLiteArtifactV3Compat {
             version: mprd_zk::mpb_lite::MPB_LITE_ARTIFACT_VERSION_V3,
             mpb_register_mapping_id: artifact.mpb_register_mapping_id,

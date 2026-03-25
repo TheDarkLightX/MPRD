@@ -87,7 +87,10 @@ pub use external_verifier::{ExternalVerifier, VerificationRequest, VerificationR
 pub use verification::VerificationStep;
 
 // Re-export MPB B-Lite proof artifact
-pub use mpb_lite::{MpbLiteArtifactV1, MPB_LITE_ARTIFACT_VERSION_V1};
+pub use mpb_lite::{
+    MpbLiteArtifactV1, MPB_LITE_ARTIFACT_VERSION_V1, MPB_LITE_ARTIFACT_VERSION_V2,
+    MPB_LITE_ARTIFACT_VERSION_V3, MPB_LITE_CURRENT_ARTIFACT_VERSION,
+};
 
 // Re-export decentralization primitives
 pub use decentralization::{

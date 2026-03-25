@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub const MPB_LITE_ARTIFACT_VERSION_V1: u32 = 1;
 pub const MPB_LITE_ARTIFACT_VERSION_V2: u32 = 2;
 pub const MPB_LITE_ARTIFACT_VERSION_V3: u32 = 3;
+pub const MPB_LITE_CURRENT_ARTIFACT_VERSION: u32 = MPB_LITE_ARTIFACT_VERSION_V3;
 pub const MPB_LITE_CONTEXT_DOMAIN_V1: &[u8] = b"MPRD_MPB_LITE_CONTEXT_V1";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -55,7 +56,7 @@ struct MpbLiteArtifactV2 {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct MpbLiteArtifactV3 {
+pub(crate) struct MpbLiteArtifactV3 {
     pub version: u32,
     pub mpb_register_mapping_id: Id32,
     pub policy_variables: Vec<MpbVarBindingV1>,
@@ -70,6 +71,24 @@ struct MpbLiteArtifactV3 {
 #[derive(Clone, Debug, Deserialize)]
 struct MpbLiteArtifactVersionTag {
     version: u32,
+}
+
+pub fn artifact_version_from_backend_name(backend: &str) -> Option<u32> {
+    match backend {
+        "mpb_lite_v1" => Some(MPB_LITE_ARTIFACT_VERSION_V1),
+        "mpb_lite_v2" => Some(MPB_LITE_ARTIFACT_VERSION_V2),
+        "mpb_lite_v3" => Some(MPB_LITE_ARTIFACT_VERSION_V3),
+        _ => None,
+    }
+}
+
+pub fn backend_name_for_artifact_version(version: u32) -> Option<&'static str> {
+    match version {
+        MPB_LITE_ARTIFACT_VERSION_V1 => Some("mpb_lite_v1"),
+        MPB_LITE_ARTIFACT_VERSION_V2 => Some("mpb_lite_v2"),
+        MPB_LITE_ARTIFACT_VERSION_V3 => Some("mpb_lite_v3"),
+        _ => None,
+    }
 }
 
 fn artifact_from_v2_compat(
