@@ -1,14 +1,18 @@
-use super::{build_app, AppState};
+use super::{build_app, AppState, SignedRegistryExecutionReadyBridge};
 use crate::operator::api as op_api;
 use crate::operator::auth::ApiKeyConfig;
 use crate::operator::store::OperatorStore;
 use crate::test_support::EnvGuard;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use mprd_core::orchestrator::ExecutionReadyBridge;
 use mprd_core::{
     CandidateAction, Decision, DecisionToken, Hash32, PolicyRef, ProofBundle, RuleVerdict, Score,
-    StateRef, StateSnapshot, ZkAttestor,
+    StateRef, StateSnapshot, VerificationStatus, ZkAttestor, ZkLocalVerifier,
 };
+use mprd_risc0_shared::{policy_exec_kind_mpb_id_v1, policy_exec_version_id_v1};
+use mprd_zk::manifest::{GuestImageEntryV1, GuestImageManifestV1};
+use mprd_zk::registry_state::{AuthorizedPolicyV1, RegistryStateV1, SignedRegistryStateV1};
 use mprd_zk::{ModeConfig, RobustMpbAttestor};
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
@@ -109,6 +113,46 @@ fn sample_mpb_lite_decision_inputs() -> (
     }];
 
     (token, proof, state, candidates, verdicts, decision)
+}
+
+fn sample_signed_registry_bridge() -> SignedRegistryExecutionReadyBridge {
+    let key = mprd_core::crypto::TokenSigningKey::from_seed(&[41u8; 32]);
+    let vk = key.verifying_key();
+    let manifest = GuestImageManifestV1::sign(
+        &key,
+        123,
+        vec![GuestImageEntryV1 {
+            policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
+            policy_exec_version_id: policy_exec_version_id_v1(),
+            image_id: [7u8; 32],
+        }],
+    )
+    .expect("manifest");
+    let state = RegistryStateV1 {
+        policy_epoch: 1,
+        registry_root: Hash32([9u8; 32]),
+        authorized_policies: vec![AuthorizedPolicyV1 {
+            policy_hash: Hash32([3u8; 32]),
+            policy_exec_kind_id: policy_exec_kind_mpb_id_v1(),
+            policy_exec_version_id: policy_exec_version_id_v1(),
+            policy_source_kind_id: None,
+            policy_source_hash: None,
+        }],
+        guest_image_manifest: manifest,
+    };
+    SignedRegistryExecutionReadyBridge {
+        signed_registry_state: SignedRegistryStateV1::sign(&key, 456, state).expect("sign"),
+        registry_state_verifying_key: vk.clone(),
+        manifest_verifying_key: vk,
+    }
+}
+
+struct AcceptingVerifier;
+
+impl ZkLocalVerifier for AcceptingVerifier {
+    fn verify(&self, _token: &DecisionToken, _proof: &ProofBundle) -> VerificationStatus {
+        VerificationStatus::Success
+    }
 }
 
 async fn read_json<T: DeserializeOwned>(res: axum::http::Response<Body>) -> T {
@@ -235,6 +279,33 @@ async fn health_is_unauthed_even_when_api_key_enabled() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[test]
+fn signed_registry_ready_bridge_rejects_unvalidated_governance_witness() {
+    let bridge = sample_signed_registry_bridge();
+    let (token, proof, state, _candidates, _verdicts, _decision) =
+        sample_mpb_lite_decision_inputs();
+    let governance = mprd_core::governance_admission_witness_from_fields_v1(
+        mprd_core::GovernanceUpdateKindV1::PolicyTweak,
+        true,
+        false,
+        true,
+    )
+    .expect("governance witness");
+
+    let verified =
+        mprd_core::verify_for_execution(&AcceptingVerifier, &token, &proof).expect("verified");
+
+    let err = bridge
+        .prepare_execution_ready(verified, &state, Some(governance))
+        .expect_err("governance witness must fail closed without concrete gate input");
+
+    assert!(
+        err.to_string()
+            .contains("requires a concrete governance gate packet"),
+        "unexpected error: {err}"
+    );
 }
 
 #[tokio::test]

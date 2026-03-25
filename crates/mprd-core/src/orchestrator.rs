@@ -66,6 +66,19 @@ pub trait DecisionAuditRecorder {
     ) -> Result<()>;
 }
 
+/// Optional hook for rebuilding the live execute-ready packet from a more concrete authority
+/// surface right before execution.
+pub trait ExecutionReadyBridge {
+    /// Given a locally verified bundle plus the observed state and admitted governance witness,
+    /// return the exact `ExecutionReadyBundle` the executor should consume.
+    fn prepare_execution_ready<'a>(
+        &self,
+        verified: VerifiedBundle<'a>,
+        state: &'a StateSnapshot,
+        governance: Option<crate::GovernanceAdmissionWitnessV1>,
+    ) -> Result<crate::ExecutionReadyBundle<'a>>;
+}
+
 pub struct RunOnceInputs<'a, P, Pr, PE, S, TF, ZA, ZV, E> {
     pub state_provider: &'a P,
     pub proposer: &'a Pr,
@@ -108,7 +121,7 @@ pub struct RunOnceInputsWithRecorder<'a, P, Pr, PE, S, TF, ZA, ZV, E> {
 /// - Events for each stage (state, propose, evaluate, select, etc.)
 #[instrument(
     name = "mprd_run_once",
-    skip(inputs, recorder),
+    skip(inputs, recorder, ready_bridge),
     fields(
         policy_hash = %hex::encode(&inputs.policy_hash.0[..8]),
         candidates = tracing::field::Empty,
@@ -119,6 +132,7 @@ pub struct RunOnceInputsWithRecorder<'a, P, Pr, PE, S, TF, ZA, ZV, E> {
 fn run_once_internal<P, Pr, PE, S, TF, ZA, ZV, E>(
     inputs: RunOnceInputs<'_, P, Pr, PE, S, TF, ZA, ZV, E>,
     recorder: Option<&dyn DecisionRecorder>,
+    ready_bridge: Option<&dyn ExecutionReadyBridge>,
 ) -> Result<ExecutionResult>
 where
     P: StateProvider,
@@ -361,12 +375,19 @@ where
             // 8. Execute via adapter
             debug!("Executing action");
             let verified = VerifiedBundle::new(&token, &proof);
-            let ready = crate::prepare_execution_ready_with_authorization(
-                verified,
-                &authority,
-                &state_binding,
-                attest_ready.governance().copied(),
-            )
+            let ready = match ready_bridge {
+                Some(bridge) => bridge.prepare_execution_ready(
+                    verified,
+                    &state,
+                    attest_ready.governance().copied(),
+                ),
+                None => crate::prepare_execution_ready_with_authorization(
+                    verified,
+                    &authority,
+                    &state_binding,
+                    attest_ready.governance().copied(),
+                ),
+            }
             .inspect_err(|e| record_stage_failure(inputs.metrics, "execute", e))?;
             let result = if let Some(m) = inputs.metrics {
                 metrics::timed_execute(m, || inputs.executor.execute_ready(&ready))
@@ -413,7 +434,26 @@ where
     ZV: ZkLocalVerifier,
     E: ExecutorAdapter,
 {
-    run_once_internal(inputs, None)
+    run_once_internal(inputs, None, None)
+}
+
+/// Execute a single MPRD decision cycle and rebuild the live execute-ready packet through a
+/// caller-provided concrete bridge before side effects happen.
+pub fn run_once_with_ready_bridge<P, Pr, PE, S, TF, ZA, ZV, E>(
+    inputs: RunOnceInputs<'_, P, Pr, PE, S, TF, ZA, ZV, E>,
+    ready_bridge: &dyn ExecutionReadyBridge,
+) -> Result<ExecutionResult>
+where
+    P: StateProvider,
+    Pr: Proposer,
+    PE: PolicyEngine,
+    S: Selector,
+    TF: DecisionTokenFactory,
+    ZA: ZkAttestor,
+    ZV: ZkLocalVerifier,
+    E: ExecutorAdapter,
+{
+    run_once_internal(inputs, None, Some(ready_bridge))
 }
 
 /// Execute a single MPRD decision cycle and record verified decisions.
@@ -430,7 +470,7 @@ where
     ZV: ZkLocalVerifier,
     E: ExecutorAdapter,
 {
-    run_once_internal(inputs.inputs, Some(inputs.recorder))
+    run_once_internal(inputs.inputs, Some(inputs.recorder), None)
 }
 
 fn enforce_selector_contract(
@@ -1173,6 +1213,32 @@ mod tests {
         }
     }
 
+    struct RecordingReadyBridge {
+        called: Arc<AtomicBool>,
+    }
+
+    impl ExecutionReadyBridge for RecordingReadyBridge {
+        fn prepare_execution_ready<'a>(
+            &self,
+            verified: VerifiedBundle<'a>,
+            state: &'a StateSnapshot,
+            governance: Option<crate::GovernanceAdmissionWitnessV1>,
+        ) -> Result<crate::ExecutionReadyBundle<'a>> {
+            self.called.store(true, Ordering::SeqCst);
+            let authority = crate::policy_authority_witness_v1(
+                &verified.token().policy_hash,
+                &verified.token().policy_ref,
+            )?;
+            let state_binding = crate::state_provenance::state_binding_witness_v1(state);
+            crate::prepare_execution_ready_with_authorization(
+                verified,
+                &authority,
+                &state_binding,
+                governance,
+            )
+        }
+    }
+
     struct DummySelector;
 
     impl Selector for DummySelector {
@@ -1306,6 +1372,57 @@ mod tests {
         .expect("run_once should succeed for valid http_call pipeline");
 
         assert!(result.success);
+        assert!(saw_authorization.load(Ordering::SeqCst));
+        assert!(!saw_governance.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn run_once_with_ready_bridge_invokes_bridge_before_execute() {
+        let state_provider = DummyStateProvider;
+        let proposer = ValidHttpCallProposer;
+        let policy_engine = AllowAllPolicyEngine;
+        let selector = DummySelector;
+        let token_factory = DummyTokenFactory;
+        let attestor = DummyAttestor;
+        let verifier = DummyVerifier;
+        let saw_authorization = Arc::new(AtomicBool::new(false));
+        let saw_governance = Arc::new(AtomicBool::new(false));
+        let bridge_called = Arc::new(AtomicBool::new(false));
+        let executor = AuthorizationCapturingExecutor {
+            saw_authorization: saw_authorization.clone(),
+            saw_governance: saw_governance.clone(),
+        };
+        let bridge = RecordingReadyBridge {
+            called: bridge_called.clone(),
+        };
+        let policy_hash = Hash32([9u8; 32]);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: Hash32([8u8; 32]),
+        };
+
+        let result = run_once_with_ready_bridge(
+            RunOnceInputs {
+                state_provider: &state_provider,
+                proposer: &proposer,
+                policy_engine: &policy_engine,
+                selector: &selector,
+                token_factory: &token_factory,
+                attestor: &attestor,
+                verifier: &verifier,
+                executor: &executor,
+                policy_hash: &policy_hash,
+                policy_ref,
+                nonce_or_tx_hash: None,
+                metrics: None,
+                audit_recorder: None,
+            },
+            &bridge,
+        )
+        .expect("run_once_with_ready_bridge should succeed");
+
+        assert!(result.success);
+        assert!(bridge_called.load(Ordering::SeqCst));
         assert!(saw_authorization.load(Ordering::SeqCst));
         assert!(!saw_governance.load(Ordering::SeqCst));
     }

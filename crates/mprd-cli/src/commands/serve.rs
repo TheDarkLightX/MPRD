@@ -100,6 +100,40 @@ struct AppState {
     cegis_metrics: Arc<RwLock<mprd_core::cegis::ProposerMetrics>>,
 }
 
+#[derive(Clone)]
+struct SignedRegistryExecutionReadyBridge {
+    signed_registry_state: mprd_zk::registry_state::SignedRegistryStateV1,
+    registry_state_verifying_key: mprd_core::crypto::TokenVerifyingKey,
+    manifest_verifying_key: mprd_core::crypto::TokenVerifyingKey,
+}
+
+impl orchestrator::ExecutionReadyBridge for SignedRegistryExecutionReadyBridge {
+    fn prepare_execution_ready<'a>(
+        &self,
+        verified: mprd_core::VerifiedBundle<'a>,
+        state: &'a mprd_core::StateSnapshot,
+        governance: Option<mprd_core::GovernanceAdmissionWitnessV1>,
+    ) -> mprd_core::Result<mprd_core::ExecutionReadyBundle<'a>> {
+        if governance.is_some() {
+            return Err(mprd_core::MprdError::InvalidInput(
+                "production serve ready bridge requires a concrete governance gate packet".into(),
+            ));
+        }
+
+        // The production serve path has the verifier-trusted registry checkpoint but not a
+        // concrete GovernanceGateInput packet. The zk bridge still re-derives and checks the
+        // canonical state-prepared governance rails fail-closed.
+        mprd_zk::prepare_execution_ready_from_signed_registry_and_governance_v1(
+            verified,
+            state,
+            self.signed_registry_state.clone(),
+            self.registry_state_verifying_key.clone(),
+            self.manifest_verifying_key.clone(),
+            None,
+        )
+    }
+}
+
 #[derive(Deserialize)]
 struct RunRequest {
     #[serde(default)]
@@ -229,6 +263,23 @@ async fn run_handler(
                     );
                     Ok(result)
                 }
+
+                fn execute_ready(
+                    &self,
+                    ready: &mprd_core::ExecutionReadyBundle<'_>,
+                ) -> mprd_core::Result<mprd_core::ExecutionResult> {
+                    let started = Instant::now();
+                    let result = self.inner.execute_ready(ready)?;
+                    let decision_id_hex = hex::encode(op_store::decision_id_v1(ready.token()).0);
+                    let _ = self.store.write_execution_result(
+                        &decision_id_hex,
+                        result.success,
+                        result.message.clone(),
+                        self.executor_name.clone(),
+                        started.elapsed().as_millis() as u64,
+                    );
+                    Ok(result)
+                }
             }
 
             let audit = StoreAuditRecorder {
@@ -320,7 +371,7 @@ async fn run_handler(
             // This is the heavy lifter. It proves (Policy(State, Candidate) -> Verdict)
             // using the *actual* bytecode authorized by the registry.
             let (policy_ref, attestor) = mprd_zk::create_registry_bound_mpb_v1_attestor_from_signed_registry_state(
-                signed_registry,
+                signed_registry.clone(),
                 registry_vk.clone(),
                 registry_vk.clone(), // Manifest key same as registry for now
                 artifact_store,
@@ -437,9 +488,21 @@ async fn run_handler(
                  ) -> mprd_core::Result<mprd_core::ExecutionResult> {
                      self.0.execute(verified)
                  }
+
+                 fn execute_ready(
+                     &self,
+                     ready: &mprd_core::ExecutionReadyBundle<'_>,
+                 ) -> mprd_core::Result<mprd_core::ExecutionResult> {
+                     self.0.execute_ready(ready)
+                 }
              }
 
              let executor = BoxedExecutor(guarded_executor);
+             let ready_bridge = SignedRegistryExecutionReadyBridge {
+                 signed_registry_state: signed_registry.clone(),
+                 registry_state_verifying_key: registry_vk.clone(),
+                 manifest_verifying_key: registry_vk.clone(),
+             };
 
              // Wrapper for Box<dyn ZkAttestor> to satisfy ZkAttestor trait bound
              struct BoxedZkAttestor(Box<dyn mprd_core::ZkAttestor>);
@@ -472,7 +535,7 @@ async fn run_handler(
              let registry_state = mprd_zk::registry_state::RegistryStateProvider::get(registry_provider.as_ref()).unwrap();
              let target_policy = registry_state.authorized_policies.first().ok_or_else(|| mprd_core::MprdError::ExecutionError("Registry has no policies".into()))?;
 
-             orchestrator::run_once(orchestrator::RunOnceInputs {
+             orchestrator::run_once_with_ready_bridge(orchestrator::RunOnceInputs {
                 state_provider: &state_provider,
                 proposer: &proposer,
                 policy_engine: &policy_engine, // Host hint
@@ -486,7 +549,7 @@ async fn run_handler(
                 nonce_or_tx_hash: None, // Generated internally if None
                 metrics: None,
                 audit_recorder: Some(&audit),
-            })
+            }, &ready_bridge)
         }
     })
     .await;
