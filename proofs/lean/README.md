@@ -24,6 +24,7 @@ assumption.
 - `MPRD_SignedRegistryBridgeWitnessBoundary.lean`: a lightweight proof of the next stricter signed-registry boundary: executed states require the registry-authorization hash binding and preservation of the concrete bridge witness into the rebuilt ready bundle, in addition to the signed-registry bridge facts.
 - `MPRD_SignedRegistryExecutionBoundary.lean`: a lightweight joined boundary proof for the shipped signed-registry path: executed states require the signed-registry bridge facts plus the concrete execution guards (verified, allowed, replay, binding, executor).
 - `MPRD_SignedRegistryServeBoundary.lean`: a lightweight top-level proof for the shipped production `mprd serve` path: executed states require validated registry and state anchors, explicit policy selection, production verifier binding, ready-bridge invocation, the signed-registry bridge facts, and the concrete execution guards.
+- `MPRD_SignedRegistryServeIdempotentHttpBoundary.lean`: a lightweight top-level proof for the shipped production `mprd serve` path when the side-effect sink is `idempotent_http`: successful remote execution requires the signed-registry serve-boundary facts, explicit `idempotent_http` selection, configured effect-journal binding, a pending-barrier check, and a committed local effect barrier before success.
 - `MPRD_RegistryPolicyAuthority.lean`: a lightweight proof of the registry-backed policy admission boundary: a node only resolves a live policy after a selected trusted authority mode, manifest verification, exact `policy_ref` alignment, policy authorization, and image routing.
 - `MPRD_ParallelIndependenceOracle.lean`: a lightweight local theorem for pre/post-condition-guided parallelization: speculative evaluation and cache refresh commute and preserve the serial authority barrier, while committed states still require all existing commit guards and private committed states additionally require Mode C key admission.
 
@@ -58,6 +59,7 @@ lake env lean MPRD_SignedRegistryCheckpointBridge.lean
 lake env lean MPRD_SignedRegistryBridgeWitnessBoundary.lean
 lake env lean MPRD_SignedRegistryExecutionBoundary.lean
 lake env lean MPRD_SignedRegistryServeBoundary.lean
+lake env lean MPRD_SignedRegistryServeIdempotentHttpBoundary.lean
 lake env lean MPRD_RegistryPolicyAuthority.lean
 lake env lean MPRD_ParallelIndependenceOracle.lean
 ```
