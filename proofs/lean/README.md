@@ -12,6 +12,7 @@ assumption.
 - `MPRD_ExecutionGate.lean`: a guarded reachable-state proof that executed states require verification, an allowed verdict, governance authorization, replay clearance, and binding integrity.
 - `MPRD_ExecutionCommitmentBindings.lean`: a stronger reachable-state proof that expands binding integrity into the concrete commitment checks used by the journal verifier: journal-allowed, limits hash, decision commitment recomputation, policy/state/candidate/action matches, and nonce binding.
 - `MPRD_ExecutionBoundary.lean`: a composed reachable-state proof that joins the journal/request commitment vector with the executor preimage/schema gate, so execution requires both verifier-side and executor-side bindings.
+- `MPRD_ExecutionReadyPacketBoundary.lean`: a lightweight local theorem for the grouped `ExecutionReadyPacketV1` runtime boundary: executed states require the concrete execution-boundary witness, execution authorization, signed-registry bridge facts, and executor-side signature/state-provenance/replay admission to be grouped into one constructor-gated packet before execution can occur.
 - `MPRD_SelectorContractBinding.lean`: a lightweight reachable-state proof that execution also requires the selector-specific chosen-index and chosen-action-preimage bindings, so runtime effects cannot drift to a different allowed action.
 - `MPRD_TauPolicyAuthority.lean`: a small reachable-state proof of the architectural split: models propose, Tau decides, the selector chooses from the Tau-allowed set, and execution follows only that choice.
 - `MPRD_GovernedPolicySource.lean`: a lightweight registry-bound proof that if Tau source bytes are the governed rule surface, execution through a compiled artifact still requires pinned policy authorization, routed image selection, and explicit source mapping.
@@ -48,6 +49,7 @@ lake env lean MPRD_ExecutionLifecycle.lean
 lake env lean MPRD_ExecutionGate.lean
 lake env lean MPRD_ExecutionCommitmentBindings.lean
 lake env lean MPRD_ExecutionBoundary.lean
+lake env lean MPRD_ExecutionReadyPacketBoundary.lean
 lake env lean MPRD_SelectorContractBinding.lean
 lake env lean MPRD_TauPolicyAuthority.lean
 lake env lean MPRD_GovernedPolicySource.lean
