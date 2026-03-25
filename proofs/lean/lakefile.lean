@@ -29,6 +29,7 @@ lean_lib MPRDLeanProofs where
     `MPRD_SignedRegistryExecutionBoundary,
     `MPRD_SignedRegistryServeBoundary,
     `MPRD_SignedRegistryServeAttestationHashBoundary,
+    `MPRD_SignedRegistryServeIdempotentFileBoundary,
     `MPRD_SignedRegistryServeIdempotentHttpBoundary,
     `MPRD_RegistryPolicyAuthority,
     `MPRD_ParallelIndependenceOracle,
