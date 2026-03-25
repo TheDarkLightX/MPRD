@@ -1,0 +1,102 @@
+name: Network Replay
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/network-replay.yml'
+      - 'docs/specs/**'
+      - 'docs/receipts/rc1_network_replay_20260325.json'
+      - 'docs/PARALLELIZATION_AND_NETWORK_RESILIENCE.md'
+      - 'docs/RC1_BLOCKERS.md'
+      - 'docs/PRODUCTION_READINESS.md'
+      - 'docs/TIER0_BOUNDARY_MATRIX.md'
+      - 'tools/replay_network_barriers_rc1.py'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/network-replay.yml'
+      - 'docs/specs/**'
+      - 'docs/receipts/rc1_network_replay_20260325.json'
+      - 'docs/PARALLELIZATION_AND_NETWORK_RESILIENCE.md'
+      - 'docs/RC1_BLOCKERS.md'
+      - 'docs/PRODUCTION_READINESS.md'
+      - 'docs/TIER0_BOUNDARY_MATRIX.md'
+      - 'tools/replay_network_barriers_rc1.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  network-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Download pinned tla2tools.jar
+        env:
+          TLA2TOOLS_URL: https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+          TLA2TOOLS_SHA1: bee4a54f3ee3d4afc347c3240ec2d9e93b075104
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location "$TLA2TOOLS_URL" -o "$RUNNER_TEMP/tla2tools.jar"
+          echo "$TLA2TOOLS_SHA1  $RUNNER_TEMP/tla2tools.jar" | sha1sum -c -
+
+      - name: Replay tracked network barrier series
+        env:
+          TLA2TOOLS_JAR: ${{ runner.temp }}/tla2tools.jar
+        run: |
+          set -euo pipefail
+          python3 tools/replay_network_barriers_rc1.py \
+            --output "$RUNNER_TEMP/rc1_network_replay_summary.json"
+
+      - name: Compare generated summary to tracked receipt
+        env:
+          GENERATED_SUMMARY: ${{ runner.temp }}/rc1_network_replay_summary.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          with open("docs/receipts/rc1_network_replay_20260325.json", "r", encoding="utf-8") as f:
+              expected = json.load(f)
+          with open(os.environ["GENERATED_SUMMARY"], "r", encoding="utf-8") as f:
+              generated = json.load(f)
+
+          def normalize(payload):
+              return {
+                  "spec_count": payload["spec_count"],
+                  "entries": [
+                      {
+                          "spec": entry["spec"],
+                          "status": entry["status"],
+                          "distinct_states": entry["distinct_states"],
+                          "search_depth": entry["search_depth"],
+                      }
+                      for entry in payload["entries"]
+                  ],
+              }
+
+          if normalize(expected) != normalize(generated):
+              print("tracked receipt does not match generated replay summary", file=sys.stderr)
+              print(json.dumps(normalize(expected), indent=2, sort_keys=True), file=sys.stderr)
+              print(json.dumps(normalize(generated), indent=2, sort_keys=True), file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Upload network replay summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc1-network-replay-summary
+          path: ${{ runner.temp }}/rc1_network_replay_summary.json

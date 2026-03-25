@@ -66,6 +66,7 @@ The tracked RC1 replay script and receipt for the current model series are:
 
 - `tools/replay_network_barriers_rc1.py`
 - `docs/receipts/rc1_network_replay_20260325.json`
+- `.github/workflows/network-replay.yml`
 
 The current receipt is green across 10 tracked safety models:
 

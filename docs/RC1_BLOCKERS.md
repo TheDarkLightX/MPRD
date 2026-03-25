@@ -15,6 +15,7 @@ These are currently expected to pass through tracked workflows or release-gate r
 - `RISC0_SKIP_BUILD=1 cargo clippy --workspace --all-targets -- -D warnings`
 - `RISC0_SKIP_BUILD=1 cargo test --workspace --all-targets`
 - `cargo audit` / `cargo audit --no-fetch` in the dedicated Cargo Audit workflow
+- tracked network replay receipt comparison in `.github/workflows/network-replay.yml`
 
 These gates are necessary, but not sufficient, for RC1.
 

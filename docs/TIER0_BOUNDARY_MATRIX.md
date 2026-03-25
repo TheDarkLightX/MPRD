@@ -44,6 +44,20 @@ The tracked workflow is:
 The RC1 release claim should use a successful summary artifact from that workflow (or an equivalent
 local replay using the same script) on the candidate commit.
 
+## RC1 Network Replay Campaign
+
+The tracked replay runner is:
+
+- [replay_network_barriers_rc1.py](../tools/replay_network_barriers_rc1.py)
+
+The tracked workflow is:
+
+- [network-replay.yml](../.github/workflows/network-replay.yml)
+
+The current committed replay receipt is:
+
+- [rc1_network_replay_20260325.json](receipts/rc1_network_replay_20260325.json)
+
 ## Maintenance Rule
 
 If a new Tier-0 parser, witness, or authority boundary is added, update this matrix in the same
