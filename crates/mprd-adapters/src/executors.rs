@@ -52,6 +52,7 @@ fn execute_payload_from_parts(
     token: &DecisionToken,
     proof: &ProofBundle,
     action_preimage: &[u8],
+    governance: Option<&mprd_core::GovernanceAdmissionWitnessV1>,
 ) -> ExecutePayload {
     ExecutePayload {
         policy_hash: hex::encode(token.policy_hash.0),
@@ -68,6 +69,10 @@ fn execute_payload_from_parts(
         token_signature_hex: hex::encode(&token.signature),
         proof_receipt_hex: hex::encode(&proof.risc0_receipt),
         proof_metadata: proof.attestation_metadata.clone(),
+        governance_update_kind: governance.map(|g| g.update_kind().as_str().to_string()),
+        governance_profile_app_ok: governance.map(|g| g.profile_app_ok()),
+        governance_profile_safety_ok: governance.map(|g| g.profile_safety_ok()),
+        governance_link_ok: governance.map(|g| g.link_ok()),
     }
 }
 
@@ -75,8 +80,9 @@ fn webhook_payload_from_parts(
     token: &DecisionToken,
     proof: &ProofBundle,
     action_preimage: &[u8],
+    governance: Option<&mprd_core::GovernanceAdmissionWitnessV1>,
 ) -> serde_json::Value {
-    serde_json::json!({
+    let mut payload = serde_json::json!({
         "event": "mprd_action_executed",
         "policy_hash": hex::encode(token.policy_hash.0),
         "policy_epoch": token.policy_ref.policy_epoch,
@@ -95,7 +101,31 @@ fn webhook_payload_from_parts(
             "receipt_hex": hex::encode(&proof.risc0_receipt),
             "metadata": proof.attestation_metadata.clone(),
         }
-    })
+    });
+
+    if let Some(governance) = governance {
+        let object = payload
+            .as_object_mut()
+            .expect("webhook payload should remain an object");
+        object.insert(
+            "governance_update_kind".into(),
+            serde_json::Value::String(governance.update_kind().as_str().into()),
+        );
+        object.insert(
+            "governance_profile_app_ok".into(),
+            serde_json::Value::Bool(governance.profile_app_ok()),
+        );
+        object.insert(
+            "governance_profile_safety_ok".into(),
+            serde_json::Value::Bool(governance.profile_safety_ok()),
+        );
+        object.insert(
+            "governance_link_ok".into(),
+            serde_json::Value::Bool(governance.link_ok()),
+        );
+    }
+
+    payload
 }
 
 // =============================================================================
@@ -280,6 +310,14 @@ struct ExecutePayload {
     token_signature_hex: String,
     proof_receipt_hex: String,
     proof_metadata: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    governance_update_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    governance_profile_app_ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    governance_profile_safety_ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    governance_link_ok: Option<bool>,
 }
 
 /// Response from the execution endpoint.
@@ -311,7 +349,7 @@ impl ExecutorAdapter for HttpExecutor {
         let proof = verified.proof();
         let action_preimage = require_action_preimage(verified)?;
 
-        let payload = execute_payload_from_parts(token, proof, &action_preimage);
+        let payload = execute_payload_from_parts(token, proof, &action_preimage, None);
         self.execute_payload(token, &payload)
     }
 
@@ -319,7 +357,12 @@ impl ExecutorAdapter for HttpExecutor {
         let token = ready.token();
         let proof = ready.proof();
         let action_preimage = require_ready_action_preimage(ready);
-        let payload = execute_payload_from_parts(token, proof, &action_preimage);
+        let payload = execute_payload_from_parts(
+            token,
+            proof,
+            &action_preimage,
+            ready.authorization().and_then(|a| a.governance()),
+        );
         self.execute_payload(token, &payload)
     }
 }
@@ -362,7 +405,7 @@ impl ExecutorAdapter for WebhookExecutor {
         let token = verified.token();
         let proof = verified.proof();
         let action_preimage = require_action_preimage(verified)?;
-        let payload = webhook_payload_from_parts(token, proof, &action_preimage);
+        let payload = webhook_payload_from_parts(token, proof, &action_preimage, None);
 
         match self.client.post(&self.webhook_url).json(&payload).send() {
             Ok(response) => {
@@ -386,7 +429,12 @@ impl ExecutorAdapter for WebhookExecutor {
         let token = ready.token();
         let proof = ready.proof();
         let action_preimage = require_ready_action_preimage(ready);
-        let payload = webhook_payload_from_parts(token, proof, &action_preimage);
+        let payload = webhook_payload_from_parts(
+            token,
+            proof,
+            &action_preimage,
+            ready.authorization().and_then(|a| a.governance()),
+        );
 
         match self.client.post(&self.webhook_url).json(&payload).send() {
             Ok(response) => {
@@ -451,12 +499,21 @@ struct AuditRecord {
     nonce_or_tx_hash: String,
     token_timestamp_ms: i64,
     proof_metadata: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    governance_update_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    governance_profile_app_ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    governance_profile_safety_ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    governance_link_ok: Option<bool>,
 }
 
 fn audit_record_from_parts(
     token: &DecisionToken,
     proof: &ProofBundle,
     action_preimage: &[u8],
+    governance: Option<&mprd_core::GovernanceAdmissionWitnessV1>,
 ) -> AuditRecord {
     AuditRecord {
         timestamp: chrono::Utc::now().to_rfc3339(),
@@ -470,6 +527,10 @@ fn audit_record_from_parts(
         nonce_or_tx_hash: hex::encode(token.nonce_or_tx_hash.0),
         token_timestamp_ms: token.timestamp_ms,
         proof_metadata: proof.attestation_metadata.clone(),
+        governance_update_kind: governance.map(|g| g.update_kind().as_str().to_string()),
+        governance_profile_app_ok: governance.map(|g| g.profile_app_ok()),
+        governance_profile_safety_ok: governance.map(|g| g.profile_safety_ok()),
+        governance_link_ok: governance.map(|g| g.link_ok()),
     }
 }
 
@@ -481,7 +542,7 @@ impl ExecutorAdapter for FileExecutor {
         let token = verified.token();
         let proof = verified.proof();
         let action_preimage = require_action_preimage(verified)?;
-        let record = audit_record_from_parts(token, proof, &action_preimage);
+        let record = audit_record_from_parts(token, proof, &action_preimage, None);
 
         let json = serde_json::to_string(&record)
             .map_err(|e| MprdError::ExecutionError(format!("Failed to serialize record: {}", e)))?;
@@ -507,7 +568,12 @@ impl ExecutorAdapter for FileExecutor {
         let token = ready.token();
         let proof = ready.proof();
         let action_preimage = require_ready_action_preimage(ready);
-        let record = audit_record_from_parts(token, proof, &action_preimage);
+        let record = audit_record_from_parts(
+            token,
+            proof,
+            &action_preimage,
+            ready.authorization().and_then(|a| a.governance()),
+        );
 
         let json = serde_json::to_string(&record)
             .map_err(|e| MprdError::ExecutionError(format!("Failed to serialize record: {}", e)))?;
@@ -565,7 +631,7 @@ impl ExecutorAdapter for IdempotentFileExecutor {
         let token = verified.token();
         let proof = verified.proof();
         let action_preimage = require_action_preimage(verified)?;
-        let record = audit_record_from_parts(token, proof, &action_preimage);
+        let record = audit_record_from_parts(token, proof, &action_preimage, None);
 
         let path = self.record_path(token);
         if let Some(parent) = path.parent() {
@@ -610,7 +676,12 @@ impl ExecutorAdapter for IdempotentFileExecutor {
         let token = ready.token();
         let proof = ready.proof();
         let action_preimage = require_ready_action_preimage(ready);
-        let record = audit_record_from_parts(token, proof, &action_preimage);
+        let record = audit_record_from_parts(
+            token,
+            proof,
+            &action_preimage,
+            ready.authorization().and_then(|a| a.governance()),
+        );
 
         let path = self.record_path(token);
         if let Some(parent) = path.parent() {
@@ -867,6 +938,40 @@ mod tests {
         mprd_core::prepare_execution_ready(verified(token, proof)).expect("prepare_execution_ready")
     }
 
+    fn ready_with_governance<'a>(
+        token: &'a DecisionToken,
+        proof: &'a mut ProofBundle,
+    ) -> mprd_core::ExecutionReadyBundle<'a> {
+        let governance = mprd_core::governance_admission_witness_from_fields_v1(
+            mprd_core::GovernanceUpdateKindV1::PolicyTweak,
+            true,
+            false,
+            true,
+        )
+        .expect("governance witness");
+        mprd_core::insert_governance_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &governance,
+        );
+        let state = mprd_core::StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: token.state_hash,
+            state_ref: token.state_ref.clone(),
+        };
+        let authority =
+            mprd_core::policy_authority_witness_v1(&token.policy_hash, &token.policy_ref)
+                .expect("policy authority");
+        let state_binding = mprd_core::state_provenance::state_binding_witness_v1(&state);
+        mprd_core::prepare_execution_ready_with_authorization(
+            verified(token, proof),
+            &authority,
+            &state_binding,
+            Some(governance),
+        )
+        .expect("prepare_execution_ready_with_authorization")
+    }
+
     struct CountingExecutor {
         raw_calls: Arc<AtomicUsize>,
         ready_calls: Arc<AtomicUsize>,
@@ -927,7 +1032,7 @@ mod tests {
         let proof = dummy_proof();
         let action_preimage = dummy_http_call_action_preimage();
 
-        let payload = execute_payload_from_parts(&token, &proof, &action_preimage);
+        let payload = execute_payload_from_parts(&token, &proof, &action_preimage, None);
         assert_eq!(
             payload.state_source_id,
             hex::encode(token.state_ref.state_source_id.0)
@@ -947,7 +1052,7 @@ mod tests {
         let expected_state_source_id = hex::encode(token.state_ref.state_source_id.0);
         let expected_state_attestation_hash = hex::encode(token.state_ref.state_attestation_hash.0);
 
-        let payload = webhook_payload_from_parts(&token, &proof, &action_preimage);
+        let payload = webhook_payload_from_parts(&token, &proof, &action_preimage, None);
         assert_eq!(
             payload
                 .get("state_source_id")
@@ -1014,6 +1119,108 @@ mod tests {
                 .get("state_attestation_hash")
                 .and_then(serde_json::Value::as_str),
             Some(expected_state_attestation_hash.as_str())
+        );
+    }
+
+    #[test]
+    fn execute_ready_payload_includes_governance_provenance() {
+        let token = dummy_token();
+        let mut proof = dummy_proof();
+        let ready = ready_with_governance(&token, &mut proof);
+        let action_preimage = require_ready_action_preimage(&ready);
+
+        let payload = execute_payload_from_parts(
+            ready.token(),
+            ready.proof(),
+            &action_preimage,
+            ready.authorization().and_then(|a| a.governance()),
+        );
+        assert_eq!(
+            payload.governance_update_kind.as_deref(),
+            Some("policy_tweak")
+        );
+        assert_eq!(payload.governance_profile_app_ok, Some(true));
+        assert_eq!(payload.governance_profile_safety_ok, Some(false));
+        assert_eq!(payload.governance_link_ok, Some(true));
+    }
+
+    #[test]
+    fn webhook_ready_payload_includes_governance_provenance() {
+        let token = dummy_token();
+        let mut proof = dummy_proof();
+        let ready = ready_with_governance(&token, &mut proof);
+        let action_preimage = require_ready_action_preimage(&ready);
+
+        let payload = webhook_payload_from_parts(
+            ready.token(),
+            ready.proof(),
+            &action_preimage,
+            ready.authorization().and_then(|a| a.governance()),
+        );
+        assert_eq!(
+            payload
+                .get("governance_update_kind")
+                .and_then(serde_json::Value::as_str),
+            Some("policy_tweak")
+        );
+        assert_eq!(
+            payload
+                .get("governance_profile_app_ok")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            payload
+                .get("governance_profile_safety_ok")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            payload
+                .get("governance_link_ok")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn file_executor_record_includes_governance_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mprd_test_governance.jsonl");
+
+        let executor = FileExecutor::new(&path).unwrap();
+        let token = dummy_token();
+        let mut proof = dummy_proof();
+        let result = executor
+            .execute_ready(&ready_with_governance(&token, &mut proof))
+            .unwrap();
+
+        assert!(result.success);
+        let line = std::fs::read_to_string(&path).expect("read audit file");
+        let record: serde_json::Value = serde_json::from_str(line.trim()).expect("json record");
+        assert_eq!(
+            record
+                .get("governance_update_kind")
+                .and_then(serde_json::Value::as_str),
+            Some("policy_tweak")
+        );
+        assert_eq!(
+            record
+                .get("governance_profile_app_ok")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            record
+                .get("governance_profile_safety_ok")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            record
+                .get("governance_link_ok")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
         );
     }
 
