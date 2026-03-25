@@ -80,6 +80,13 @@ status; the RC1 board separates automated green gates from still-open Tier-0 rel
   re-checked before any retry emits a second effect. The remaining gap is still
   runtime and deployment closure for that barrier in the shipped adapters and
   external effect surfaces.
+- **Remote executor idempotency signal (SHOULD)**: the shipped HTTP, webhook,
+  and audit executor surfaces now emit the same deterministic
+  `execution_idempotency_key_v1` derived from the
+  (`policy_hash`, `state_hash`, `action_hash`, `nonce_or_tx_hash`) tuple, so
+  downstream services can enforce retry idempotence without re-deriving the key
+  ad hoc. The remaining gap is still deployment-time enforcement by those
+  downstream systems and full end-to-end at-most-once closure.
 - **Mode C minimized trust**: Mode C currently gives a strong private-boundary verification surface, but it is not full minimized trust yet because the prover or operator still sees plaintext and governance, registry authority, and source mapping remain part of the trust root.
 - **Persistent anti-replay is deployed**: configure `anti_replay.nonce_store_dir` in production deployments (not just the in-repo option).
 - **Persistent anti-replay is deployed**:

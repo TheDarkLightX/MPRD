@@ -56,6 +56,7 @@ These gates are necessary, but not sufficient, for RC1.
   - Missing: replayable chaos campaigns for stale checkpoints, checkpoint withholding, quorum degradation, Tau/API outages, and related partition schedules.
 - Global at-most-once execution across crash and partition scenarios is not yet a shipped end-to-end theorem.
   - Narrowed: the tracked replay-model series now includes a crash-ordering effect-finalization packet, so the safety story no longer stops at replay ownership or visibility alone. The model shows that if a durable effect-commit barrier survives crash and retry, late nonce finalization can still complete without a second external effect emission.
+  - Narrowed further: the shipped HTTP, webhook, and audit executor surfaces now all emit the same deterministic `execution_idempotency_key_v1` derived from the policy/state/action/nonce tuple, so downstream services no longer have to reconstruct that tuple ad hoc to enforce retry idempotence.
   - Current state: this still needs tighter runtime and deployment closure before it becomes a shipped end-to-end theorem.
 
 ### Tier 1: Operational / Policy Admission

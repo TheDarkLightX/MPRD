@@ -30,6 +30,7 @@ use mprd_core::{
     Result, VerifiedBundle,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -48,6 +49,18 @@ fn require_ready_action_preimage(ready: &ExecutionReadyBundle<'_>) -> Vec<u8> {
     ready.boundary().chosen_action_preimage().to_vec()
 }
 
+const EXECUTION_IDEMPOTENCY_KEY_DOMAIN_V1: &[u8] = b"mprd-execution-idempotency-v1";
+
+fn execution_idempotency_key_v1(token: &DecisionToken) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(EXECUTION_IDEMPOTENCY_KEY_DOMAIN_V1);
+    hasher.update(token.policy_hash.0);
+    hasher.update(token.state_hash.0);
+    hasher.update(token.chosen_action_hash.0);
+    hasher.update(token.nonce_or_tx_hash.0);
+    hex::encode(hasher.finalize())
+}
+
 fn execute_payload_from_parts(
     token: &DecisionToken,
     proof: &ProofBundle,
@@ -55,6 +68,7 @@ fn execute_payload_from_parts(
     governance: Option<&mprd_core::GovernanceAdmissionWitnessV1>,
 ) -> ExecutePayload {
     ExecutePayload {
+        idempotency_key_v1: execution_idempotency_key_v1(token),
         policy_hash: hex::encode(token.policy_hash.0),
         policy_epoch: token.policy_ref.policy_epoch,
         registry_root: hex::encode(token.policy_ref.registry_root.0),
@@ -84,6 +98,7 @@ fn webhook_payload_from_parts(
 ) -> serde_json::Value {
     let mut payload = serde_json::json!({
         "event": "mprd_action_executed",
+        "idempotency_key_v1": execution_idempotency_key_v1(token),
         "policy_hash": hex::encode(token.policy_hash.0),
         "policy_epoch": token.policy_ref.policy_epoch,
         "registry_root": hex::encode(token.policy_ref.registry_root.0),
@@ -202,6 +217,7 @@ impl HttpExecutor {
         payload: &ExecutePayload,
     ) -> Result<ExecutionResult> {
         let url = format!("{}/execute", self.config.base_url);
+        let idempotency_key = execution_idempotency_key_v1(token);
 
         let mut last_error = None;
         let mut total_delay: u64 = 0;
@@ -212,7 +228,7 @@ impl HttpExecutor {
             if let Some(ref api_key) = self.config.api_key {
                 request = request.header("X-API-Key", api_key);
             }
-            request = request.header("Idempotency-Key", hex::encode(token.nonce_or_tx_hash.0));
+            request = request.header("Idempotency-Key", &idempotency_key);
 
             match request.send() {
                 Ok(response) => {
@@ -296,6 +312,7 @@ impl HttpExecutor {
 /// Payload sent to the execution endpoint.
 #[derive(Serialize)]
 struct ExecutePayload {
+    idempotency_key_v1: String,
     policy_hash: String,
     policy_epoch: u64,
     registry_root: String,
@@ -406,8 +423,15 @@ impl ExecutorAdapter for WebhookExecutor {
         let proof = verified.proof();
         let action_preimage = require_action_preimage(verified)?;
         let payload = webhook_payload_from_parts(token, proof, &action_preimage, None);
+        let idempotency_key = execution_idempotency_key_v1(token);
 
-        match self.client.post(&self.webhook_url).json(&payload).send() {
+        match self
+            .client
+            .post(&self.webhook_url)
+            .header("Idempotency-Key", &idempotency_key)
+            .json(&payload)
+            .send()
+        {
             Ok(response) => {
                 if response.status().is_success() || response.status().as_u16() == 202 {
                     Ok(ExecutionResult {
@@ -435,8 +459,15 @@ impl ExecutorAdapter for WebhookExecutor {
             &action_preimage,
             ready.authorization().and_then(|a| a.governance()),
         );
+        let idempotency_key = execution_idempotency_key_v1(token);
 
-        match self.client.post(&self.webhook_url).json(&payload).send() {
+        match self
+            .client
+            .post(&self.webhook_url)
+            .header("Idempotency-Key", &idempotency_key)
+            .json(&payload)
+            .send()
+        {
             Ok(response) => {
                 if response.status().is_success() || response.status().as_u16() == 202 {
                     Ok(ExecutionResult {
@@ -489,6 +520,7 @@ impl FileExecutor {
 #[derive(Serialize)]
 struct AuditRecord {
     timestamp: String,
+    idempotency_key_v1: String,
     policy_hash: String,
     state_hash: String,
     state_source_id: String,
@@ -517,6 +549,7 @@ fn audit_record_from_parts(
 ) -> AuditRecord {
     AuditRecord {
         timestamp: chrono::Utc::now().to_rfc3339(),
+        idempotency_key_v1: execution_idempotency_key_v1(token),
         policy_hash: hex::encode(token.policy_hash.0),
         state_hash: hex::encode(token.state_hash.0),
         state_source_id: hex::encode(token.state_ref.state_source_id.0),
@@ -606,7 +639,7 @@ impl ExecutorAdapter for FileExecutor {
 /// and across process restarts.
 ///
 /// Record path:
-/// `root/<policy_hash_hex>/<nonce_hex>.json`
+/// `root/<policy_hash_hex>/<execution_idempotency_key_v1>.json`
 pub struct IdempotentFileExecutor {
     root: PathBuf,
 }
@@ -621,8 +654,10 @@ impl IdempotentFileExecutor {
 
     fn record_path(&self, token: &DecisionToken) -> PathBuf {
         let policy = hex::encode(token.policy_hash.0);
-        let nonce = hex::encode(token.nonce_or_tx_hash.0);
-        self.root.join(policy).join(format!("{}.json", nonce))
+        let idempotency_key = execution_idempotency_key_v1(token);
+        self.root
+            .join(policy)
+            .join(format!("{}.json", idempotency_key))
     }
 }
 
@@ -1031,8 +1066,10 @@ mod tests {
         let token = dummy_token();
         let proof = dummy_proof();
         let action_preimage = dummy_http_call_action_preimage();
+        let expected_idempotency_key = execution_idempotency_key_v1(&token);
 
         let payload = execute_payload_from_parts(&token, &proof, &action_preimage, None);
+        assert_eq!(payload.idempotency_key_v1, expected_idempotency_key);
         assert_eq!(
             payload.state_source_id,
             hex::encode(token.state_ref.state_source_id.0)
@@ -1049,10 +1086,17 @@ mod tests {
         let token = dummy_token();
         let proof = dummy_proof();
         let action_preimage = dummy_http_call_action_preimage();
+        let expected_idempotency_key = execution_idempotency_key_v1(&token);
         let expected_state_source_id = hex::encode(token.state_ref.state_source_id.0);
         let expected_state_attestation_hash = hex::encode(token.state_ref.state_attestation_hash.0);
 
         let payload = webhook_payload_from_parts(&token, &proof, &action_preimage, None);
+        assert_eq!(
+            payload
+                .get("idempotency_key_v1")
+                .and_then(serde_json::Value::as_str),
+            Some(expected_idempotency_key.as_str())
+        );
         assert_eq!(
             payload
                 .get("state_source_id")
@@ -1095,6 +1139,7 @@ mod tests {
         let executor = FileExecutor::new(&path).unwrap();
         let token = dummy_token();
         let proof = dummy_proof();
+        let expected_idempotency_key = execution_idempotency_key_v1(&token);
         let expected_state_source_id = hex::encode(token.state_ref.state_source_id.0);
         let expected_state_attestation_hash = hex::encode(token.state_ref.state_attestation_hash.0);
         let result = executor.execute_ready(&ready(&token, &proof)).unwrap();
@@ -1102,6 +1147,12 @@ mod tests {
         assert!(result.success);
         let line = std::fs::read_to_string(&path).expect("read audit file");
         let record: serde_json::Value = serde_json::from_str(line.trim()).expect("json record");
+        assert_eq!(
+            record
+                .get("idempotency_key_v1")
+                .and_then(serde_json::Value::as_str),
+            Some(expected_idempotency_key.as_str())
+        );
         assert_eq!(
             record
                 .get("state_source_id")
@@ -1222,6 +1273,29 @@ mod tests {
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
+    }
+
+    #[test]
+    fn execution_idempotency_key_v1_is_deterministic_and_tuple_bound() {
+        let token = dummy_token();
+        let baseline = execution_idempotency_key_v1(&token);
+        assert_eq!(baseline, execution_idempotency_key_v1(&token));
+
+        let mut policy_drift = token.clone();
+        policy_drift.policy_hash = Hash32([9u8; 32]);
+        assert_ne!(baseline, execution_idempotency_key_v1(&policy_drift));
+
+        let mut state_drift = token.clone();
+        state_drift.state_hash = Hash32([8u8; 32]);
+        assert_ne!(baseline, execution_idempotency_key_v1(&state_drift));
+
+        let mut action_drift = token.clone();
+        action_drift.chosen_action_hash = Hash32([7u8; 32]);
+        assert_ne!(baseline, execution_idempotency_key_v1(&action_drift));
+
+        let mut nonce_drift = token.clone();
+        nonce_drift.nonce_or_tx_hash = Hash32([6u8; 32]);
+        assert_ne!(baseline, execution_idempotency_key_v1(&nonce_drift));
     }
 
     #[test]
