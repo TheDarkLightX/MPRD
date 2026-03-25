@@ -27,6 +27,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+pub const REGISTRY_AUTH_METADATA_EXEC_KIND_ID_V1: &str = "registry_auth_exec_kind_id";
+pub const REGISTRY_AUTH_METADATA_EXEC_VERSION_ID_V1: &str = "registry_auth_exec_version_id";
+pub const REGISTRY_AUTH_METADATA_IMAGE_ID_V1: &str = "registry_auth_image_id";
+pub const REGISTRY_AUTH_METADATA_POLICY_SOURCE_KIND_ID_V1: &str =
+    "registry_auth_policy_source_kind_id";
+pub const REGISTRY_AUTH_METADATA_POLICY_SOURCE_HASH_V1: &str = "registry_auth_policy_source_hash";
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthorizedPolicyV1 {
     pub policy_hash: Hash32,
@@ -671,6 +678,133 @@ pub struct AuthorizedPolicyResolutionV1 {
     pub image_id: Id32,
 }
 
+pub fn insert_registry_authorization_attestation_metadata_v1(
+    metadata: &mut std::collections::HashMap<String, String>,
+    resolution: &AuthorizedPolicyResolutionV1,
+) {
+    metadata.insert(
+        REGISTRY_AUTH_METADATA_EXEC_KIND_ID_V1.into(),
+        hex::encode(resolution.authorized_policy.policy_exec_kind_id),
+    );
+    metadata.insert(
+        REGISTRY_AUTH_METADATA_EXEC_VERSION_ID_V1.into(),
+        hex::encode(resolution.authorized_policy.policy_exec_version_id),
+    );
+    metadata.insert(
+        REGISTRY_AUTH_METADATA_IMAGE_ID_V1.into(),
+        hex::encode(resolution.image_id),
+    );
+    if let Some(kind_id) = resolution.authorized_policy.policy_source_kind_id {
+        metadata.insert(
+            REGISTRY_AUTH_METADATA_POLICY_SOURCE_KIND_ID_V1.into(),
+            hex::encode(kind_id),
+        );
+    }
+    if let Some(source_hash) = resolution.authorized_policy.policy_source_hash {
+        metadata.insert(
+            REGISTRY_AUTH_METADATA_POLICY_SOURCE_HASH_V1.into(),
+            hex::encode(source_hash.0),
+        );
+    }
+}
+
+fn require_registry_authorization_metadata_value_v1<'a>(
+    metadata: &'a std::collections::HashMap<String, String>,
+    key: &'static str,
+) -> Result<&'a str> {
+    metadata.get(key).map(String::as_str).ok_or_else(|| {
+        mprd_core::MprdError::InvalidInput(format!("missing {key} attestation metadata"))
+    })
+}
+
+pub fn verify_registry_authorization_attestation_metadata_v1(
+    proof: &mprd_core::ProofBundle,
+    resolution: &AuthorizedPolicyResolutionV1,
+) -> Result<()> {
+    let metadata = &proof.attestation_metadata;
+
+    let expected_exec_kind_id = hex::encode(resolution.authorized_policy.policy_exec_kind_id);
+    let actual_exec_kind_id = require_registry_authorization_metadata_value_v1(
+        metadata,
+        REGISTRY_AUTH_METADATA_EXEC_KIND_ID_V1,
+    )?;
+    if actual_exec_kind_id != expected_exec_kind_id {
+        return Err(mprd_core::MprdError::InvalidInput(
+            "registry_auth_exec_kind_id attestation metadata drifted from registry authorization"
+                .into(),
+        ));
+    }
+
+    let expected_exec_version_id = hex::encode(resolution.authorized_policy.policy_exec_version_id);
+    let actual_exec_version_id = require_registry_authorization_metadata_value_v1(
+        metadata,
+        REGISTRY_AUTH_METADATA_EXEC_VERSION_ID_V1,
+    )?;
+    if actual_exec_version_id != expected_exec_version_id {
+        return Err(mprd_core::MprdError::InvalidInput(
+            "registry_auth_exec_version_id attestation metadata drifted from registry authorization"
+                .into(),
+        ));
+    }
+
+    let expected_image_id = hex::encode(resolution.image_id);
+    let actual_image_id = require_registry_authorization_metadata_value_v1(
+        metadata,
+        REGISTRY_AUTH_METADATA_IMAGE_ID_V1,
+    )?;
+    if actual_image_id != expected_image_id {
+        return Err(mprd_core::MprdError::InvalidInput(
+            "registry_auth_image_id attestation metadata drifted from registry authorization"
+                .into(),
+        ));
+    }
+
+    match (
+        resolution.authorized_policy.policy_source_kind_id,
+        resolution.authorized_policy.policy_source_hash,
+    ) {
+        (Some(kind_id), Some(source_hash)) => {
+            let expected_kind_id = hex::encode(kind_id);
+            let actual_kind_id = require_registry_authorization_metadata_value_v1(
+                metadata,
+                REGISTRY_AUTH_METADATA_POLICY_SOURCE_KIND_ID_V1,
+            )?;
+            if actual_kind_id != expected_kind_id {
+                return Err(mprd_core::MprdError::InvalidInput(
+                    "registry_auth_policy_source_kind_id attestation metadata drifted from registry authorization".into(),
+                ));
+            }
+
+            let expected_source_hash = hex::encode(source_hash.0);
+            let actual_source_hash = require_registry_authorization_metadata_value_v1(
+                metadata,
+                REGISTRY_AUTH_METADATA_POLICY_SOURCE_HASH_V1,
+            )?;
+            if actual_source_hash != expected_source_hash {
+                return Err(mprd_core::MprdError::InvalidInput(
+                    "registry_auth_policy_source_hash attestation metadata drifted from registry authorization".into(),
+                ));
+            }
+        }
+        (None, None) => {
+            if metadata.contains_key(REGISTRY_AUTH_METADATA_POLICY_SOURCE_KIND_ID_V1)
+                || metadata.contains_key(REGISTRY_AUTH_METADATA_POLICY_SOURCE_HASH_V1)
+            {
+                return Err(mprd_core::MprdError::InvalidInput(
+                    "registry authorization attestation metadata claimed a policy source mapping that is absent from registry authorization".into(),
+                ));
+            }
+        }
+        _ => {
+            return Err(mprd_core::MprdError::InvalidInput(
+                "registry authorization contained incomplete policy_source mapping".into(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 /// Policy authorization provider backed by a verifier-trusted registry state provider.
 ///
 /// This enforces the same epoch/root pinning and manifest verification rules used by
@@ -866,7 +1000,20 @@ impl ZkLocalVerifier for RegistryBoundRisc0Verifier {
             authorized.policy_exec_kind_id,
             authorized.policy_exec_version_id,
         );
-        verifier.verify(token, proof)
+        let status = verifier.verify(token, proof);
+        match status {
+            VerificationStatus::Success => {
+                let resolution = AuthorizedPolicyResolutionV1 {
+                    authorized_policy: authorized.clone(),
+                    image_id,
+                };
+                match verify_registry_authorization_attestation_metadata_v1(proof, &resolution) {
+                    Ok(()) => VerificationStatus::Success,
+                    Err(e) => VerificationStatus::Failure(e.to_string()),
+                }
+            }
+            other => other,
+        }
     }
 }
 
@@ -1049,6 +1196,85 @@ mod tests {
                 assert_eq!(
                     msg,
                     "authorized policy missing required policy_source mapping"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn registry_authorization_attestation_metadata_round_trips() {
+        let resolution = AuthorizedPolicyResolutionV1 {
+            authorized_policy: AuthorizedPolicyV1 {
+                policy_hash: dummy_hash(1),
+                policy_exec_kind_id: [0x11; 32],
+                policy_exec_version_id: [0x22; 32],
+                policy_source_kind_id: Some([0x33; 32]),
+                policy_source_hash: Some(dummy_hash(0x44)),
+            },
+            image_id: [0x55; 32],
+        };
+
+        let mut proof = mprd_core::ProofBundle {
+            policy_hash: dummy_hash(0),
+            state_hash: dummy_hash(0),
+            candidate_set_hash: dummy_hash(0),
+            chosen_action_hash: dummy_hash(0),
+            limits_hash: dummy_hash(0),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
+            risc0_receipt: vec![],
+            attestation_metadata: Default::default(),
+        };
+
+        insert_registry_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &resolution,
+        );
+        verify_registry_authorization_attestation_metadata_v1(&proof, &resolution)
+            .expect("verify metadata");
+    }
+
+    #[test]
+    fn registry_authorization_attestation_metadata_rejects_image_id_drift() {
+        let resolution = AuthorizedPolicyResolutionV1 {
+            authorized_policy: AuthorizedPolicyV1 {
+                policy_hash: dummy_hash(1),
+                policy_exec_kind_id: [0x11; 32],
+                policy_exec_version_id: [0x22; 32],
+                policy_source_kind_id: Some([0x33; 32]),
+                policy_source_hash: Some(dummy_hash(0x44)),
+            },
+            image_id: [0x55; 32],
+        };
+
+        let mut proof = mprd_core::ProofBundle {
+            policy_hash: dummy_hash(0),
+            state_hash: dummy_hash(0),
+            candidate_set_hash: dummy_hash(0),
+            chosen_action_hash: dummy_hash(0),
+            limits_hash: dummy_hash(0),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
+            risc0_receipt: vec![],
+            attestation_metadata: Default::default(),
+        };
+        insert_registry_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &resolution,
+        );
+        proof.attestation_metadata.insert(
+            REGISTRY_AUTH_METADATA_IMAGE_ID_V1.into(),
+            hex::encode([0x99; 32]),
+        );
+
+        let err =
+            verify_registry_authorization_attestation_metadata_v1(&proof, &resolution).unwrap_err();
+        match err {
+            mprd_core::MprdError::InvalidInput(msg) => {
+                assert_eq!(
+                    msg,
+                    "registry_auth_image_id attestation metadata drifted from registry authorization"
                 );
             }
             other => panic!("unexpected error: {other:?}"),

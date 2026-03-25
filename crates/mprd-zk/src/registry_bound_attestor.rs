@@ -9,7 +9,9 @@
 //! gap where policy authorization was only enforced at verification time.
 
 use crate::policy_fetch::{PolicyArtifactStore, RegistryBoundMpbPolicyProvider};
-use crate::registry_state::PolicyAuthorizationProvider;
+use crate::registry_state::{
+    insert_registry_authorization_attestation_metadata_v1, PolicyAuthorizationProvider,
+};
 use crate::risc0_host::{
     MpbPolicyProvider, Risc0MpbAttestor, Risc0TauCompiledAttestor, TauCompiledPolicyProvider,
 };
@@ -89,7 +91,12 @@ impl mprd_core::ZkAttestor for RegistryBoundRisc0MpbAttestor {
             self.mpb_fuel_limit,
             Arc::clone(&self.policy_provider),
         );
-        inner.attest(token, decision, state, candidates)
+        let mut proof = inner.attest(token, decision, state, candidates)?;
+        insert_registry_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &resolution,
+        );
+        Ok(proof)
     }
 }
 
@@ -154,6 +161,11 @@ impl mprd_core::ZkAttestor for RegistryBoundRisc0TauCompiledAttestor {
             image_id,
             Arc::clone(&self.policy_provider),
         );
-        inner.attest(token, decision, state, candidates)
+        let mut proof = inner.attest(token, decision, state, candidates)?;
+        insert_registry_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &resolution,
+        );
+        Ok(proof)
     }
 }
