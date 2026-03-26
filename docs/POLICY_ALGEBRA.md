@@ -197,6 +197,17 @@ mprd policy algebra-menu-write --id tokenomics_v6_action_gate_fast --out ./polic
 Note: menu entries are intentionally built to be fail-closed and Tau-emittable (avoid `Not(DenyIf(..))` and other
 hard-to-audit constructs).
 
+The shipped menu family also has a tracked RC1 semantic-equivalence receipt:
+
+```bash
+python3 tools/policy/replay_menu_tau_equivalence_rc1.py \
+  --output docs/receipts/rc1_policy_menu_tau_equivalence_20260326.json
+```
+
+That receipt proves the built-in curated menu entries round-trip through `algebra-menu-emit-tau`
+and `algebra-certify-tau` on the current toolchain. It narrows the RC1 Tau compiler-equivalence
+gap for the shipped menu family, but not for arbitrary Tau artifacts.
+
 ---
 
 ## API Reference

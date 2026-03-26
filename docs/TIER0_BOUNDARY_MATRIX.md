@@ -23,6 +23,7 @@ For current RC1 status, see [RC1_BLOCKERS.md](RC1_BLOCKERS.md).
 | Limits bytes parser | empty/truncated payloads; bad version; field-width errors; min/max/off-by-one values | [limits.rs](../crates/mprd-core/src/limits.rs), [limits_bytes_v1.rs](../fuzz/fuzz_targets/limits_bytes_v1.rs) | parser is covered; broader deployment-time limits-policy semantics are separate |
 | Candidate preimage decode | malformed bytes; ordering and type decode failures; random byte streams | [validation.rs](../crates/mprd-core/src/validation.rs), [candidate_preimage_v1.rs](../fuzz/fuzz_targets/candidate_preimage_v1.rs) | semantic canonicalization beyond exact preimage syntax remains open |
 | Receipt and MPB artifact deserialization | oversize envelopes; kind mismatch; digest mismatch; version-family decode compatibility | [bounded_deser.rs](../crates/mprd-zk/src/bounded_deser.rs), [receipt_deser.rs](../fuzz/fuzz_targets/receipt_deser.rs), [mpb_artifact_deser.rs](../fuzz/fuzz_targets/mpb_artifact_deser.rs) | deserialization is strong; source-to-artifact semantic equivalence is still open |
+| Curated Policy Algebra menu to emitted Tau | deterministic menu enumeration; canonical policy bytes per built-in menu entry; canonical Tau v2 emission with the suggested output name; ROBDD equivalence of shipped menu entries versus emitted Tau | [policy_algebra.rs](../crates/mprd-cli/src/commands/policy_algebra.rs), [replay_menu_tau_equivalence_rc1.py](../tools/policy/replay_menu_tau_equivalence_rc1.py), [rc1_policy_menu_tau_equivalence_20260326.json](receipts/rc1_policy_menu_tau_equivalence_20260326.json), [policy-menu-tau-equivalence.yml](../.github/workflows/policy-menu-tau-equivalence.yml) | the built-in curated menu family is covered, but general Tau source-to-compiled artifact semantic equivalence is still open |
 | Decoded journal verifier boundary | single-field journal mutations; recomputed commitment vs field-specific checks; fail-closed journal rejection | [decoded_journal_metamorphic_v3.rs](../fuzz/fuzz_targets/decoded_journal_metamorphic_v3.rs) | concrete refinement from full runtime journal objects into the formal selector/governance slices is still open |
 | Tau output attestation envelope | malformed envelope bytes; round-trip encode/decode stability; canonical hash preservation | [tau_output_attestation_envelope_v1.rs](../fuzz/fuzz_targets/tau_output_attestation_envelope_v1.rs) | this covers envelope syntax, not the larger Tau governance authority model |
 | Anti-replay boundary | duplicate nonces; claimed-vs-used transitions; high-trust vs low-trust sequencing; failure must not consume nonce; replay clearance must survive the live `execute_ready` boundary instead of staying wrapper-local; shipped HTTP/webhook/audit adapters should expose one deterministic idempotency key for the concrete (`policy_hash`, `state_hash`, `action_hash`, `nonce_or_tx_hash`) tuple; trustless/private production serve should not allow the plain append-only `file` executor as a file-backed side-effect sink; the tracked replay series should include one concrete adapter-facing local-file idempotence model for the shipped `idempotent_file` sink; trustless/private production serve should not allow plain `http` without a local pending/committed effect barrier keyed by that same idempotency tuple; missing `effect_journal_dir` must fail closed for `idempotent_http`; the tracked replay series should include one concrete adapter-facing pending/committed HTTP barrier model in addition to the abstract crash-ordering packet | [anti_replay.rs](../crates/mprd-core/src/anti_replay.rs), [components.rs](../crates/mprd-core/src/components.rs), [e2e_pipeline.rs](../crates/mprd-core/tests/e2e_pipeline.rs), [anti_replay_state_machine.rs](../fuzz/fuzz_targets/anti_replay_state_machine.rs), [executors.rs](../crates/mprd-adapters/src/executors.rs), [serve.rs](../crates/mprd-cli/src/commands/serve.rs), [PARALLELIZATION_AND_NETWORK_RESILIENCE.md](PARALLELIZATION_AND_NETWORK_RESILIENCE.md), [rc1_network_replay_20260325.json](receipts/rc1_network_replay_20260325.json) | global at-most-once execution across crash/partition scenarios still needs tighter runtime/deployment closure |
@@ -61,6 +62,20 @@ The tracked workflow is:
 The current committed replay receipt is:
 
 - [rc1_network_replay_20260325.json](receipts/rc1_network_replay_20260325.json)
+
+## RC1 Policy Menu Tau Certification
+
+The tracked replay runner is:
+
+- [replay_menu_tau_equivalence_rc1.py](../tools/policy/replay_menu_tau_equivalence_rc1.py)
+
+The tracked workflow is:
+
+- [policy-menu-tau-equivalence.yml](../.github/workflows/policy-menu-tau-equivalence.yml)
+
+The current committed receipt is:
+
+- [rc1_policy_menu_tau_equivalence_20260326.json](receipts/rc1_policy_menu_tau_equivalence_20260326.json)
 
 ## Maintenance Rule
 

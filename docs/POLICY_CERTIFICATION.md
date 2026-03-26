@@ -69,6 +69,33 @@ The emitted v2 gate uses presence bits, so it expects inputs:
 
 If not equivalent, it prints a concrete counterexample assignment over the policy’s signals.
 
+## Tracked RC1 menu-family receipt
+
+The shipped curated Policy Algebra menu now has a deterministic RC1 receipt that:
+- enumerates the built-in menu entries,
+- writes each canonical Policy Algebra v1 artifact,
+- emits the canonical Tau v2 gate for that same entry, and
+- certifies semantic equivalence with `algebra-certify-tau`.
+
+Replay it locally with:
+
+```bash
+cd /home/trevormoc/Downloads/MPRD
+python3 tools/policy/replay_menu_tau_equivalence_rc1.py \
+  --output docs/receipts/rc1_policy_menu_tau_equivalence_20260326.json
+```
+
+The tracked receipt is:
+
+- `docs/receipts/rc1_policy_menu_tau_equivalence_20260326.json`
+
+The tracked CI workflow is:
+
+- `.github/workflows/policy-menu-tau-equivalence.yml`
+
+This narrows the Tau compiler-equivalence blocker for the shipped curated menu family only. It
+does not prove general Tau source-to-compiled semantic equivalence for arbitrary artifacts.
+
 ## API usage (Rust)
 
 `mprd_core::policy_algebra` exports:

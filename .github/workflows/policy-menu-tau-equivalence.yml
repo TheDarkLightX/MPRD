@@ -1,0 +1,87 @@
+name: Policy Menu Tau Equivalence
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/policy-menu-tau-equivalence.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/mprd-cli/**'
+      - 'crates/mprd-core/**'
+      - 'docs/POLICY_ALGEBRA.md'
+      - 'docs/POLICY_CERTIFICATION.md'
+      - 'docs/RC1_BLOCKERS.md'
+      - 'docs/TIER0_BOUNDARY_MATRIX.md'
+      - 'docs/PRODUCTION_READINESS.md'
+      - 'docs/receipts/rc1_policy_menu_tau_equivalence_20260326.json'
+      - 'tools/policy/**'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/policy-menu-tau-equivalence.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/mprd-cli/**'
+      - 'crates/mprd-core/**'
+      - 'docs/POLICY_ALGEBRA.md'
+      - 'docs/POLICY_CERTIFICATION.md'
+      - 'docs/RC1_BLOCKERS.md'
+      - 'docs/TIER0_BOUNDARY_MATRIX.md'
+      - 'docs/PRODUCTION_READINESS.md'
+      - 'docs/receipts/rc1_policy_menu_tau_equivalence_20260326.json'
+      - 'tools/policy/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  policy-menu-tau-equivalence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.87.0
+
+      - name: Replay tracked policy menu Tau receipt
+        run: |
+          set -euo pipefail
+          python3 tools/policy/replay_menu_tau_equivalence_rc1.py \
+            --output "$RUNNER_TEMP/rc1_policy_menu_tau_equivalence.json"
+
+      - name: Compare generated receipt to tracked receipt
+        env:
+          GENERATED_RECEIPT: ${{ runner.temp }}/rc1_policy_menu_tau_equivalence.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          with open(
+              "docs/receipts/rc1_policy_menu_tau_equivalence_20260326.json",
+              "r",
+              encoding="utf-8",
+          ) as f:
+              expected = json.load(f)
+          with open(os.environ["GENERATED_RECEIPT"], "r", encoding="utf-8") as f:
+              generated = json.load(f)
+
+          if expected != generated:
+              print("tracked policy-menu Tau receipt does not match generated receipt", file=sys.stderr)
+              print(json.dumps(expected, indent=2, sort_keys=True), file=sys.stderr)
+              print(json.dumps(generated, indent=2, sort_keys=True), file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Upload policy menu Tau receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc1-policy-menu-tau-equivalence
+          path: ${{ runner.temp }}/rc1_policy_menu_tau_equivalence.json
