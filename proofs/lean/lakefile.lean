@@ -16,6 +16,7 @@ lean_lib MPRDLeanProofs where
     `MPRD_ExecutionCommitmentBindings,
     `MPRD_ExecutionBoundary,
     `MPRD_ExecutionReadyPacketBoundary,
+    `MPRD_ExecutionReadyPacketRefinement,
     `MPRD_SelectorContractBinding,
     `MPRD_TauPolicyAuthority,
     `MPRD_GovernedPolicySource,
