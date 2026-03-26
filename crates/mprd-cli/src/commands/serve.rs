@@ -1849,6 +1849,14 @@ fn map_committed_effect_barrier(
         action_hash: barrier.action_hash_hex,
         nonce_or_tx_hash: barrier.nonce_or_tx_hash_hex,
         timestamp_ms: barrier.timestamp_ms,
+        resolution_kind: barrier.resolution_kind.map(|kind| match kind {
+            mprd_adapters::executors::CommittedHttpEffectBarrierResolutionKind::Automatic => {
+                op_api::CommittedEffectBarrierResolutionKind::Automatic
+            }
+            mprd_adapters::executors::CommittedHttpEffectBarrierResolutionKind::ManualPromote => {
+                op_api::CommittedEffectBarrierResolutionKind::ManualPromote
+            }
+        }),
     }
 }
 

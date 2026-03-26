@@ -56,7 +56,10 @@ export interface CommittedEffectBarrier {
     actionHash: string;
     nonceOrTxHash: string;
     timestampMs: number;
+    resolutionKind?: CommittedEffectBarrierResolutionKind;
 }
+
+export type CommittedEffectBarrierResolutionKind = 'automatic' | 'manual_promote';
 
 export type PendingEffectBarrierResolution = 'clear' | 'promote_to_committed';
 

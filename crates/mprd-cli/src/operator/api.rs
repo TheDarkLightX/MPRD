@@ -88,6 +88,15 @@ pub struct CommittedEffectBarrier {
     pub action_hash: HashHex,
     pub nonce_or_tx_hash: HashHex,
     pub timestamp_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution_kind: Option<CommittedEffectBarrierResolutionKind>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommittedEffectBarrierResolutionKind {
+    Automatic,
+    ManualPromote,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

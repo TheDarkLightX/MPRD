@@ -78,12 +78,29 @@ pub struct CommittedHttpEffectBarrier {
     pub action_hash_hex: String,
     pub nonce_or_tx_hash_hex: String,
     pub timestamp_ms: i64,
+    pub resolution_kind: Option<CommittedHttpEffectBarrierResolutionKind>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PendingHttpEffectBarrierResolution {
     Clear,
     PromoteToCommitted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommittedHttpEffectBarrierResolutionKind {
+    Automatic,
+    ManualPromote,
+}
+
+impl CommittedHttpEffectBarrierResolutionKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Automatic => "automatic",
+            Self::ManualPromote => "manual_promote",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,6 +117,8 @@ struct PendingHttpEffectBarrierPayload {
     action_hash: String,
     nonce_or_tx_hash: String,
     timestamp_ms: i64,
+    #[serde(default)]
+    effect_barrier_resolution_kind: Option<CommittedHttpEffectBarrierResolutionKind>,
 }
 
 struct ParsedHttpEffectBarrier {
@@ -110,6 +129,7 @@ struct ParsedHttpEffectBarrier {
     action_hash_hex: String,
     nonce_or_tx_hash_hex: String,
     timestamp_ms: i64,
+    resolution_kind: Option<CommittedHttpEffectBarrierResolutionKind>,
 }
 
 fn parse_http_effect_barrier(
@@ -192,11 +212,18 @@ fn parse_http_effect_barrier(
         action_hash_hex: payload.action_hash,
         nonce_or_tx_hash_hex: payload.nonce_or_tx_hash,
         timestamp_ms: payload.timestamp_ms,
+        resolution_kind: payload.effect_barrier_resolution_kind,
     })
 }
 
 fn parse_pending_http_effect_barrier(path: &Path) -> Result<PendingHttpEffectBarrier> {
     let parsed = parse_http_effect_barrier(path, ".pending.json", "Pending HTTP effect barrier")?;
+    if parsed.resolution_kind.is_some() {
+        return Err(MprdError::ExecutionError(format!(
+            "Pending HTTP effect barrier {} unexpectedly carries a committed resolution kind",
+            path.display()
+        )));
+    }
     Ok(PendingHttpEffectBarrier {
         barrier_path: parsed.barrier_path,
         policy_hash_hex: parsed.policy_hash_hex,
@@ -219,6 +246,7 @@ fn parse_committed_http_effect_barrier(path: &Path) -> Result<CommittedHttpEffec
         action_hash_hex: parsed.action_hash_hex,
         nonce_or_tx_hash_hex: parsed.nonce_or_tx_hash_hex,
         timestamp_ms: parsed.timestamp_ms,
+        resolution_kind: parsed.resolution_kind,
     })
 }
 
@@ -446,14 +474,13 @@ pub fn resolve_pending_http_effect_barrier(
                     committed.display()
                 )));
             }
-            fs::rename(&barrier.barrier_path, &committed).map_err(|e| {
-                MprdError::ExecutionError(format!(
-                    "Failed to promote pending HTTP effect barrier {} -> {}: {}",
-                    barrier.barrier_path.display(),
-                    committed.display(),
-                    e
-                ))
-            })?;
+            let document = IdempotentHttpExecutor::load_barrier_document(&barrier.barrier_path)?;
+            IdempotentHttpExecutor::write_committed_barrier_document(
+                &barrier.barrier_path,
+                &committed,
+                document,
+                CommittedHttpEffectBarrierResolutionKind::ManualPromote,
+            )?;
             Ok(ResolvedPendingHttpEffectBarrier {
                 barrier,
                 committed_barrier_path: Some(committed),
@@ -504,6 +531,7 @@ fn execute_payload_from_parts(
         governance_profile_app_ok: governance.map(|g| g.profile_app_ok()),
         governance_profile_safety_ok: governance.map(|g| g.profile_safety_ok()),
         governance_link_ok: governance.map(|g| g.link_ok()),
+        effect_barrier_resolution_kind: None,
     }
 }
 
@@ -796,10 +824,10 @@ impl IdempotentHttpExecutor {
         ))
     }
 
-    fn persist_barrier_payload(
+    fn persist_barrier_payload<T: Serialize>(
         mut file: File,
         path: &PathBuf,
-        payload: &ExecutePayload,
+        payload: &T,
     ) -> Result<()> {
         let json = serde_json::to_vec(payload).map_err(|e| {
             MprdError::ExecutionError(format!("Failed to serialize HTTP effect barrier: {}", e))
@@ -837,6 +865,54 @@ impl IdempotentHttpExecutor {
                 e
             ))),
         }
+    }
+
+    fn load_barrier_document(path: &Path) -> Result<serde_json::Map<String, serde_json::Value>> {
+        let bytes = fs::read(path).map_err(|e| {
+            MprdError::ExecutionError(format!(
+                "Failed to read HTTP effect barrier {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+            MprdError::ExecutionError(format!(
+                "Failed to parse HTTP effect barrier {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+        value.as_object().cloned().ok_or_else(|| {
+            MprdError::ExecutionError(format!(
+                "HTTP effect barrier {} is not a JSON object",
+                path.display()
+            ))
+        })
+    }
+
+    fn write_committed_barrier_document(
+        pending: &PathBuf,
+        committed: &PathBuf,
+        mut document: serde_json::Map<String, serde_json::Value>,
+        resolution_kind: CommittedHttpEffectBarrierResolutionKind,
+    ) -> Result<()> {
+        document.insert(
+            "effect_barrier_resolution_kind".into(),
+            serde_json::Value::String(resolution_kind.as_str().to_string()),
+        );
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(committed)
+            .map_err(|e| {
+                MprdError::ExecutionError(format!(
+                    "Failed to create committed HTTP effect barrier {}: {}",
+                    committed.display(),
+                    e
+                ))
+            })?;
+        Self::persist_barrier_payload(file, committed, &document)?;
+        Self::clear_pending(pending)
     }
 
     fn prepare_pending_barrier(
@@ -913,14 +989,27 @@ impl IdempotentHttpExecutor {
                         if committed.exists() {
                             Self::clear_pending(&pending)?;
                         } else {
-                            fs::rename(&pending, &committed).map_err(|e| {
-                                MprdError::ExecutionError(format!(
-                                    "Failed to commit HTTP effect barrier {} -> {}: {}",
-                                    pending.display(),
-                                    committed.display(),
-                                    e
-                                ))
-                            })?;
+                            let document =
+                                serde_json::to_value(payload).map_err(|e| {
+                                    MprdError::ExecutionError(format!(
+                                        "Failed to serialize committed HTTP effect barrier payload: {}",
+                                        e
+                                    ))
+                                })?
+                                .as_object()
+                                .cloned()
+                                .ok_or_else(|| {
+                                    MprdError::ExecutionError(
+                                        "Committed HTTP effect barrier payload is not a JSON object"
+                                            .into(),
+                                    )
+                                })?;
+                            Self::write_committed_barrier_document(
+                                &pending,
+                                &committed,
+                                document,
+                                CommittedHttpEffectBarrierResolutionKind::Automatic,
+                            )?;
                         }
                         Ok(ExecutionResult {
                             success: true,
@@ -981,7 +1070,7 @@ impl ExecutorAdapter for IdempotentHttpExecutor {
 }
 
 /// Payload sent to the execution endpoint.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct ExecutePayload {
     idempotency_key_v1: String,
     policy_hash: String,
@@ -1010,6 +1099,8 @@ struct ExecutePayload {
     governance_profile_safety_ok: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     governance_link_ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effect_barrier_resolution_kind: Option<CommittedHttpEffectBarrierResolutionKind>,
 }
 
 /// Response from the execution endpoint.
@@ -2387,6 +2478,35 @@ mod tests {
     }
 
     #[test]
+    fn list_pending_http_effect_barriers_rejects_committed_resolution_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("http_effects");
+        let token = dummy_token();
+        let policy_hash_hex = hex::encode(token.policy_hash.0);
+        let idempotency_key = execution_idempotency_key_v1(&token);
+        let policy_dir = root.join(&policy_hash_hex);
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        let payload = serde_json::json!({
+            "idempotency_key_v1": idempotency_key,
+            "policy_hash": policy_hash_hex,
+            "state_hash": hex::encode(token.state_hash.0),
+            "action_hash": hex::encode(token.chosen_action_hash.0),
+            "nonce_or_tx_hash": hex::encode(token.nonce_or_tx_hash.0),
+            "timestamp_ms": token.timestamp_ms,
+            "effect_barrier_resolution_kind": "automatic",
+        });
+        let path = policy_dir.join(format!("{}.pending.json", idempotency_key));
+        std::fs::write(&path, serde_json::to_vec(&payload).unwrap()).unwrap();
+
+        let err = list_pending_http_effect_barriers(&root).expect_err("must fail closed");
+        assert!(
+            err.to_string()
+                .contains("unexpectedly carries a committed resolution kind"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn list_committed_http_effect_barriers_returns_sorted_validated_entries() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("http_effects");
@@ -2537,5 +2657,39 @@ mod tests {
         assert!(!pending.exists());
         assert!(committed.exists());
         assert!(committed.ends_with(format!("{}.committed.json", idempotency_key)));
+        let barriers = list_committed_http_effect_barriers(&root).expect("committed barriers");
+        assert_eq!(barriers.len(), 1);
+        assert_eq!(
+            barriers[0].resolution_kind,
+            Some(CommittedHttpEffectBarrierResolutionKind::ManualPromote)
+        );
+    }
+
+    #[test]
+    fn idempotent_http_executor_committed_barrier_records_automatic_resolution_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base_url, _hits, handle) =
+            spawn_fixed_http_server(1, r#"{"success":true,"message":"ok"}"#);
+        let exec = IdempotentHttpExecutor::new(HttpExecutorConfig {
+            base_url,
+            effect_journal_root: Some(dir.path().join("http_effects")),
+            ..Default::default()
+        })
+        .expect("new");
+        let token = dummy_token();
+        let proof = dummy_proof();
+        let verified = verified(&token, &proof);
+
+        let result = exec.execute(&verified).expect("exec");
+        assert!(result.success);
+        handle.join().expect("join");
+
+        let barriers = list_committed_http_effect_barriers(&dir.path().join("http_effects"))
+            .expect("barriers");
+        assert_eq!(barriers.len(), 1);
+        assert_eq!(
+            barriers[0].resolution_kind,
+            Some(CommittedHttpEffectBarrierResolutionKind::Automatic)
+        );
     }
 }
