@@ -18,6 +18,7 @@ fn health(status: op_api::HealthLevel) -> op_api::ComponentHealth {
         version: None,
         last_check: 1,
         message: None,
+        effect_barrier_summary: None,
     }
 }
 
@@ -255,6 +256,25 @@ fn system_status_is_degraded_when_executor_unavailable() {
             op_api::HealthLevel::Healthy,
             op_api::HealthLevel::Healthy,
             op_api::HealthLevel::Unavailable,
+        ),
+        true,
+    );
+    assert!(matches!(out.overall, op_api::OverallStatus::Degraded));
+}
+
+#[test]
+fn system_status_is_degraded_when_executor_degraded_in_trustless_mode() {
+    let config = super::super::MprdConfigFile {
+        mode: "trustless".into(),
+        ..super::super::MprdConfigFile::default()
+    };
+    let out = compute_system_status(
+        &config,
+        0,
+        components(
+            op_api::HealthLevel::Healthy,
+            op_api::HealthLevel::Healthy,
+            op_api::HealthLevel::Degraded,
         ),
         true,
     );
@@ -579,11 +599,16 @@ fn executor_component_health_reports_idempotent_http_root() {
 
     let health = executor_component_health(&config);
     assert!(matches!(health.status, op_api::HealthLevel::Healthy));
+    let summary = health
+        .effect_barrier_summary
+        .as_ref()
+        .expect("typed barrier summary");
+    assert_eq!(summary.pending_entries, 0);
+    assert_eq!(summary.committed_entries, 0);
     assert!(
-        health
-            .message
-            .as_deref()
-            .is_some_and(|m| m.contains("effect journal root:") && m.contains("pending barriers: 0")),
+        health.message.as_deref().is_some_and(
+            |m| m.contains("effect journal root:") && m.contains("pending barriers: 0")
+        ),
         "unexpected health message: {:?}",
         health.message
     );
@@ -604,6 +629,12 @@ fn executor_component_health_degrades_on_unresolved_idempotent_http_pending_barr
 
     let health = executor_component_health(&config);
     assert!(matches!(health.status, op_api::HealthLevel::Degraded));
+    let summary = health
+        .effect_barrier_summary
+        .as_ref()
+        .expect("typed barrier summary");
+    assert_eq!(summary.pending_entries, 1);
+    assert_eq!(summary.committed_entries, 0);
     assert!(
         health
             .message

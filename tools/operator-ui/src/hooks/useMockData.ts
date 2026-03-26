@@ -54,6 +54,11 @@ function generateMockSystemStatus(): SystemStatus {
                 version: '1.0.0',
                 lastCheck: Date.now() - 3000,
                 message: 'HTTP endpoint ready',
+                effectBarrierSummary: {
+                    rootPath: '/var/lib/mprd/http-effects',
+                    pendingEntries: 0,
+                    committedEntries: 18,
+                },
             },
         },
     };
@@ -179,6 +184,7 @@ function generateMockDecisionDetail(id: string): DecisionDetail {
             limitsHash: generateHash(),
             receiptSize: 12456,
             verifiedAt: now,
+            attestationMetadataHash: generateHash(),
         },
         state: {
             fields: {

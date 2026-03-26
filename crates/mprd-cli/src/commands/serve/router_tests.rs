@@ -409,6 +409,49 @@ async fn api_does_not_require_key_when_not_configured() {
 }
 
 #[tokio::test]
+async fn api_status_reports_typed_idempotent_http_effect_barrier_summary() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut state = test_state(&tmp);
+    let root = tmp.path().join("http_effects");
+    let policy_dir = root.join("deadbeef");
+    std::fs::create_dir_all(&policy_dir).expect("policy dir");
+    std::fs::write(policy_dir.join("stuck.pending.json"), b"{}\n").expect("pending marker");
+
+    state.config.execution.executor_type = "idempotent_http".into();
+    state.config.execution.http_url = Some("http://127.0.0.1:8080".into());
+    state.config.execution.effect_journal_dir = Some(root.clone());
+
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let body: op_api::SystemStatus = read_json(res).await;
+    assert!(matches!(
+        body.components.executor.status,
+        op_api::HealthLevel::Degraded
+    ));
+    let summary = body
+        .components
+        .executor
+        .effect_barrier_summary
+        .expect("typed effect barrier summary");
+    assert_eq!(summary.pending_entries, 1);
+    assert_eq!(summary.committed_entries, 0);
+    assert_eq!(
+        summary.root_path.as_deref(),
+        Some(root.to_str().expect("utf8 root"))
+    );
+}
+
+#[tokio::test]
 async fn decision_blob_serves_receipt_derived_mpb_lite_chosen_preimage() {
     let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
     let tmp = tempfile::TempDir::new().expect("tempdir");

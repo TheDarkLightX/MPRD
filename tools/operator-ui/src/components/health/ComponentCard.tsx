@@ -165,6 +165,22 @@ export function ComponentCard({ name, health, icon }: ComponentCardProps) {
                 </p>
             )}
 
+            {health.effectBarrierSummary && (
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-dark-400">
+                    <div className="rounded-md border border-dark-700/40 bg-dark-900/30 px-2 py-1">
+                        Pending: {health.effectBarrierSummary.pendingEntries}
+                    </div>
+                    <div className="rounded-md border border-dark-700/40 bg-dark-900/30 px-2 py-1">
+                        Committed: {health.effectBarrierSummary.committedEntries}
+                    </div>
+                    {health.effectBarrierSummary.rootPath && (
+                        <p className="col-span-2 truncate text-dark-500">
+                            Journal: {health.effectBarrierSummary.rootPath}
+                        </p>
+                    )}
+                </div>
+            )}
+
             {/* Footer: Last check */}
             <div className="mt-3 pt-3 border-t border-dark-700/30 flex items-center justify-between text-xs text-dark-500">
                 <div className="flex items-center gap-1">

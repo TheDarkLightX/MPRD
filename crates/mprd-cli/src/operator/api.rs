@@ -30,6 +30,15 @@ pub enum DeploymentMode {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EffectBarrierSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_path: Option<String>,
+    pub pending_entries: usize,
+    pub committed_entries: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ComponentHealth {
     pub status: HealthLevel,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -37,6 +46,8 @@ pub struct ComponentHealth {
     pub last_check: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effect_barrier_summary: Option<EffectBarrierSummary>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

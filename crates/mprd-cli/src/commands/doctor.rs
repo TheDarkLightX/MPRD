@@ -285,17 +285,17 @@ fn check_executor(config: &MprdConfigFile) -> CheckResult {
                 };
             }
             if let Some(ref path) = config.execution.effect_journal_dir {
-                let summary = match mprd_adapters::executors::summarize_http_effect_journal_root(
-                    path,
-                ) {
-                    Ok(summary) => summary,
-                    Err(e) => {
-                        return CheckResult::Fail {
-                            message: format!("Cannot inspect effect_journal_dir: {}", e),
-                            suggestion: "Fix the effect journal path permissions or type".into(),
-                        };
-                    }
-                };
+                let summary =
+                    match mprd_adapters::executors::summarize_http_effect_journal_root(path) {
+                        Ok(summary) => summary,
+                        Err(e) => {
+                            return CheckResult::Fail {
+                                message: format!("Cannot inspect effect_journal_dir: {}", e),
+                                suggestion: "Fix the effect journal path permissions or type"
+                                    .into(),
+                            };
+                        }
+                    };
                 if summary.pending_entries > 0 {
                     let message = format!(
                         "Idempotent HTTP executor: {} with effect journal {} (pending barriers: {}, committed barriers: {})",
@@ -438,7 +438,10 @@ mod tests {
 
         match check_executor(&config) {
             CheckResult::Warn { message, .. } => {
-                assert!(message.contains("pending barriers: 1"), "unexpected message: {message}");
+                assert!(
+                    message.contains("pending barriers: 1"),
+                    "unexpected message: {message}"
+                );
             }
             other => panic!("expected warning, got {other:?}"),
         }
@@ -460,7 +463,10 @@ mod tests {
 
         match check_executor(&config) {
             CheckResult::Fail { message, .. } => {
-                assert!(message.contains("pending barriers: 1"), "unexpected message: {message}");
+                assert!(
+                    message.contains("pending barriers: 1"),
+                    "unexpected message: {message}"
+                );
             }
             other => panic!("expected failure, got {other:?}"),
         }

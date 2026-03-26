@@ -1291,6 +1291,7 @@ async fn tau_component_health(tau_binary: &str) -> op_api::ComponentHealth {
                 },
                 last_check: now,
                 message: None,
+                effect_barrier_summary: None,
             }
         }
         Ok(Ok(_)) => op_api::ComponentHealth {
@@ -1300,12 +1301,14 @@ async fn tau_component_health(tau_binary: &str) -> op_api::ComponentHealth {
             message: Some(format!(
                 "tau binary `{tau_binary}` returned non-zero status"
             )),
+            effect_barrier_summary: None,
         },
         _ => op_api::ComponentHealth {
             status: op_api::HealthLevel::Unavailable,
             version: None,
             last_check: now,
             message: Some(format!("tau binary `{tau_binary}` not available")),
+            effect_barrier_summary: None,
         },
     }
 }
@@ -1323,6 +1326,7 @@ fn ipfs_component_health(config: &super::MprdConfigFile) -> op_api::ComponentHea
             version: None,
             last_check: now,
             message: Some(format!("disabled (policy storage = {storage_type})")),
+            effect_barrier_summary: None,
         };
     }
 
@@ -1332,6 +1336,7 @@ fn ipfs_component_health(config: &super::MprdConfigFile) -> op_api::ComponentHea
             version: None,
             last_check: now,
             message: Some("ipfs storage selected but ipfs_url is not configured".into()),
+            effect_barrier_summary: None,
         };
     };
 
@@ -1341,6 +1346,7 @@ fn ipfs_component_health(config: &super::MprdConfigFile) -> op_api::ComponentHea
             version: None,
             last_check: now,
             message: Some(format!("invalid ipfs_url: {e}")),
+            effect_barrier_summary: None,
         };
     }
 
@@ -1349,6 +1355,7 @@ fn ipfs_component_health(config: &super::MprdConfigFile) -> op_api::ComponentHea
         version: None,
         last_check: now,
         message: Some(format!("configured ({url}); connectivity not checked")),
+        effect_barrier_summary: None,
     }
 }
 
@@ -1360,6 +1367,7 @@ fn risc0_component_health(config: &super::MprdConfigFile) -> op_api::ComponentHe
             version: None,
             last_check: now,
             message: Some("risc0_image_id not configured".into()),
+            effect_barrier_summary: None,
         };
     };
     if is_placeholder_hex64(image_id) {
@@ -1368,6 +1376,7 @@ fn risc0_component_health(config: &super::MprdConfigFile) -> op_api::ComponentHe
             version: Some("risc0".into()),
             last_check: now,
             message: Some("placeholder image id (not production ready)".into()),
+            effect_barrier_summary: None,
         };
     }
     op_api::ComponentHealth {
@@ -1375,6 +1384,7 @@ fn risc0_component_health(config: &super::MprdConfigFile) -> op_api::ComponentHe
         version: Some("risc0".into()),
         last_check: now,
         message: Some("configured".into()),
+        effect_barrier_summary: None,
     }
 }
 
@@ -1387,6 +1397,7 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
             version: None,
             last_check: now,
             message: Some("noop executor (no side effects)".into()),
+            effect_barrier_summary: None,
         },
         "http" => {
             let Some(url) = config.execution.http_url.as_deref() else {
@@ -1395,6 +1406,7 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                     version: None,
                     last_check: now,
                     message: Some("http executor selected but http_url is not configured".into()),
+                    effect_barrier_summary: None,
                 };
             };
             if let Err(e) = mprd_adapters::egress::validate_outbound_url(url) {
@@ -1403,6 +1415,7 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                     version: None,
                     last_check: now,
                     message: Some(format!("invalid http_url: {e}")),
+                    effect_barrier_summary: None,
                 };
             }
             op_api::ComponentHealth {
@@ -1410,6 +1423,7 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                 version: None,
                 last_check: now,
                 message: Some(format!("configured ({url}); connectivity not checked")),
+                effect_barrier_summary: None,
             }
         }
         "idempotent_http" => {
@@ -1421,6 +1435,7 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                     message: Some(
                         "idempotent_http executor selected but http_url is not configured".into(),
                     ),
+                    effect_barrier_summary: None,
                 };
             };
             if let Err(e) = mprd_adapters::egress::validate_outbound_url(url) {
@@ -1429,6 +1444,7 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                     version: None,
                     last_check: now,
                     message: Some(format!("invalid http_url: {e}")),
+                    effect_barrier_summary: None,
                 };
             }
             let Some(path) = config.execution.effect_journal_dir.as_ref() else {
@@ -1440,6 +1456,7 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                         "idempotent_http executor selected but effect_journal_dir is not configured"
                             .into(),
                     ),
+                    effect_barrier_summary: None,
                 };
             };
             let summary = match mprd_adapters::executors::summarize_http_effect_journal_root(path) {
@@ -1453,6 +1470,7 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                             "failed to inspect effect journal root {}: {e}",
                             path.display()
                         )),
+                        effect_barrier_summary: None,
                     };
                 }
             };
@@ -1471,6 +1489,11 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                     summary.pending_entries,
                     summary.committed_entries
                 )),
+                effect_barrier_summary: Some(op_api::EffectBarrierSummary {
+                    root_path: Some(path.display().to_string()),
+                    pending_entries: summary.pending_entries,
+                    committed_entries: summary.committed_entries,
+                }),
             }
         }
         "file" => {
@@ -1480,6 +1503,7 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                     version: None,
                     last_check: now,
                     message: Some("file executor selected but audit_file not configured".into()),
+                    effect_barrier_summary: None,
                 };
             };
             op_api::ComponentHealth {
@@ -1487,6 +1511,7 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                 version: None,
                 last_check: now,
                 message: Some(format!("audit file: {}", path.display())),
+                effect_barrier_summary: None,
             }
         }
         "idempotent_file" => {
@@ -1498,6 +1523,7 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                     message: Some(
                         "idempotent_file executor selected but audit_file not configured".into(),
                     ),
+                    effect_barrier_summary: None,
                 };
             };
             op_api::ComponentHealth {
@@ -1505,6 +1531,7 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                 version: None,
                 last_check: now,
                 message: Some(format!("idempotent audit root: {}", path.display())),
+                effect_barrier_summary: None,
             }
         }
         other => op_api::ComponentHealth {
@@ -1512,6 +1539,7 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
             version: None,
             last_check: now,
             message: Some(format!("unknown executor_type: {other}")),
+            effect_barrier_summary: None,
         },
     }
 }
@@ -1631,10 +1659,9 @@ fn validate_serve_startup_config(
                     ..Default::default()
                 };
                 let _ = mprd_adapters::executors::IdempotentHttpExecutor::new(http_cfg)?;
-                let summary =
-                    mprd_adapters::executors::summarize_http_effect_journal_root(
-                        &effect_journal_root,
-                    )?;
+                let summary = mprd_adapters::executors::summarize_http_effect_journal_root(
+                    &effect_journal_root,
+                )?;
                 if summary.pending_entries > 0 {
                     anyhow::bail!(
                         "trustless/private production serve refuses startup with {} unresolved idempotent_http pending barrier(s) in {}",
@@ -1720,10 +1747,12 @@ fn compute_system_status(
 
     let overall = if !anchors_ok {
         op_api::OverallStatus::Critical
-    } else if matches!(components.executor.status, op_api::HealthLevel::Unavailable) {
-        op_api::OverallStatus::Degraded
     } else if trustless && matches!(components.risc0.status, op_api::HealthLevel::Unavailable) {
         op_api::OverallStatus::Critical
+    } else if matches!(components.executor.status, op_api::HealthLevel::Unavailable) {
+        op_api::OverallStatus::Degraded
+    } else if trustless && matches!(components.executor.status, op_api::HealthLevel::Degraded) {
+        op_api::OverallStatus::Degraded
     } else if matches!(components.tau.status, op_api::HealthLevel::Unavailable)
         && config.tau_binary.is_some()
     {

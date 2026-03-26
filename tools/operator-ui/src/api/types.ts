@@ -14,11 +14,18 @@
 export type HealthLevel = 'healthy' | 'degraded' | 'unavailable';
 export type OverallStatus = 'operational' | 'degraded' | 'critical';
 
+export interface EffectBarrierSummary {
+    rootPath?: string;
+    pendingEntries: number;
+    committedEntries: number;
+}
+
 export interface ComponentHealth {
     status: HealthLevel;
     version?: string;
     lastCheck: number; // Unix ms
     message?: string;
+    effectBarrierSummary?: EffectBarrierSummary;
 }
 
 export interface SystemStatus {
