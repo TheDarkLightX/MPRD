@@ -285,12 +285,49 @@ fn check_executor(config: &MprdConfigFile) -> CheckResult {
                 };
             }
             if let Some(ref path) = config.execution.effect_journal_dir {
-                CheckResult::Pass {
-                    message: format!(
-                        "Idempotent HTTP executor: {} with effect journal {}",
+                let summary = match mprd_adapters::executors::summarize_http_effect_journal_root(
+                    path,
+                ) {
+                    Ok(summary) => summary,
+                    Err(e) => {
+                        return CheckResult::Fail {
+                            message: format!("Cannot inspect effect_journal_dir: {}", e),
+                            suggestion: "Fix the effect journal path permissions or type".into(),
+                        };
+                    }
+                };
+                if summary.pending_entries > 0 {
+                    let message = format!(
+                        "Idempotent HTTP executor: {} with effect journal {} (pending barriers: {}, committed barriers: {})",
                         url,
-                        path.display()
-                    ),
+                        path.display(),
+                        summary.pending_entries,
+                        summary.committed_entries
+                    );
+                    let suggestion =
+                        "Resolve or clear pending effect barriers before restarting production serve"
+                            .into();
+                    let mode = config.mode.trim().to_ascii_lowercase();
+                    if mode == "trustless" || mode == "private" {
+                        CheckResult::Fail {
+                            message,
+                            suggestion,
+                        }
+                    } else {
+                        CheckResult::Warn {
+                            message,
+                            suggestion,
+                        }
+                    }
+                } else {
+                    CheckResult::Pass {
+                        message: format!(
+                            "Idempotent HTTP executor: {} with effect journal {} (pending barriers: 0, committed barriers: {})",
+                            url,
+                            path.display(),
+                            summary.committed_entries
+                        ),
+                    }
                 }
             } else {
                 CheckResult::Fail {
@@ -383,5 +420,49 @@ mod tests {
         assert!(!matches!(pass, CheckResult::Fail { .. }));
         assert!(!matches!(warn, CheckResult::Fail { .. }));
         assert!(matches!(fail, CheckResult::Fail { .. }));
+    }
+
+    #[test]
+    fn check_executor_warns_on_pending_http_barriers_in_local_mode() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("http_effects");
+        let policy_dir = root.join("deadbeef");
+        std::fs::create_dir_all(&policy_dir).expect("policy dir");
+        std::fs::write(policy_dir.join("stuck.pending.json"), b"{}\n").expect("pending marker");
+
+        let mut config = MprdConfigFile::default();
+        config.mode = "local".into();
+        config.execution.executor_type = "idempotent_http".into();
+        config.execution.http_url = Some("http://127.0.0.1:8080".into());
+        config.execution.effect_journal_dir = Some(root);
+
+        match check_executor(&config) {
+            CheckResult::Warn { message, .. } => {
+                assert!(message.contains("pending barriers: 1"), "unexpected message: {message}");
+            }
+            other => panic!("expected warning, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_executor_fails_on_pending_http_barriers_in_trustless_mode() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("http_effects");
+        let policy_dir = root.join("deadbeef");
+        std::fs::create_dir_all(&policy_dir).expect("policy dir");
+        std::fs::write(policy_dir.join("stuck.pending.json"), b"{}\n").expect("pending marker");
+
+        let mut config = MprdConfigFile::default();
+        config.mode = "trustless".into();
+        config.execution.executor_type = "idempotent_http".into();
+        config.execution.http_url = Some("http://127.0.0.1:8080".into());
+        config.execution.effect_journal_dir = Some(root);
+
+        match check_executor(&config) {
+            CheckResult::Fail { message, .. } => {
+                assert!(message.contains("pending barriers: 1"), "unexpected message: {message}");
+            }
+            other => panic!("expected failure, got {other:?}"),
+        }
     }
 }

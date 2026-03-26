@@ -35,7 +35,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::egress;
@@ -51,6 +51,66 @@ fn require_ready_action_preimage(ready: &ExecutionReadyBundle<'_>) -> Vec<u8> {
 }
 
 const EXECUTION_IDEMPOTENCY_KEY_DOMAIN_V1: &[u8] = b"mprd-execution-idempotency-v1";
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EffectJournalSummary {
+    pub pending_entries: usize,
+    pub committed_entries: usize,
+}
+
+pub fn summarize_http_effect_journal_root(root: &Path) -> Result<EffectJournalSummary> {
+    if !root.exists() {
+        return Ok(EffectJournalSummary::default());
+    }
+    if !root.is_dir() {
+        return Err(MprdError::ConfigError(format!(
+            "HTTP effect journal root is not a directory: {}",
+            root.display()
+        )));
+    }
+
+    let mut summary = EffectJournalSummary::default();
+    let mut stack = vec![root.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let mut entries = fs::read_dir(&dir)
+            .map_err(|e| {
+                MprdError::ExecutionError(format!(
+                    "Failed to inspect HTTP effect journal dir {}: {}",
+                    dir.display(),
+                    e
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| {
+                MprdError::ExecutionError(format!(
+                    "Failed to inspect HTTP effect journal dir {}: {}",
+                    dir.display(),
+                    e
+                ))
+            })?;
+        entries.sort_by_key(|entry| entry.path());
+
+        for entry in entries {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.ends_with(".pending.json") {
+                summary.pending_entries += 1;
+            } else if name.ends_with(".committed.json") {
+                summary.committed_entries += 1;
+            }
+        }
+    }
+
+    Ok(summary)
+}
 
 fn execution_idempotency_key_v1(token: &DecisionToken) -> String {
     let mut hasher = Sha256::new();
@@ -1858,5 +1918,33 @@ mod tests {
                 .contains("manual resolution required before retry"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn summarize_http_effect_journal_root_counts_pending_and_committed_markers() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("http_effects");
+        let policy_dir = root.join("deadbeef");
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        std::fs::write(policy_dir.join("a.pending.json"), b"{}\n").unwrap();
+        std::fs::write(policy_dir.join("b.committed.json"), b"{}\n").unwrap();
+        std::fs::write(policy_dir.join("ignored.txt"), b"noop\n").unwrap();
+
+        let summary = summarize_http_effect_journal_root(&root).expect("summary");
+        assert_eq!(
+            summary,
+            EffectJournalSummary {
+                pending_entries: 1,
+                committed_entries: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn summarize_http_effect_journal_root_treats_missing_root_as_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("missing");
+        let summary = summarize_http_effect_journal_root(&root).expect("summary");
+        assert_eq!(summary, EffectJournalSummary::default());
     }
 }

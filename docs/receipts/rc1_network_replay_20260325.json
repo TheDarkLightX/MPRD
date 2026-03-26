@@ -266,6 +266,28 @@
       "tlc_version": "TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)"
     },
     {
+      "cfg": "docs/specs/idempotent_http_startup_pending_barrier.cfg",
+      "command": [
+        "java",
+        "-cp",
+        "${TLA2TOOLS_JAR}",
+        "tlc2.TLC",
+        "-cleanup",
+        "-deadlock",
+        "-config",
+        "docs/specs/idempotent_http_startup_pending_barrier.cfg",
+        "docs/specs/idempotent_http_startup_pending_barrier.tla"
+      ],
+      "distinct_states": 26,
+      "exit_code": 0,
+      "search_depth": 7,
+      "spec": "idempotent_http_startup_pending_barrier",
+      "states_generated": 66,
+      "status": "passed",
+      "tla": "docs/specs/idempotent_http_startup_pending_barrier.tla",
+      "tlc_version": "TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)"
+    },
+    {
       "cfg": "docs/specs/idempotent_file_effect_barrier.cfg",
       "command": [
         "java",
@@ -288,9 +310,9 @@
       "tlc_version": "TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)"
     }
   ],
-  "generated_at_utc": "2026-03-25T19:21:34.709678+00:00",
-  "git_head": "2d5e0d37092ad45a5775b5ed5cae81fa95c9eb12",
+  "generated_at_utc": "2026-03-26T18:34:04.019022+00:00",
+  "git_head": "72c3ac5c6c86ef67f298399d3c4583facf3dc423",
   "schema": "mprd/rc1-network-replay/v1",
-  "spec_count": 13,
+  "spec_count": 14,
   "tla2tools_jar_ref": "${TLA2TOOLS_JAR}"
 }

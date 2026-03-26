@@ -525,6 +525,32 @@ fn serve_startup_validation_rejects_idempotent_http_without_effect_journal_dir()
 }
 
 #[test]
+fn serve_startup_validation_rejects_unresolved_idempotent_http_pending_barriers() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut config = valid_trustless_serve_config(&tmp);
+    let root = tmp.path().join("http_effects");
+    let policy_dir = root.join("deadbeef");
+    std::fs::create_dir_all(&policy_dir).expect("policy dir");
+    std::fs::write(policy_dir.join("stuck.pending.json"), b"{}\n").expect("pending marker");
+
+    config.execution.executor_type = "idempotent_http".into();
+    config.execution.http_url = Some("http://127.0.0.1:8080".into());
+    config.execution.effect_journal_dir = Some(root.clone());
+
+    let err = validate_serve_startup_config(&config, false)
+        .expect_err("startup must fail closed on unresolved pending barriers");
+    assert!(
+        err.to_string()
+            .contains("refuses startup with 1 unresolved idempotent_http pending barrier"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        err.to_string().contains(&root.display().to_string()),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn executor_component_health_reports_idempotent_file_root() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let mut config = super::super::MprdConfigFile::default();
@@ -557,7 +583,32 @@ fn executor_component_health_reports_idempotent_http_root() {
         health
             .message
             .as_deref()
-            .is_some_and(|m| m.contains("effect journal root:")),
+            .is_some_and(|m| m.contains("effect journal root:") && m.contains("pending barriers: 0")),
+        "unexpected health message: {:?}",
+        health.message
+    );
+}
+
+#[test]
+fn executor_component_health_degrades_on_unresolved_idempotent_http_pending_barriers() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let root = tmp.path().join("http_effects");
+    let policy_dir = root.join("deadbeef");
+    std::fs::create_dir_all(&policy_dir).expect("policy dir");
+    std::fs::write(policy_dir.join("stuck.pending.json"), b"{}\n").expect("pending marker");
+
+    let mut config = super::super::MprdConfigFile::default();
+    config.execution.executor_type = "idempotent_http".into();
+    config.execution.http_url = Some("http://127.0.0.1:8080".into());
+    config.execution.effect_journal_dir = Some(root);
+
+    let health = executor_component_health(&config);
+    assert!(matches!(health.status, op_api::HealthLevel::Degraded));
+    assert!(
+        health
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("pending barriers: 1")),
         "unexpected health message: {:?}",
         health.message
     );

@@ -1442,13 +1442,34 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                     ),
                 };
             };
+            let summary = match mprd_adapters::executors::summarize_http_effect_journal_root(path) {
+                Ok(summary) => summary,
+                Err(e) => {
+                    return op_api::ComponentHealth {
+                        status: op_api::HealthLevel::Unavailable,
+                        version: None,
+                        last_check: now,
+                        message: Some(format!(
+                            "failed to inspect effect journal root {}: {e}",
+                            path.display()
+                        )),
+                    };
+                }
+            };
+            let status = if summary.pending_entries > 0 {
+                op_api::HealthLevel::Degraded
+            } else {
+                op_api::HealthLevel::Healthy
+            };
             op_api::ComponentHealth {
-                status: op_api::HealthLevel::Healthy,
+                status,
                 version: None,
                 last_check: now,
                 message: Some(format!(
-                    "idempotent http executor: {url}; effect journal root: {}",
-                    path.display()
+                    "idempotent http executor: {url}; effect journal root: {}; pending barriers: {}; committed barriers: {}",
+                    path.display(),
+                    summary.pending_entries,
+                    summary.committed_entries
                 )),
             }
         }
@@ -1606,10 +1627,21 @@ fn validate_serve_startup_config(
                 let http_cfg = mprd_adapters::executors::HttpExecutorConfig {
                     base_url: url,
                     api_key: None,
-                    effect_journal_root: Some(effect_journal_root),
+                    effect_journal_root: Some(effect_journal_root.clone()),
                     ..Default::default()
                 };
                 let _ = mprd_adapters::executors::IdempotentHttpExecutor::new(http_cfg)?;
+                let summary =
+                    mprd_adapters::executors::summarize_http_effect_journal_root(
+                        &effect_journal_root,
+                    )?;
+                if summary.pending_entries > 0 {
+                    anyhow::bail!(
+                        "trustless/private production serve refuses startup with {} unresolved idempotent_http pending barrier(s) in {}",
+                        summary.pending_entries,
+                        effect_journal_root.display()
+                    );
+                }
             }
             "idempotent_file" => {
                 let path = config.execution.audit_file.clone().ok_or_else(|| {

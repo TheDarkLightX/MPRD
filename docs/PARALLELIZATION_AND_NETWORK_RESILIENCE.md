@@ -68,7 +68,7 @@ The tracked RC1 replay script and receipt for the current model series are:
 - `docs/receipts/rc1_network_replay_20260325.json`
 - `.github/workflows/network-replay.yml`
 
-The current receipt is green across 13 tracked safety models:
+The current receipt is green across 14 tracked safety models:
 
 - `serial_commit_network_barrier`: 1,274 distinct states, depth 12
 - `distributed_replay_claim_barrier`: 63 distinct states, depth 7
@@ -82,6 +82,7 @@ The current receipt is green across 13 tracked safety models:
 - `distributed_replay_hidden_equivocation_barrier`: 250 distinct states, depth 13
 - `distributed_effect_finalization_barrier`: 38 distinct states, depth 10
 - `idempotent_http_effect_barrier`: 17 distinct states, depth 7
+- `idempotent_http_startup_pending_barrier`: 26 distinct states, depth 7
 - `idempotent_file_effect_barrier`: 9 distinct states, depth 5
 
 Replay command:
@@ -585,6 +586,44 @@ java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
   -deadlock \
   -config idempotent_http_effect_barrier.cfg \
   idempotent_http_effect_barrier
+```
+
+The next tracked replay surface narrows the deployment-startup rule for that
+same shipped HTTP barrier:
+
+- `docs/specs/idempotent_http_startup_pending_barrier.tla`
+- `docs/specs/idempotent_http_startup_pending_barrier.cfg`
+
+It is intentionally narrow. It models a restarted production server facing a
+persisted `.pending.json` barrier from an earlier uncertain remote outcome. It
+proves the safety shape:
+
+- startup cannot enter serving state while an unresolved pending barrier exists
+- retries stay blocked or rejected while the pending barrier remains unresolved
+- explicit operator resolution may either clear the barrier when no effect is
+  known durable, or promote it to committed when a durable effect is known
+
+Modeling assumptions:
+
+- the pending barrier persists across restart until explicit resolution
+- the restart path checks the same local journal before serving requests
+- manual resolution is modeled as a local operator action, not a liveness claim
+
+What it still does not prove:
+
+- that operator recovery is always correct or prompt
+- remote-side confirmation or reconciliation protocols
+- end-to-end exactly-once behavior across partitions or cross-service races
+
+Replay command:
+
+```bash
+cd docs/specs
+java -cp ../../external/tla2tools/tla2tools.jar tlc2.TLC \
+  -cleanup \
+  -deadlock \
+  -config idempotent_http_startup_pending_barrier.cfg \
+  idempotent_http_startup_pending_barrier
 ```
 
 The next tracked replay surface narrows the local file-side-effect path:
