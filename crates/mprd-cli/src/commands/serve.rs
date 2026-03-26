@@ -1802,6 +1802,55 @@ async fn api_status(State(state): State<AppState>) -> Json<op_api::SystemStatus>
     Json(compute_system_status(config, now, components, anchors_ok))
 }
 
+fn load_pending_http_effect_barriers(
+    config: &super::MprdConfigFile,
+) -> Result<Vec<op_api::PendingEffectBarrier>, StatusCode> {
+    let executor_type = config.execution.executor_type.trim().to_ascii_lowercase();
+    if executor_type != "idempotent_http" {
+        return Ok(Vec::new());
+    }
+    let Some(root) = config.execution.effect_journal_dir.as_ref() else {
+        return Ok(Vec::new());
+    };
+
+    let mut barriers = mprd_adapters::executors::list_pending_http_effect_barriers(root)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter()
+        .map(|barrier| op_api::PendingEffectBarrier {
+            barrier_path: barrier.barrier_path.display().to_string(),
+            policy_hash: barrier.policy_hash_hex,
+            idempotency_key_v1: barrier.idempotency_key_v1,
+            state_hash: barrier.state_hash_hex,
+            action_hash: barrier.action_hash_hex,
+            nonce_or_tx_hash: barrier.nonce_or_tx_hash_hex,
+            timestamp_ms: barrier.timestamp_ms,
+        })
+        .collect::<Vec<_>>();
+    barriers.sort_by(|a, b| {
+        b.timestamp_ms
+            .cmp(&a.timestamp_ms)
+            .then_with(|| a.barrier_path.cmp(&b.barrier_path))
+    });
+    Ok(barriers)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingEffectBarriersQuery {
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
+async fn api_pending_effect_barriers(
+    State(state): State<AppState>,
+    Query(q): Query<PendingEffectBarriersQuery>,
+) -> Result<Json<Vec<op_api::PendingEffectBarrier>>, StatusCode> {
+    let limit = q.limit.unwrap_or(100).clamp(1, 500) as usize;
+    let mut barriers = load_pending_http_effect_barriers(&state.config)?;
+    barriers.truncate(limit);
+    Ok(Json(barriers))
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AlertsQuery {
@@ -1879,6 +1928,37 @@ fn build_alerts(
                     acknowledged,
                 });
             }
+        }
+    }
+
+    if alerts.len() < limit {
+        let mode = state.config.mode.trim().to_ascii_lowercase();
+        let trustless = mode == "trustless" || mode == "private";
+        for barrier in load_pending_http_effect_barriers(&state.config)? {
+            if alerts.len() >= limit {
+                break;
+            }
+            let id = format!("pending_http_effect_barrier:{}", barrier.idempotency_key_v1);
+            let acknowledged = state.store.is_alert_acknowledged(&id);
+            if unack_only && acknowledged {
+                continue;
+            }
+            alerts.push(op_api::Alert {
+                id,
+                timestamp: barrier.timestamp_ms,
+                severity: if trustless {
+                    op_api::AlertSeverity::Critical
+                } else {
+                    op_api::AlertSeverity::Warning
+                },
+                alert_type: op_api::AlertType::Anomaly,
+                message: format!(
+                    "Unresolved idempotent_http pending barrier at {}",
+                    barrier.barrier_path
+                ),
+                decision_id: None,
+                acknowledged,
+            });
         }
     }
 
@@ -2876,6 +2956,7 @@ fn build_app(state: AppState, api_key: operator::auth::ApiKeyConfig) -> Router {
             post(api_autopilot_override),
         )
         .route("/status", get(api_status))
+        .route("/effect-barriers/pending", get(api_pending_effect_barriers))
         .route("/metrics", get(api_metrics))
         .route("/cegis/metrics", get(api_cegis_metrics))
         .route("/alerts", get(api_alerts))

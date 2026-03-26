@@ -38,6 +38,16 @@ export interface SystemStatus {
     };
 }
 
+export interface PendingEffectBarrier {
+    barrierPath: string;
+    policyHash: string;
+    idempotencyKeyV1: string;
+    stateHash: string;
+    actionHash: string;
+    nonceOrTxHash: string;
+    timestampMs: number;
+}
+
 // =============================================================================
 // Decision Types
 // =============================================================================

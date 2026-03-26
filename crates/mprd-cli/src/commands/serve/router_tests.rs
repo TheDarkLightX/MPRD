@@ -162,6 +162,27 @@ async fn read_json<T: DeserializeOwned>(res: axum::http::Response<Body>) -> T {
     serde_json::from_slice(&bytes).expect("json")
 }
 
+fn write_pending_http_barrier(
+    root: &std::path::Path,
+    policy_hash_hex: &str,
+    idempotency_key_v1: &str,
+    timestamp_ms: i64,
+) -> std::path::PathBuf {
+    let policy_dir = root.join(policy_hash_hex);
+    std::fs::create_dir_all(&policy_dir).expect("policy dir");
+    let path = policy_dir.join(format!("{idempotency_key_v1}.pending.json"));
+    let payload = serde_json::json!({
+        "idempotency_key_v1": idempotency_key_v1,
+        "policy_hash": policy_hash_hex,
+        "state_hash": format!("{:064x}", 0x22),
+        "action_hash": format!("{:064x}", 0x33),
+        "nonce_or_tx_hash": format!("{:064x}", 0x44),
+        "timestamp_ms": timestamp_ms,
+    });
+    std::fs::write(&path, serde_json::to_vec(&payload).expect("payload")).expect("write barrier");
+    path
+}
+
 fn write_simple_decision(
     store: &OperatorStore,
     timestamp_ms: i64,
@@ -413,9 +434,7 @@ async fn api_status_reports_typed_idempotent_http_effect_barrier_summary() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let mut state = test_state(&tmp);
     let root = tmp.path().join("http_effects");
-    let policy_dir = root.join("deadbeef");
-    std::fs::create_dir_all(&policy_dir).expect("policy dir");
-    std::fs::write(policy_dir.join("stuck.pending.json"), b"{}\n").expect("pending marker");
+    write_pending_http_barrier(&root, "deadbeef", "stuck", 1);
 
     state.config.execution.executor_type = "idempotent_http".into();
     state.config.execution.http_url = Some("http://127.0.0.1:8080".into());
@@ -448,6 +467,78 @@ async fn api_status_reports_typed_idempotent_http_effect_barrier_summary() {
     assert_eq!(
         summary.root_path.as_deref(),
         Some(root.to_str().expect("utf8 root"))
+    );
+}
+
+#[tokio::test]
+async fn api_pending_effect_barriers_returns_sorted_http_pending_entries() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut state = test_state(&tmp);
+    let root = tmp.path().join("http_effects");
+    let older = write_pending_http_barrier(&root, "bbbb", "older", 10);
+    let newer = write_pending_http_barrier(&root, "aaaa", "newer", 20);
+
+    state.config.execution.executor_type = "idempotent_http".into();
+    state.config.execution.http_url = Some("http://127.0.0.1:8080".into());
+    state.config.execution.effect_journal_dir = Some(root);
+
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/effect-barriers/pending")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let body: Vec<op_api::PendingEffectBarrier> = read_json(res).await;
+    assert_eq!(body.len(), 2);
+    assert_eq!(body[0].idempotency_key_v1, "newer");
+    assert_eq!(body[0].timestamp_ms, 20);
+    assert_eq!(body[0].barrier_path, newer.display().to_string());
+    assert_eq!(body[1].idempotency_key_v1, "older");
+    assert_eq!(body[1].timestamp_ms, 10);
+    assert_eq!(body[1].barrier_path, older.display().to_string());
+}
+
+#[tokio::test]
+async fn api_alerts_include_unresolved_pending_http_barriers() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut state = test_state(&tmp);
+    let root = tmp.path().join("http_effects");
+    let barrier = write_pending_http_barrier(&root, "deadbeef", "pending-alert", 1234);
+
+    state.config.mode = "trustless".into();
+    state.config.execution.executor_type = "idempotent_http".into();
+    state.config.execution.http_url = Some("http://127.0.0.1:8080".into());
+    state.config.execution.effect_journal_dir = Some(root);
+
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/alerts")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let body: Vec<op_api::Alert> = read_json(res).await;
+    let alert = body
+        .into_iter()
+        .find(|alert| alert.id == "pending_http_effect_barrier:pending-alert")
+        .expect("pending barrier alert");
+    assert!(matches!(alert.severity, op_api::AlertSeverity::Critical));
+    assert!(matches!(alert.alert_type, op_api::AlertType::Anomaly));
+    assert!(
+        alert.message.contains(&barrier.display().to_string()),
+        "unexpected message: {}",
+        alert.message
     );
 }
 

@@ -105,8 +105,9 @@ status; the RC1 board separates automated green gates from still-open Tier-0 rel
 - **Production remote-side-effect startup is pending-aware (SHOULD)**:
   trustless/private `mprd serve` now refuses startup if the configured
   `idempotent_http` journal already contains unresolved pending barriers, and
-  both `serve status` and `mprd doctor` surface those pending barriers
-  explicitly. The tracked replay series now also includes a narrow
+  `serve status`, `mprd doctor`, `/api/effect-barriers/pending`, and
+  `/api/alerts` all surface those pending barriers explicitly. The tracked
+  replay series now also includes a narrow
   `idempotent_http_startup_pending_barrier` packet that models that same
   deployment-time fail-closed shape.
 - **Production file-side-effect sink is idempotent (SHOULD)**: trustless/private
