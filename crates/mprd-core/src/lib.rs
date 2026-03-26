@@ -416,6 +416,8 @@ pub const EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1: &str = "execution_authori
 const EXECUTION_AUTH_ATTESTATION_METADATA_DOMAIN_V1: &[u8] =
     b"MPRD_EXECUTION_AUTH_METADATA_HASH_V1";
 const EXECUTION_READY_PACKET_HASH_DOMAIN_V1: &[u8] = b"MPRD_EXECUTION_READY_PACKET_HASH_V1";
+const EXECUTION_BOUNDARY_REFINEMENT_HASH_DOMAIN_V1: &[u8] =
+    b"MPRD_EXECUTION_BOUNDARY_REFINEMENT_HASH_V1";
 
 /// Concrete policy authority witness carried on the RC1 path.
 ///
@@ -852,6 +854,22 @@ pub fn execution_ready_packet_hash_v1(packet: &ExecutionReadyPacketV1) -> Hash32
         None => hasher.update([0u8]),
     }
 
+    Hash32(hasher.finalize().into())
+}
+
+/// Emit a deterministic digest over the concrete runtime artifact used by the top-level
+/// execution-boundary refinement story.
+///
+/// This binds the grouped `ExecutionReadyPacketV1` to the verified proof metadata that reached the
+/// live `execute_ready(...)` boundary, so the operator surface can audit one concrete refinement
+/// artifact rather than only a local stack object plus separate metadata.
+pub fn execution_boundary_refinement_hash_v1(ready: &ExecutionReadyBundle<'_>) -> Hash32 {
+    let mut hasher = Sha256::new();
+    hasher.update(EXECUTION_BOUNDARY_REFINEMENT_HASH_DOMAIN_V1);
+    hasher.update(execution_ready_packet_hash_v1(ready.packet()).0);
+    hasher.update(
+        crate::decision_log::attestation_metadata_hash_v1(&ready.proof().attestation_metadata).0,
+    );
     Hash32(hasher.finalize().into())
 }
 
@@ -2457,6 +2475,60 @@ mod tests {
         );
 
         assert_ne!(base_hash, execution_ready_packet_hash_v1(bridged.packet()));
+    }
+
+    #[test]
+    fn execution_boundary_refinement_hash_changes_when_ready_packet_or_attestation_changes() {
+        let candidate = valid_http_call_candidate();
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0xC0),
+            policy_ref: PolicyRef {
+                policy_epoch: 11,
+                registry_root: dummy_hash(0xC1),
+            },
+            state_hash: dummy_hash(0xC2),
+            state_ref: StateRef::unknown(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0xC3),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let mut proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0xC4),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        proof
+            .attestation_metadata
+            .insert("custom".into(), "base".into());
+
+        let ready = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).expect("ready");
+        let base_hash = execution_boundary_refinement_hash_v1(&ready);
+        assert_eq!(base_hash, execution_boundary_refinement_hash_v1(&ready));
+
+        let bridged = prepare_execution_ready_with_registry_bridge(
+            &ready,
+            execution_registry_bridge_witness_v1(dummy_hash(0xC5), Some(dummy_hash(0xC6))),
+        );
+        assert_ne!(base_hash, execution_boundary_refinement_hash_v1(&bridged));
+
+        let mut proof_with_metadata_drift = proof.clone();
+        proof_with_metadata_drift
+            .attestation_metadata
+            .insert("custom".into(), "drifted".into());
+        let ready_with_metadata_drift =
+            prepare_execution_ready(VerifiedBundle::new(&token, &proof_with_metadata_drift))
+                .expect("ready with metadata drift");
+        assert_ne!(
+            base_hash,
+            execution_boundary_refinement_hash_v1(&ready_with_metadata_drift)
+        );
     }
 
     #[test]

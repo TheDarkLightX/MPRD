@@ -309,8 +309,16 @@ async fn run_handler(
                 ) -> mprd_core::Result<()> {
                     let decision_id_hex = hex::encode(op_store::decision_id_v1(ready.token()).0);
                     let ready_hash = mprd_core::execution_ready_packet_hash_v1(ready.packet());
+                    let refinement_hash =
+                        mprd_core::execution_boundary_refinement_hash_v1(ready);
                     self.store
                         .write_execution_ready_packet_hash(&decision_id_hex, &ready_hash)
+                        .and_then(|()| {
+                            self.store.write_execution_boundary_refinement_hash(
+                                &decision_id_hex,
+                                &refinement_hash,
+                            )
+                        })
                         .map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))
                 }
             }
@@ -494,8 +502,16 @@ async fn run_handler(
                 ) -> mprd_core::Result<()> {
                     let decision_id_hex = hex::encode(op_store::decision_id_v1(ready.token()).0);
                     let ready_hash = mprd_core::execution_ready_packet_hash_v1(ready.packet());
+                    let refinement_hash =
+                        mprd_core::execution_boundary_refinement_hash_v1(ready);
                     self.store
                         .write_execution_ready_packet_hash(&decision_id_hex, &ready_hash)
+                        .and_then(|()| {
+                            self.store.write_execution_boundary_refinement_hash(
+                                &decision_id_hex,
+                                &refinement_hash,
+                            )
+                        })
                         .map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))
                 }
             }
@@ -2179,6 +2195,10 @@ async fn api_decision_detail(
                 .get(mprd_core::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1)
                 .cloned(),
             execution_ready_packet_hash: record.proof.execution_ready_packet_hash.clone(),
+            execution_boundary_refinement_hash: record
+                .proof
+                .execution_boundary_refinement_hash
+                .clone(),
             chosen_action_preimage_storage: record
                 .proof
                 .chosen_action_preimage_storage_mode

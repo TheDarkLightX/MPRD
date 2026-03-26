@@ -512,6 +512,7 @@ async fn decision_detail_reports_attestation_execution_and_ready_packet_hashes()
         expected_execution_authorization_hash.clone(),
     );
     let expected_execution_ready_packet_hash = hex::encode([0x44u8; 32]);
+    let expected_execution_boundary_refinement_hash = hex::encode([0x55u8; 32]);
     proof
         .attestation_metadata
         .insert("custom_key".into(), "custom_value".into());
@@ -534,6 +535,10 @@ async fn decision_detail_reports_attestation_execution_and_ready_packet_hashes()
         .store
         .write_execution_ready_packet_hash(&id, &mprd_core::Hash32([0x44u8; 32]))
         .expect("write ready hash");
+    state
+        .store
+        .write_execution_boundary_refinement_hash(&id, &mprd_core::Hash32([0x55u8; 32]))
+        .expect("write refinement hash");
 
     let app = build_app(state, ApiKeyConfig { api_key: None });
     let res = app
@@ -566,6 +571,10 @@ async fn decision_detail_reports_attestation_execution_and_ready_packet_hashes()
     assert_eq!(
         body.proof.execution_ready_packet_hash.as_deref(),
         Some(expected_execution_ready_packet_hash.as_str())
+    );
+    assert_eq!(
+        body.proof.execution_boundary_refinement_hash.as_deref(),
+        Some(expected_execution_boundary_refinement_hash.as_str())
     );
 }
 
