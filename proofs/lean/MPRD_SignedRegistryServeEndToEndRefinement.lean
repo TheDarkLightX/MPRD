@@ -24,6 +24,31 @@ def proof_bundle_version : String := "mprd-leanproofs-v1"
 abbrev ServeState := MPRDSignedRegistryServeReadyPacketBoundary.State
 abbrev PacketState := MPRDExecutionReadyPacketBoundary.State
 
+def refinementWitnessOfServeState (s : ServeState) :
+    MPRDExecutionReadyPacketRefinement.RefinementWitness :=
+  { verdict := if s.allowed then MPRDExecutionBoundary.Verdict.allowed
+      else MPRDExecutionBoundary.Verdict.denied
+    governanceOk := s.governanceAligned
+    bindings :=
+      { journalAllowed := s.bindingOk
+        limitsHashMatches := s.bindingOk
+        decisionCommitmentValid := s.bindingOk
+        policyHashMatches := s.bindingOk
+        policyEpochMatches := s.bindingOk
+        registryRootMatches := s.bindingOk
+        stateSourceMatches := s.bindingOk
+        stateEpochMatches := s.bindingOk
+        stateAttestationMatches := s.bindingOk
+        stateHashMatches := s.bindingOk
+        candidateSetHashMatches := s.bindingOk
+        chosenActionHashMatches := s.bindingOk
+        nonceMatches := s.bindingOk }
+    executorGate :=
+      { preimagePresent := s.executorOk
+        limitsBytesBindingOk := s.executorOk
+        actionPreimageHashMatches := s.executorOk
+        schemaValid := s.executorOk } }
+
 def mapServeExec :
     MPRDSignedRegistryServeReadyPacketBoundary.ExecStatus ->
       MPRDExecutionReadyPacketBoundary.ExecStatus
@@ -211,7 +236,51 @@ theorem executed_signed_registry_serve_states_refine_via_execution_ready_packet
         ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
       exact ⟨hPacketReach, hPacketExec, ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩⟩
 
+theorem refinementWitnessOfServeState_holds_for_executed_states
+    {s : ServeState}
+    (hReach : MPRDSignedRegistryServeReadyPacketBoundary.Reachable s)
+    (hExec : MPRDSignedRegistryServeReadyPacketBoundary.Executed s) :
+    MPRDExecutionReadyPacketRefinement.RefinementWitnessHolds
+      (refinementWitnessOfServeState s) := by
+  rcases
+      MPRDSignedRegistryServeReadyPacketBoundary.executed_reachable_states_require_signed_registry_serve_ready_packet_boundary
+        hReach hExec with
+    ⟨_hPacket, _hReady, _hRegistryAnchor, _hStateAnchor, _hPolicy, _hVerifier,
+      _hBridge, _hResolved, _hCheckpoint, _hAuth, hGovernance, _hVerified,
+      hAllowed, hBinding, hExecutor, _hBoundary, _hSignature, _hStateProv, _hReplay⟩
+  constructor
+  · simp [refinementWitnessOfServeState, hAllowed]
+  constructor
+  · simpa [refinementWitnessOfServeState] using hGovernance
+  constructor
+  · simp [MPRDExecutionBoundary.ConcreteBindingsHold, refinementWitnessOfServeState, hBinding]
+  · simp [MPRDExecutionBoundary.ExecutorGateHold, refinementWitnessOfServeState, hExecutor]
+
+theorem executed_signed_registry_serve_states_refine_to_execution_boundary
+    {s : ServeState}
+    (hReach : MPRDSignedRegistryServeReadyPacketBoundary.Reachable s)
+    (hExec : MPRDSignedRegistryServeReadyPacketBoundary.Executed s) :
+    MPRDExecutionReadyPacketBoundary.Reachable (packetViewOfServeState s) ∧
+      MPRDExecutionReadyPacketBoundary.Executed (packetViewOfServeState s) ∧
+        (∃ t : MPRDExecutionBoundary.State,
+          t.ctx.bindings =
+              (refinementWitnessOfServeState s).bindings ∧
+            t.ctx.executorGate =
+              (refinementWitnessOfServeState s).executorGate ∧
+              MPRDExecutionBoundary.Reachable t ∧
+                MPRDExecutionBoundary.Executed t ∧
+                  MPRDExecutionBoundary.ExecutedImpliesFullBoundaryGate t) := by
+  let w := refinementWitnessOfServeState s
+  have hWitness :
+      MPRDExecutionReadyPacketRefinement.RefinementWitnessHolds w := by
+    simpa [w] using refinementWitnessOfServeState_holds_for_executed_states hReach hExec
+  simpa [w] using
+    executed_signed_registry_serve_states_refine_via_execution_ready_packet hReach hExec hWitness
+
 end MPRDSignedRegistryServeEndToEndRefinement
 
 abbrev executed_signed_registry_serve_states_refine_via_execution_ready_packet_v1 :=
   @MPRDSignedRegistryServeEndToEndRefinement.executed_signed_registry_serve_states_refine_via_execution_ready_packet
+
+abbrev executed_signed_registry_serve_states_refine_to_execution_boundary_no_witness_v1 :=
+  @MPRDSignedRegistryServeEndToEndRefinement.executed_signed_registry_serve_states_refine_to_execution_boundary
