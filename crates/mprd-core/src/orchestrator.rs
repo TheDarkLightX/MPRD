@@ -64,6 +64,12 @@ pub trait DecisionAuditRecorder {
         verdicts: &[crate::RuleVerdict],
         decision: &Decision,
     ) -> Result<()>;
+
+    /// Called after the concrete execute-ready packet has been constructed but before side
+    /// effects are attempted.
+    fn record_execution_ready(&self, _ready: &crate::ExecutionReadyBundle<'_>) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Optional hook for rebuilding the live execute-ready packet from a more concrete authority
@@ -389,6 +395,14 @@ where
                 ),
             }
             .inspect_err(|e| record_stage_failure(inputs.metrics, "execute", e))?;
+            if let Some(a) = inputs.audit_recorder {
+                if let Err(e) = a.record_execution_ready(&ready) {
+                    warn!(error = %e, "Ready audit recorder failed (continuing)");
+                    if let Some(m) = inputs.metrics {
+                        m.inc_failure_reason("audit_recorder.ready_failed");
+                    }
+                }
+            }
             let result = if let Some(m) = inputs.metrics {
                 metrics::timed_execute(m, || inputs.executor.execute_ready(&ready))
             } else {
@@ -948,6 +962,30 @@ mod tests {
                 success: true,
                 message: Some("ok".into()),
             })
+        }
+    }
+
+    struct LoggedReadyAuditRecorder {
+        log: CallLog,
+    }
+
+    impl DecisionAuditRecorder for LoggedReadyAuditRecorder {
+        fn record_verified_decision(
+            &self,
+            _token: &DecisionToken,
+            _proof: &ProofBundle,
+            _state: &StateSnapshot,
+            _candidates: &[CandidateAction],
+            _verdicts: &[crate::RuleVerdict],
+            _decision: &Decision,
+        ) -> Result<()> {
+            push_call(&self.log, "audit");
+            Ok(())
+        }
+
+        fn record_execution_ready(&self, _ready: &crate::ExecutionReadyBundle<'_>) -> Result<()> {
+            push_call(&self.log, "audit_ready");
+            Ok(())
         }
     }
 
@@ -2120,7 +2158,7 @@ mod tests {
     }
 
     #[test]
-    fn run_once_orders_verify_then_audit_then_record_then_execute() {
+    fn run_once_orders_verify_then_audit_then_record_then_ready_audit_then_execute() {
         let log = new_call_log();
         let state_provider = LoggedStateProvider {
             log: log.clone(),
@@ -2156,10 +2194,7 @@ mod tests {
         };
         let executor = LoggedExecutor { log: log.clone() };
         let recorder = LoggedRecorder { log: log.clone() };
-        let audit = LoggedAuditRecorder {
-            log: log.clone(),
-            fail: false,
-        };
+        let audit = LoggedReadyAuditRecorder { log: log.clone() };
         let policy_hash = dummy_hash(9);
         let policy_ref = PolicyRef {
             policy_epoch: 1,
@@ -2201,6 +2236,7 @@ mod tests {
                 "verify_ok",
                 "audit",
                 "record",
+                "audit_ready",
                 "execute"
             ]
         );

@@ -81,6 +81,7 @@ export interface ProofBundle {
     registryAuthorizationHash?: string;
     registryCheckpointAttestationHash?: string;
     executionAuthorizationHash?: string;
+    executionReadyPacketHash?: string;
     chosenActionPreimageStorage?: ChosenActionPreimageStorage;
 }
 

@@ -302,6 +302,17 @@ async fn run_handler(
 
                     Ok(())
                 }
+
+                fn record_execution_ready(
+                    &self,
+                    ready: &mprd_core::ExecutionReadyBundle<'_>,
+                ) -> mprd_core::Result<()> {
+                    let decision_id_hex = hex::encode(op_store::decision_id_v1(ready.token()).0);
+                    let ready_hash = mprd_core::execution_ready_packet_hash_v1(ready.packet());
+                    self.store
+                        .write_execution_ready_packet_hash(&decision_id_hex, &ready_hash)
+                        .map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))
+                }
             }
 
             struct RecordingExecutor<E: mprd_core::ExecutorAdapter> {
@@ -475,6 +486,17 @@ async fn run_handler(
                         .to_string(),
                     );
                     Ok(())
+                }
+
+                fn record_execution_ready(
+                    &self,
+                    ready: &mprd_core::ExecutionReadyBundle<'_>,
+                ) -> mprd_core::Result<()> {
+                    let decision_id_hex = hex::encode(op_store::decision_id_v1(ready.token()).0);
+                    let ready_hash = mprd_core::execution_ready_packet_hash_v1(ready.packet());
+                    self.store
+                        .write_execution_ready_packet_hash(&decision_id_hex, &ready_hash)
+                        .map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))
                 }
             }
 
@@ -2156,6 +2178,7 @@ async fn api_decision_detail(
                 .attestation_metadata
                 .get(mprd_core::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1)
                 .cloned(),
+            execution_ready_packet_hash: record.proof.execution_ready_packet_hash.clone(),
             chosen_action_preimage_storage: record
                 .proof
                 .chosen_action_preimage_storage_mode

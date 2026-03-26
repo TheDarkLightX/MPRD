@@ -490,7 +490,7 @@ async fn decision_detail_reports_receipt_derived_chosen_preimage_storage() {
 }
 
 #[tokio::test]
-async fn decision_detail_reports_attestation_and_execution_authorization_hashes() {
+async fn decision_detail_reports_attestation_execution_and_ready_packet_hashes() {
     let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let state = test_state(&tmp);
@@ -511,6 +511,7 @@ async fn decision_detail_reports_attestation_and_execution_authorization_hashes(
         mprd_core::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1.into(),
         expected_execution_authorization_hash.clone(),
     );
+    let expected_execution_ready_packet_hash = hex::encode([0x44u8; 32]);
     proof
         .attestation_metadata
         .insert("custom_key".into(), "custom_value".into());
@@ -529,6 +530,10 @@ async fn decision_detail_reports_attestation_and_execution_authorization_hashes(
             &decision,
         )
         .expect("write decision");
+    state
+        .store
+        .write_execution_ready_packet_hash(&id, &mprd_core::Hash32([0x44u8; 32]))
+        .expect("write ready hash");
 
     let app = build_app(state, ApiKeyConfig { api_key: None });
     let res = app
@@ -557,6 +562,10 @@ async fn decision_detail_reports_attestation_and_execution_authorization_hashes(
     assert_eq!(
         body.proof.registry_authorization_hash.as_deref(),
         Some(expected_registry_authorization_hash.as_str())
+    );
+    assert_eq!(
+        body.proof.execution_ready_packet_hash.as_deref(),
+        Some(expected_execution_ready_packet_hash.as_str())
     );
 }
 

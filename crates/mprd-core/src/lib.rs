@@ -415,6 +415,7 @@ pub const GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1: &str = "governance_link_ok
 pub const EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1: &str = "execution_authorization_hash_v1";
 const EXECUTION_AUTH_ATTESTATION_METADATA_DOMAIN_V1: &[u8] =
     b"MPRD_EXECUTION_AUTH_METADATA_HASH_V1";
+const EXECUTION_READY_PACKET_HASH_DOMAIN_V1: &[u8] = b"MPRD_EXECUTION_READY_PACKET_HASH_V1";
 
 /// Concrete policy authority witness carried on the RC1 path.
 ///
@@ -750,6 +751,107 @@ fn execution_authorization_attestation_hash_v1(
         }
         None => hasher.update([0u8]),
     }
+    Hash32(hasher.finalize().into())
+}
+
+fn update_state_ref_hash_v1(hasher: &mut Sha256, state_ref: &StateRef) {
+    hasher.update(state_ref.state_source_id.0);
+    hasher.update(state_ref.state_epoch.to_le_bytes());
+    hasher.update(state_ref.state_attestation_hash.0);
+}
+
+/// Emit a deterministic digest over the grouped `ExecutionReadyPacketV1`.
+///
+/// This gives the runtime/operator surface one stable hash for the exact constructor-gated packet
+/// that reached `execute_ready(...)`.
+pub fn execution_ready_packet_hash_v1(packet: &ExecutionReadyPacketV1) -> Hash32 {
+    let mut hasher = Sha256::new();
+    hasher.update(EXECUTION_READY_PACKET_HASH_DOMAIN_V1);
+
+    let boundary = packet.boundary();
+    hasher.update((boundary.chosen_action_preimage().len() as u32).to_le_bytes());
+    hasher.update(boundary.chosen_action_preimage());
+
+    let limits = boundary.limits_binding().limits();
+    match limits.mpb_fuel_limit {
+        Some(limit) => {
+            hasher.update([1u8]);
+            hasher.update(limit.to_le_bytes());
+        }
+        None => hasher.update([0u8]),
+    }
+    match limits.mode_c_encryption_ctx_hash {
+        Some(ctx_hash) => {
+            hasher.update([1u8]);
+            hasher.update(ctx_hash.0);
+        }
+        None => hasher.update([0u8]),
+    }
+
+    match packet.authorization() {
+        Some(authorization) => {
+            hasher.update([1u8]);
+            hasher.update(
+                execution_authorization_attestation_hash_v1(
+                    authorization.policy_authority().policy_hash(),
+                    authorization.policy_authority().policy_ref(),
+                    authorization.state_binding().state_hash(),
+                    authorization.state_binding().state_ref(),
+                    authorization.governance(),
+                )
+                .0,
+            );
+        }
+        None => hasher.update([0u8]),
+    }
+
+    match packet.bridge() {
+        Some(bridge) => {
+            hasher.update([1u8]);
+            hasher.update(bridge.registry_authorization_hash().0);
+            match bridge.registry_checkpoint_attestation_hash() {
+                Some(checkpoint_hash) => {
+                    hasher.update([1u8]);
+                    hasher.update(checkpoint_hash.0);
+                }
+                None => hasher.update([0u8]),
+            }
+        }
+        None => hasher.update([0u8]),
+    }
+
+    match packet.executor_admission() {
+        Some(executor_admission) => {
+            hasher.update([1u8]);
+            match executor_admission.signature() {
+                Some(signature) => {
+                    hasher.update([1u8]);
+                    hasher.update(signature.signer_pubkey());
+                }
+                None => hasher.update([0u8]),
+            }
+            match executor_admission.state_provenance() {
+                Some(state_provenance) => {
+                    hasher.update([1u8]);
+                    update_state_ref_hash_v1(&mut hasher, state_provenance.state_ref());
+                }
+                None => hasher.update([0u8]),
+            }
+            match executor_admission.replay_clearance() {
+                Some(replay_clearance) => {
+                    hasher.update([1u8]);
+                    let claim_tag = match replay_clearance.claim() {
+                        crate::anti_replay::NonceClaim::NotClaimed => 1u8,
+                        crate::anti_replay::NonceClaim::Claimed => 2u8,
+                    };
+                    hasher.update([claim_tag]);
+                }
+                None => hasher.update([0u8]),
+            }
+        }
+        None => hasher.update([0u8]),
+    }
+
     Hash32(hasher.finalize().into())
 }
 
@@ -2315,6 +2417,46 @@ mod tests {
             admission.replay_clearance().expect("replay").claim(),
             crate::anti_replay::NonceClaim::NotClaimed
         );
+    }
+
+    #[test]
+    fn execution_ready_packet_hash_changes_when_packet_membership_changes() {
+        let candidate = valid_http_call_candidate();
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0xB0),
+            policy_ref: PolicyRef {
+                policy_epoch: 9,
+                registry_root: dummy_hash(0xB1),
+            },
+            state_hash: dummy_hash(0xB2),
+            state_ref: StateRef::unknown(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0xB3),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0xB4),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+
+        let ready = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).expect("ready");
+        let base_hash = execution_ready_packet_hash_v1(ready.packet());
+        assert_eq!(base_hash, execution_ready_packet_hash_v1(ready.packet()));
+
+        let bridged = prepare_execution_ready_with_registry_bridge(
+            &ready,
+            execution_registry_bridge_witness_v1(dummy_hash(0xB5), Some(dummy_hash(0xB6))),
+        );
+
+        assert_ne!(base_hash, execution_ready_packet_hash_v1(bridged.packet()));
     }
 
     #[test]
