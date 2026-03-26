@@ -107,6 +107,9 @@ status; the RC1 board separates automated green gates from still-open Tier-0 rel
   `idempotent_http` journal already contains unresolved pending barriers, and
   `serve status`, `mprd doctor`, `/api/effect-barriers/pending`, and
   `/api/alerts` all surface those pending barriers explicitly. The tracked
+  operator API now also supports explicit dry-run and live manual resolution of
+  a validated pending barrier by `(policy_hash, idempotency_key_v1)` so
+  operators do not have to edit barrier files by hand. The tracked
   replay series now also includes a narrow
   `idempotent_http_startup_pending_barrier` packet that models that same
   deployment-time fail-closed shape.

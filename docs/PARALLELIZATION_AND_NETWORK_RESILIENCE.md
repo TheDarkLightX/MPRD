@@ -608,6 +608,7 @@ Modeling assumptions:
 - the pending barrier persists across restart until explicit resolution
 - the restart path checks the same local journal before serving requests
 - operator surfaces can enumerate unresolved barriers deterministically for recovery
+- the shipped operator API can clear or promote a validated barrier explicitly as a local action
 - manual resolution is modeled as a local operator action, not a liveness claim
 
 What it still does not prove:

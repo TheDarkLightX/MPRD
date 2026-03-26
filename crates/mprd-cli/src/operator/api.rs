@@ -78,6 +78,33 @@ pub struct PendingEffectBarrier {
     pub timestamp_ms: i64,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingEffectBarrierResolution {
+    Clear,
+    PromoteToCommitted,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvePendingEffectBarrierRequest {
+    pub resolution: PendingEffectBarrierResolution,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvePendingEffectBarrierResult {
+    pub success: bool,
+    pub dry_run: bool,
+    pub resolution: PendingEffectBarrierResolution,
+    pub barrier: PendingEffectBarrier,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub committed_barrier_path: Option<String>,
+    pub message: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Verdict {

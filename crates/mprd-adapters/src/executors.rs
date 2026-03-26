@@ -69,6 +69,18 @@ pub struct PendingHttpEffectBarrier {
     pub timestamp_ms: i64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingHttpEffectBarrierResolution {
+    Clear,
+    PromoteToCommitted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedPendingHttpEffectBarrier {
+    pub barrier: PendingHttpEffectBarrier,
+    pub committed_barrier_path: Option<PathBuf>,
+}
+
 #[derive(Deserialize)]
 struct PendingHttpEffectBarrierPayload {
     idempotency_key_v1: String,
@@ -77,6 +89,86 @@ struct PendingHttpEffectBarrierPayload {
     action_hash: String,
     nonce_or_tx_hash: String,
     timestamp_ms: i64,
+}
+
+fn parse_pending_http_effect_barrier(path: &Path) -> Result<PendingHttpEffectBarrier> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            MprdError::ExecutionError(format!(
+                "Pending HTTP effect barrier {} has a non-UTF8 filename",
+                path.display()
+            ))
+        })?;
+    if !name.ends_with(".pending.json") {
+        return Err(MprdError::ExecutionError(format!(
+            "Pending HTTP effect barrier {} does not end with .pending.json",
+            path.display()
+        )));
+    }
+
+    let mut file = File::open(path).map_err(|e| {
+        MprdError::ExecutionError(format!(
+            "Failed to read pending HTTP effect barrier {}: {}",
+            path.display(),
+            e
+        ))
+    })?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|e| {
+        MprdError::ExecutionError(format!(
+            "Failed to read pending HTTP effect barrier {}: {}",
+            path.display(),
+            e
+        ))
+    })?;
+    let payload: PendingHttpEffectBarrierPayload = serde_json::from_slice(&bytes).map_err(|e| {
+        MprdError::ExecutionError(format!(
+            "Failed to parse pending HTTP effect barrier {}: {}",
+            path.display(),
+            e
+        ))
+    })?;
+
+    let expected_idempotency_key = name.trim_end_matches(".pending.json");
+    if payload.idempotency_key_v1 != expected_idempotency_key {
+        return Err(MprdError::ExecutionError(format!(
+            "Pending HTTP effect barrier {} has idempotency key drift: file={}, payload={}",
+            path.display(),
+            expected_idempotency_key,
+            payload.idempotency_key_v1
+        )));
+    }
+
+    let policy_dir = path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            MprdError::ExecutionError(format!(
+                "Pending HTTP effect barrier {} is missing a policy-hash directory",
+                path.display()
+            ))
+        })?;
+    if payload.policy_hash != policy_dir {
+        return Err(MprdError::ExecutionError(format!(
+            "Pending HTTP effect barrier {} has policy hash drift: dir={}, payload={}",
+            path.display(),
+            policy_dir,
+            payload.policy_hash
+        )));
+    }
+
+    Ok(PendingHttpEffectBarrier {
+        barrier_path: path.to_path_buf(),
+        policy_hash_hex: payload.policy_hash,
+        idempotency_key_v1: payload.idempotency_key_v1,
+        state_hash_hex: payload.state_hash,
+        action_hash_hex: payload.action_hash,
+        nonce_or_tx_hash_hex: payload.nonce_or_tx_hash,
+        timestamp_ms: payload.timestamp_ms,
+    })
 }
 
 pub fn summarize_http_effect_journal_root(root: &Path) -> Result<EffectJournalSummary> {
@@ -180,73 +272,91 @@ pub fn list_pending_http_effect_barriers(root: &Path) -> Result<Vec<PendingHttpE
                 continue;
             }
 
-            let mut file = File::open(&path).map_err(|e| {
-                MprdError::ExecutionError(format!(
-                    "Failed to read pending HTTP effect barrier {}: {}",
-                    path.display(),
-                    e
-                ))
-            })?;
-            let mut bytes = Vec::new();
-            file.read_to_end(&mut bytes).map_err(|e| {
-                MprdError::ExecutionError(format!(
-                    "Failed to read pending HTTP effect barrier {}: {}",
-                    path.display(),
-                    e
-                ))
-            })?;
-            let payload: PendingHttpEffectBarrierPayload =
-                serde_json::from_slice(&bytes).map_err(|e| {
-                    MprdError::ExecutionError(format!(
-                        "Failed to parse pending HTTP effect barrier {}: {}",
-                        path.display(),
-                        e
-                    ))
-                })?;
-
-            let expected_idempotency_key = name.trim_end_matches(".pending.json");
-            if payload.idempotency_key_v1 != expected_idempotency_key {
-                return Err(MprdError::ExecutionError(format!(
-                    "Pending HTTP effect barrier {} has idempotency key drift: file={}, payload={}",
-                    path.display(),
-                    expected_idempotency_key,
-                    payload.idempotency_key_v1
-                )));
-            }
-
-            let policy_dir = path
-                .parent()
-                .and_then(|parent| parent.file_name())
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| {
-                    MprdError::ExecutionError(format!(
-                        "Pending HTTP effect barrier {} is missing a policy-hash directory",
-                        path.display()
-                    ))
-                })?;
-            if payload.policy_hash != policy_dir {
-                return Err(MprdError::ExecutionError(format!(
-                    "Pending HTTP effect barrier {} has policy hash drift: dir={}, payload={}",
-                    path.display(),
-                    policy_dir,
-                    payload.policy_hash
-                )));
-            }
-
-            barriers.push(PendingHttpEffectBarrier {
-                barrier_path: path,
-                policy_hash_hex: payload.policy_hash,
-                idempotency_key_v1: payload.idempotency_key_v1,
-                state_hash_hex: payload.state_hash,
-                action_hash_hex: payload.action_hash,
-                nonce_or_tx_hash_hex: payload.nonce_or_tx_hash,
-                timestamp_ms: payload.timestamp_ms,
-            });
+            barriers.push(parse_pending_http_effect_barrier(&path)?);
         }
     }
 
     barriers.sort_by(|a, b| a.barrier_path.cmp(&b.barrier_path));
     Ok(barriers)
+}
+
+pub fn get_pending_http_effect_barrier(
+    root: &Path,
+    policy_hash_hex: &str,
+    idempotency_key_v1: &str,
+) -> Result<PendingHttpEffectBarrier> {
+    let path = root
+        .join(policy_hash_hex)
+        .join(format!("{idempotency_key_v1}.pending.json"));
+    if !path.exists() {
+        return Err(MprdError::ExecutionError(format!(
+            "Pending HTTP effect barrier not found: {}",
+            path.display()
+        )));
+    }
+    let barrier = parse_pending_http_effect_barrier(&path)?;
+    if barrier.policy_hash_hex != policy_hash_hex {
+        return Err(MprdError::ExecutionError(format!(
+            "Pending HTTP effect barrier {} resolved to unexpected policy hash {}",
+            path.display(),
+            barrier.policy_hash_hex
+        )));
+    }
+    if barrier.idempotency_key_v1 != idempotency_key_v1 {
+        return Err(MprdError::ExecutionError(format!(
+            "Pending HTTP effect barrier {} resolved to unexpected idempotency key {}",
+            path.display(),
+            barrier.idempotency_key_v1
+        )));
+    }
+    Ok(barrier)
+}
+
+pub fn resolve_pending_http_effect_barrier(
+    root: &Path,
+    policy_hash_hex: &str,
+    idempotency_key_v1: &str,
+    resolution: PendingHttpEffectBarrierResolution,
+) -> Result<ResolvedPendingHttpEffectBarrier> {
+    let barrier = get_pending_http_effect_barrier(root, policy_hash_hex, idempotency_key_v1)?;
+    match resolution {
+        PendingHttpEffectBarrierResolution::Clear => {
+            fs::remove_file(&barrier.barrier_path).map_err(|e| {
+                MprdError::ExecutionError(format!(
+                    "Failed to clear pending HTTP effect barrier {}: {}",
+                    barrier.barrier_path.display(),
+                    e
+                ))
+            })?;
+            Ok(ResolvedPendingHttpEffectBarrier {
+                barrier,
+                committed_barrier_path: None,
+            })
+        }
+        PendingHttpEffectBarrierResolution::PromoteToCommitted => {
+            let committed = barrier
+                .barrier_path
+                .with_file_name(format!("{}.committed.json", barrier.idempotency_key_v1));
+            if committed.exists() {
+                return Err(MprdError::ExecutionError(format!(
+                    "Committed HTTP effect barrier already exists: {}",
+                    committed.display()
+                )));
+            }
+            fs::rename(&barrier.barrier_path, &committed).map_err(|e| {
+                MprdError::ExecutionError(format!(
+                    "Failed to promote pending HTTP effect barrier {} -> {}: {}",
+                    barrier.barrier_path.display(),
+                    committed.display(),
+                    e
+                ))
+            })?;
+            Ok(ResolvedPendingHttpEffectBarrier {
+                barrier,
+                committed_barrier_path: Some(committed),
+            })
+        }
+    }
 }
 
 fn execution_idempotency_key_v1(token: &DecisionToken) -> String {
@@ -2171,5 +2281,69 @@ mod tests {
             err.to_string().contains("idempotency key drift"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn resolve_pending_http_effect_barrier_clear_removes_pending_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("http_effects");
+        let token = dummy_token();
+        let policy_hash_hex = hex::encode(token.policy_hash.0);
+        let idempotency_key = execution_idempotency_key_v1(&token);
+        let policy_dir = root.join(&policy_hash_hex);
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        let payload = serde_json::json!({
+            "idempotency_key_v1": idempotency_key,
+            "policy_hash": policy_hash_hex,
+            "state_hash": hex::encode(token.state_hash.0),
+            "action_hash": hex::encode(token.chosen_action_hash.0),
+            "nonce_or_tx_hash": hex::encode(token.nonce_or_tx_hash.0),
+            "timestamp_ms": token.timestamp_ms,
+        });
+        let pending = policy_dir.join(format!("{}.pending.json", idempotency_key));
+        std::fs::write(&pending, serde_json::to_vec(&payload).unwrap()).unwrap();
+
+        let resolved = resolve_pending_http_effect_barrier(
+            &root,
+            &hex::encode(token.policy_hash.0),
+            &execution_idempotency_key_v1(&token),
+            PendingHttpEffectBarrierResolution::Clear,
+        )
+        .expect("resolved");
+        assert_eq!(resolved.committed_barrier_path, None);
+        assert!(!pending.exists());
+    }
+
+    #[test]
+    fn resolve_pending_http_effect_barrier_promote_renames_to_committed() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("http_effects");
+        let token = dummy_token();
+        let policy_hash_hex = hex::encode(token.policy_hash.0);
+        let idempotency_key = execution_idempotency_key_v1(&token);
+        let policy_dir = root.join(&policy_hash_hex);
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        let payload = serde_json::json!({
+            "idempotency_key_v1": idempotency_key,
+            "policy_hash": policy_hash_hex,
+            "state_hash": hex::encode(token.state_hash.0),
+            "action_hash": hex::encode(token.chosen_action_hash.0),
+            "nonce_or_tx_hash": hex::encode(token.nonce_or_tx_hash.0),
+            "timestamp_ms": token.timestamp_ms,
+        });
+        let pending = policy_dir.join(format!("{}.pending.json", idempotency_key));
+        std::fs::write(&pending, serde_json::to_vec(&payload).unwrap()).unwrap();
+
+        let resolved = resolve_pending_http_effect_barrier(
+            &root,
+            &hex::encode(token.policy_hash.0),
+            &execution_idempotency_key_v1(&token),
+            PendingHttpEffectBarrierResolution::PromoteToCommitted,
+        )
+        .expect("resolved");
+        let committed = resolved.committed_barrier_path.expect("committed path");
+        assert!(!pending.exists());
+        assert!(committed.exists());
+        assert!(committed.ends_with(format!("{}.committed.json", idempotency_key)));
     }
 }

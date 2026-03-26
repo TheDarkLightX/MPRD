@@ -505,6 +505,116 @@ async fn api_pending_effect_barriers_returns_sorted_http_pending_entries() {
 }
 
 #[tokio::test]
+async fn api_resolve_pending_effect_barrier_dry_run_leaves_file_in_place() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut state = test_state(&tmp);
+    let root = tmp.path().join("http_effects");
+    let barrier = write_pending_http_barrier(
+        &root,
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        1234,
+    );
+
+    state.config.execution.executor_type = "idempotent_http".into();
+    state.config.execution.http_url = Some("http://127.0.0.1:8080".into());
+    state.config.execution.effect_journal_dir = Some(root);
+
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/effect-barriers/pending/deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/resolve")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&op_api::ResolvePendingEffectBarrierRequest {
+                        resolution: op_api::PendingEffectBarrierResolution::Clear,
+                        dry_run: true,
+                    })
+                    .expect("request body"),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let body: op_api::ResolvePendingEffectBarrierResult = read_json(res).await;
+    assert!(body.success);
+    assert!(body.dry_run);
+    assert_eq!(body.barrier.barrier_path, barrier.display().to_string());
+    assert!(barrier.exists(), "dry run must not remove barrier");
+}
+
+#[tokio::test]
+async fn api_resolve_pending_effect_barrier_promotes_to_committed() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut state = test_state(&tmp);
+    let root = tmp.path().join("http_effects");
+    let barrier = write_pending_http_barrier(
+        &root,
+        "feedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        5678,
+    );
+    let committed = root
+        .join("feedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed")
+        .join("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.committed.json");
+
+    state.config.execution.executor_type = "idempotent_http".into();
+    state.config.execution.http_url = Some("http://127.0.0.1:8080".into());
+    state.config.execution.effect_journal_dir = Some(root.clone());
+
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/effect-barriers/pending/feedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/resolve")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&op_api::ResolvePendingEffectBarrierRequest {
+                        resolution: op_api::PendingEffectBarrierResolution::PromoteToCommitted,
+                        dry_run: false,
+                    })
+                    .expect("request body"),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let body: op_api::ResolvePendingEffectBarrierResult = read_json(res).await;
+    assert!(body.success);
+    assert!(!body.dry_run);
+    assert_eq!(
+        body.committed_barrier_path.as_deref(),
+        Some(committed.to_str().expect("utf8 path"))
+    );
+    assert!(!barrier.exists(), "pending barrier must be removed");
+    assert!(committed.exists(), "committed barrier must exist");
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/effect-barriers/pending")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let pending: Vec<op_api::PendingEffectBarrier> = read_json(res).await;
+    assert!(
+        pending.is_empty(),
+        "pending inventory must be empty after promote"
+    );
+}
+
+#[tokio::test]
 async fn api_alerts_include_unresolved_pending_http_barriers() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let mut state = test_state(&tmp);

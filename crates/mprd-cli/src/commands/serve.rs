@@ -1802,6 +1802,53 @@ async fn api_status(State(state): State<AppState>) -> Json<op_api::SystemStatus>
     Json(compute_system_status(config, now, components, anchors_ok))
 }
 
+fn is_hex64_path_id(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn pending_http_effect_journal_root<'a>(
+    config: &'a super::MprdConfigFile,
+) -> Result<&'a std::path::Path, StatusCode> {
+    if !config
+        .execution
+        .executor_type
+        .trim()
+        .eq_ignore_ascii_case("idempotent_http")
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    config
+        .execution
+        .effect_journal_dir
+        .as_deref()
+        .ok_or(StatusCode::BAD_REQUEST)
+}
+
+fn map_pending_effect_barrier(
+    barrier: mprd_adapters::executors::PendingHttpEffectBarrier,
+) -> op_api::PendingEffectBarrier {
+    op_api::PendingEffectBarrier {
+        barrier_path: barrier.barrier_path.display().to_string(),
+        policy_hash: barrier.policy_hash_hex,
+        idempotency_key_v1: barrier.idempotency_key_v1,
+        state_hash: barrier.state_hash_hex,
+        action_hash: barrier.action_hash_hex,
+        nonce_or_tx_hash: barrier.nonce_or_tx_hash_hex,
+        timestamp_ms: barrier.timestamp_ms,
+    }
+}
+
+fn map_pending_http_effect_barrier_error(err: &mprd_core::MprdError) -> StatusCode {
+    let message = err.to_string();
+    if message.contains("not found") {
+        StatusCode::NOT_FOUND
+    } else if message.contains("already exists") {
+        StatusCode::CONFLICT
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
 fn load_pending_http_effect_barriers(
     config: &super::MprdConfigFile,
 ) -> Result<Vec<op_api::PendingEffectBarrier>, StatusCode> {
@@ -1816,15 +1863,7 @@ fn load_pending_http_effect_barriers(
     let mut barriers = mprd_adapters::executors::list_pending_http_effect_barriers(root)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .into_iter()
-        .map(|barrier| op_api::PendingEffectBarrier {
-            barrier_path: barrier.barrier_path.display().to_string(),
-            policy_hash: barrier.policy_hash_hex,
-            idempotency_key_v1: barrier.idempotency_key_v1,
-            state_hash: barrier.state_hash_hex,
-            action_hash: barrier.action_hash_hex,
-            nonce_or_tx_hash: barrier.nonce_or_tx_hash_hex,
-            timestamp_ms: barrier.timestamp_ms,
-        })
+        .map(map_pending_effect_barrier)
         .collect::<Vec<_>>();
     barriers.sort_by(|a, b| {
         b.timestamp_ms
@@ -1849,6 +1888,84 @@ async fn api_pending_effect_barriers(
     let mut barriers = load_pending_http_effect_barriers(&state.config)?;
     barriers.truncate(limit);
     Ok(Json(barriers))
+}
+
+async fn api_resolve_pending_effect_barrier(
+    State(state): State<AppState>,
+    Path((policy_hash, idempotency_key_v1)): Path<(String, String)>,
+    Json(req): Json<op_api::ResolvePendingEffectBarrierRequest>,
+) -> Result<Json<op_api::ResolvePendingEffectBarrierResult>, StatusCode> {
+    if !is_safe_path_id(&policy_hash, 64)
+        || !is_hex64_path_id(&policy_hash)
+        || !is_safe_path_id(&idempotency_key_v1, 64)
+        || !is_hex64_path_id(&idempotency_key_v1)
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let root = pending_http_effect_journal_root(&state.config)?;
+    let resolution = match req.resolution {
+        op_api::PendingEffectBarrierResolution::Clear => {
+            mprd_adapters::executors::PendingHttpEffectBarrierResolution::Clear
+        }
+        op_api::PendingEffectBarrierResolution::PromoteToCommitted => {
+            mprd_adapters::executors::PendingHttpEffectBarrierResolution::PromoteToCommitted
+        }
+    };
+
+    if req.dry_run {
+        let barrier = mprd_adapters::executors::get_pending_http_effect_barrier(
+            root,
+            &policy_hash,
+            &idempotency_key_v1,
+        )
+        .map_err(|err| map_pending_http_effect_barrier_error(&err))?;
+        let committed_barrier_path = matches!(
+            req.resolution,
+            op_api::PendingEffectBarrierResolution::PromoteToCommitted
+        )
+        .then(|| {
+            root.join(&policy_hash)
+                .join(format!("{idempotency_key_v1}.committed.json"))
+                .display()
+                .to_string()
+        });
+        return Ok(Json(op_api::ResolvePendingEffectBarrierResult {
+            success: true,
+            dry_run: true,
+            resolution: req.resolution,
+            barrier: map_pending_effect_barrier(barrier),
+            committed_barrier_path,
+            message: format!(
+                "Dry run: pending HTTP effect barrier {} is eligible for {:?}",
+                idempotency_key_v1, req.resolution
+            ),
+        }));
+    }
+
+    let resolved = mprd_adapters::executors::resolve_pending_http_effect_barrier(
+        root,
+        &policy_hash,
+        &idempotency_key_v1,
+        resolution,
+    )
+    .map_err(|err| map_pending_http_effect_barrier_error(&err))?;
+    Ok(Json(op_api::ResolvePendingEffectBarrierResult {
+        success: true,
+        dry_run: false,
+        resolution: req.resolution,
+        barrier: map_pending_effect_barrier(resolved.barrier),
+        committed_barrier_path: resolved
+            .committed_barrier_path
+            .map(|path| path.display().to_string()),
+        message: match req.resolution {
+            op_api::PendingEffectBarrierResolution::Clear => {
+                "Cleared pending HTTP effect barrier".into()
+            }
+            op_api::PendingEffectBarrierResolution::PromoteToCommitted => {
+                "Promoted pending HTTP effect barrier to committed".into()
+            }
+        },
+    }))
 }
 
 #[derive(Deserialize)]
@@ -2957,6 +3074,10 @@ fn build_app(state: AppState, api_key: operator::auth::ApiKeyConfig) -> Router {
         )
         .route("/status", get(api_status))
         .route("/effect-barriers/pending", get(api_pending_effect_barriers))
+        .route(
+            "/effect-barriers/pending/:policy_hash/:idempotency_key_v1/resolve",
+            post(api_resolve_pending_effect_barrier),
+        )
         .route("/metrics", get(api_metrics))
         .route("/cegis/metrics", get(api_cegis_metrics))
         .route("/alerts", get(api_alerts))

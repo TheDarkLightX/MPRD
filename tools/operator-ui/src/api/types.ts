@@ -48,6 +48,22 @@ export interface PendingEffectBarrier {
     timestampMs: number;
 }
 
+export type PendingEffectBarrierResolution = 'clear' | 'promote_to_committed';
+
+export interface ResolvePendingEffectBarrierRequest {
+    resolution: PendingEffectBarrierResolution;
+    dryRun?: boolean;
+}
+
+export interface ResolvePendingEffectBarrierResult {
+    success: boolean;
+    dryRun: boolean;
+    resolution: PendingEffectBarrierResolution;
+    barrier: PendingEffectBarrier;
+    committedBarrierPath?: string;
+    message: string;
+}
+
 // =============================================================================
 // Decision Types
 // =============================================================================
