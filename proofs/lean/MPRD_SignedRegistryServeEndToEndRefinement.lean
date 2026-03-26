@@ -1,0 +1,217 @@
+/- 
+  MPRD_SignedRegistryServeEndToEndRefinement.lean
+
+  A lightweight composed refinement bridge for the shipped signed-registry
+  `mprd serve` path:
+
+    executed signed-registry serve states refine through the grouped local
+    `ExecutionReadyPacketV1` boundary and then into the abstract
+    `MPRD_ExecutionBoundary` theorem.
+
+  This still remains witness-gated. It narrows the RC1 blocker from "there is
+  no top-level theorem through the grouped packet" to "the remaining gap is
+  discharging the refinement witness from concrete runtime objects without an
+  extra premise".
+-/
+
+import MPRD_ExecutionReadyPacketRefinement
+import MPRD_SignedRegistryServeReadyPacketBoundary
+
+namespace MPRDSignedRegistryServeEndToEndRefinement
+
+def proof_bundle_version : String := "mprd-leanproofs-v1"
+
+abbrev ServeState := MPRDSignedRegistryServeReadyPacketBoundary.State
+abbrev PacketState := MPRDExecutionReadyPacketBoundary.State
+
+def mapServeExec :
+    MPRDSignedRegistryServeReadyPacketBoundary.ExecStatus ->
+      MPRDExecutionReadyPacketBoundary.ExecStatus
+  | .skipped => .skipped
+  | .succeeded => .succeeded
+  | .failed => .failed
+
+def packetViewOfServeState (s : ServeState) : PacketState :=
+  { boundaryAdmitted := s.boundaryAdmitted
+    authorizationAdmitted := s.executionAuthorizationBound
+    bridgeAdmitted := s.checkpointBound
+    signatureAdmitted := s.signatureAdmitted
+    stateProvenanceAdmitted := s.stateProvenanceAdmitted
+    replayAdmitted := s.replayAdmitted
+    packetGrouped := s.packetGrouped
+    readyVisible := s.readyVisible
+    exec := mapServeExec s.exec }
+
+def groupedPacketReadySkipped : PacketState :=
+  { boundaryAdmitted := true
+    authorizationAdmitted := true
+    bridgeAdmitted := true
+    signatureAdmitted := true
+    stateProvenanceAdmitted := true
+    replayAdmitted := true
+    packetGrouped := true
+    readyVisible := true
+    exec := .skipped }
+
+def groupedPacketSuccess : PacketState :=
+  { groupedPacketReadySkipped with exec := .succeeded }
+
+def groupedPacketFailure : PacketState :=
+  { groupedPacketReadySkipped with exec := .failed }
+
+theorem reachable_grouped_packet_ready_skipped :
+    MPRDExecutionReadyPacketBoundary.Reachable groupedPacketReadySkipped := by
+  let s0 : PacketState :=
+    { boundaryAdmitted := false
+      authorizationAdmitted := false
+      bridgeAdmitted := false
+      signatureAdmitted := false
+      stateProvenanceAdmitted := false
+      replayAdmitted := false
+      packetGrouped := false
+      readyVisible := false
+      exec := .skipped }
+  have h0 : MPRDExecutionReadyPacketBoundary.Initial s0 := by
+    simp [s0, MPRDExecutionReadyPacketBoundary.Initial]
+  have hReach0 : MPRDExecutionReadyPacketBoundary.Reachable s0 :=
+    MPRDExecutionReadyPacketBoundary.Reachable.init h0
+  have hReach1 :
+      MPRDExecutionReadyPacketBoundary.Reachable { s0 with boundaryAdmitted := true } :=
+    MPRDExecutionReadyPacketBoundary.Reachable.step hReach0
+      (MPRDExecutionReadyPacketBoundary.Step.admit_boundary s0 rfl rfl)
+  have hReach2 :
+      MPRDExecutionReadyPacketBoundary.Reachable
+        { { s0 with boundaryAdmitted := true } with authorizationAdmitted := true } :=
+    MPRDExecutionReadyPacketBoundary.Reachable.step hReach1
+      (MPRDExecutionReadyPacketBoundary.Step.admit_authorization
+        { s0 with boundaryAdmitted := true } rfl rfl rfl)
+  have hReach3 :
+      MPRDExecutionReadyPacketBoundary.Reachable
+        { { { s0 with boundaryAdmitted := true } with authorizationAdmitted := true }
+            with bridgeAdmitted := true } :=
+    MPRDExecutionReadyPacketBoundary.Reachable.step hReach2
+      (MPRDExecutionReadyPacketBoundary.Step.admit_bridge
+        { { s0 with boundaryAdmitted := true } with authorizationAdmitted := true }
+        rfl rfl rfl)
+  have hReach4 :
+      MPRDExecutionReadyPacketBoundary.Reachable
+        { { { { s0 with boundaryAdmitted := true } with authorizationAdmitted := true }
+              with bridgeAdmitted := true } with signatureAdmitted := true } :=
+    MPRDExecutionReadyPacketBoundary.Reachable.step hReach3
+      (MPRDExecutionReadyPacketBoundary.Step.admit_signature
+        { { { s0 with boundaryAdmitted := true } with authorizationAdmitted := true }
+            with bridgeAdmitted := true }
+        rfl rfl rfl)
+  have hReach5 :
+      MPRDExecutionReadyPacketBoundary.Reachable
+        { { { { { s0 with boundaryAdmitted := true } with authorizationAdmitted := true }
+                with bridgeAdmitted := true } with signatureAdmitted := true }
+            with stateProvenanceAdmitted := true } :=
+    MPRDExecutionReadyPacketBoundary.Reachable.step hReach4
+      (MPRDExecutionReadyPacketBoundary.Step.admit_state_provenance
+        { { { { s0 with boundaryAdmitted := true } with authorizationAdmitted := true }
+              with bridgeAdmitted := true } with signatureAdmitted := true }
+        rfl rfl rfl)
+  have hReach6 :
+      MPRDExecutionReadyPacketBoundary.Reachable
+        { { { { { { s0 with boundaryAdmitted := true } with authorizationAdmitted := true }
+                  with bridgeAdmitted := true } with signatureAdmitted := true }
+              with stateProvenanceAdmitted := true } with replayAdmitted := true } :=
+    MPRDExecutionReadyPacketBoundary.Reachable.step hReach5
+      (MPRDExecutionReadyPacketBoundary.Step.admit_replay
+        { { { { { s0 with boundaryAdmitted := true } with authorizationAdmitted := true }
+                with bridgeAdmitted := true } with signatureAdmitted := true }
+            with stateProvenanceAdmitted := true }
+        rfl rfl rfl)
+  have hReach7 :
+      MPRDExecutionReadyPacketBoundary.Reachable
+        { { { { { { { s0 with boundaryAdmitted := true } with authorizationAdmitted := true }
+                    with bridgeAdmitted := true } with signatureAdmitted := true }
+                with stateProvenanceAdmitted := true } with replayAdmitted := true }
+            with packetGrouped := true } :=
+    MPRDExecutionReadyPacketBoundary.Reachable.step hReach6
+      (MPRDExecutionReadyPacketBoundary.Step.group_packet
+        { { { { { { s0 with boundaryAdmitted := true } with authorizationAdmitted := true }
+                  with bridgeAdmitted := true } with signatureAdmitted := true }
+              with stateProvenanceAdmitted := true } with replayAdmitted := true }
+        rfl rfl rfl rfl rfl rfl rfl rfl)
+  have hReach8 :
+      MPRDExecutionReadyPacketBoundary.Reachable groupedPacketReadySkipped :=
+    MPRDExecutionReadyPacketBoundary.Reachable.step hReach7
+      (MPRDExecutionReadyPacketBoundary.Step.expose_ready
+        { { { { { { { s0 with boundaryAdmitted := true } with authorizationAdmitted := true }
+                    with bridgeAdmitted := true } with signatureAdmitted := true }
+                with stateProvenanceAdmitted := true } with replayAdmitted := true }
+            with packetGrouped := true }
+        rfl rfl rfl)
+  simpa [groupedPacketReadySkipped] using hReach8
+
+theorem reachable_grouped_packet_success :
+    MPRDExecutionReadyPacketBoundary.Reachable groupedPacketSuccess := by
+  exact MPRDExecutionReadyPacketBoundary.Reachable.step
+    reachable_grouped_packet_ready_skipped
+    (MPRDExecutionReadyPacketBoundary.Step.execute_success groupedPacketReadySkipped
+      rfl rfl rfl)
+
+theorem reachable_grouped_packet_failure :
+    MPRDExecutionReadyPacketBoundary.Reachable groupedPacketFailure := by
+  exact MPRDExecutionReadyPacketBoundary.Reachable.step
+    reachable_grouped_packet_ready_skipped
+    (MPRDExecutionReadyPacketBoundary.Step.execute_failed groupedPacketReadySkipped
+      rfl rfl rfl)
+
+theorem executed_signed_registry_serve_states_refine_via_execution_ready_packet
+    {s : ServeState}
+    (hReach : MPRDSignedRegistryServeReadyPacketBoundary.Reachable s)
+    (hExec : MPRDSignedRegistryServeReadyPacketBoundary.Executed s)
+    {w : MPRDExecutionReadyPacketRefinement.RefinementWitness}
+    (hWitness : MPRDExecutionReadyPacketRefinement.RefinementWitnessHolds w) :
+    MPRDExecutionReadyPacketBoundary.Reachable (packetViewOfServeState s) ∧
+      MPRDExecutionReadyPacketBoundary.Executed (packetViewOfServeState s) ∧
+        (∃ t : MPRDExecutionBoundary.State,
+          t.ctx.bindings = w.bindings ∧
+            t.ctx.executorGate = w.executorGate ∧
+              MPRDExecutionBoundary.Reachable t ∧
+                MPRDExecutionBoundary.Executed t ∧
+                  MPRDExecutionBoundary.ExecutedImpliesFullBoundaryGate t) := by
+  rcases
+      MPRDSignedRegistryServeReadyPacketBoundary.executed_reachable_states_require_signed_registry_serve_ready_packet_boundary
+        hReach hExec with
+    ⟨hPacket, hReady, _hRegistryAnchor, _hStateAnchor, _hPolicy, _hVerifier,
+      _hBridge, _hResolved, hCheckpoint, hAuth, _hGovernance, _hVerified,
+      _hAllowed, _hBinding, _hExecutor, hBoundary, hSignature, hStateProv,
+      hReplay⟩
+  cases hExec with
+  | inl hSuccess =>
+      have hPacketEq : packetViewOfServeState s = groupedPacketSuccess := by
+        simp [packetViewOfServeState, mapServeExec, groupedPacketSuccess,
+          groupedPacketReadySkipped, hBoundary, hAuth, hCheckpoint, hSignature,
+          hStateProv, hReplay, hPacket, hReady, hSuccess]
+      have hPacketReach : MPRDExecutionReadyPacketBoundary.Reachable (packetViewOfServeState s) := by
+        simpa [hPacketEq] using reachable_grouped_packet_success
+      have hPacketExec : MPRDExecutionReadyPacketBoundary.Executed (packetViewOfServeState s) := by
+        simpa [hPacketEq] using (Or.inl rfl : MPRDExecutionReadyPacketBoundary.Executed groupedPacketSuccess)
+      rcases
+          MPRDExecutionReadyPacketRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary
+            hPacketReach hPacketExec hWitness with
+        ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
+      exact ⟨hPacketReach, hPacketExec, ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩⟩
+  | inr hFailure =>
+      have hPacketEq : packetViewOfServeState s = groupedPacketFailure := by
+        simp [packetViewOfServeState, mapServeExec, groupedPacketFailure,
+          groupedPacketReadySkipped, hBoundary, hAuth, hCheckpoint, hSignature,
+          hStateProv, hReplay, hPacket, hReady, hFailure]
+      have hPacketReach : MPRDExecutionReadyPacketBoundary.Reachable (packetViewOfServeState s) := by
+        simpa [hPacketEq] using reachable_grouped_packet_failure
+      have hPacketExec : MPRDExecutionReadyPacketBoundary.Executed (packetViewOfServeState s) := by
+        simpa [hPacketEq] using (Or.inr rfl : MPRDExecutionReadyPacketBoundary.Executed groupedPacketFailure)
+      rcases
+          MPRDExecutionReadyPacketRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary
+            hPacketReach hPacketExec hWitness with
+        ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
+      exact ⟨hPacketReach, hPacketExec, ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩⟩
+
+end MPRDSignedRegistryServeEndToEndRefinement
+
+abbrev executed_signed_registry_serve_states_refine_via_execution_ready_packet_v1 :=
+  @MPRDSignedRegistryServeEndToEndRefinement.executed_signed_registry_serve_states_refine_via_execution_ready_packet
