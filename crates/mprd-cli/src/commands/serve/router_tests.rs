@@ -512,6 +512,7 @@ async fn decision_detail_reports_attestation_execution_and_ready_packet_hashes()
         expected_execution_authorization_hash.clone(),
     );
     let expected_execution_ready_packet_hash = hex::encode([0x44u8; 32]);
+    let expected_execution_binding_vector_hash = hex::encode([0x54u8; 32]);
     let expected_execution_boundary_refinement_hash = hex::encode([0x55u8; 32]);
     proof
         .attestation_metadata
@@ -535,6 +536,10 @@ async fn decision_detail_reports_attestation_execution_and_ready_packet_hashes()
         .store
         .write_execution_ready_packet_hash(&id, &mprd_core::Hash32([0x44u8; 32]))
         .expect("write ready hash");
+    state
+        .store
+        .write_execution_binding_vector_hash(&id, &mprd_core::Hash32([0x54u8; 32]))
+        .expect("write binding hash");
     state
         .store
         .write_execution_boundary_refinement_hash(&id, &mprd_core::Hash32([0x55u8; 32]))
@@ -571,6 +576,10 @@ async fn decision_detail_reports_attestation_execution_and_ready_packet_hashes()
     assert_eq!(
         body.proof.execution_ready_packet_hash.as_deref(),
         Some(expected_execution_ready_packet_hash.as_str())
+    );
+    assert_eq!(
+        body.proof.execution_binding_vector_hash.as_deref(),
+        Some(expected_execution_binding_vector_hash.as_str())
     );
     assert_eq!(
         body.proof.execution_boundary_refinement_hash.as_deref(),

@@ -168,6 +168,8 @@ pub struct OperatorProofV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_ready_packet_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_binding_vector_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_boundary_refinement_hash: Option<String>,
 
     pub attestation_metadata: HashMap<String, String>,
@@ -742,6 +744,7 @@ impl OperatorStore {
                     },
                 ),
                 execution_ready_packet_hash: None,
+                execution_binding_vector_hash: None,
                 execution_boundary_refinement_hash: None,
                 attestation_metadata: proof.attestation_metadata.clone(),
             },
@@ -804,6 +807,22 @@ impl OperatorStore {
     ) -> anyhow::Result<()> {
         let mut record = self.read_record(decision_id_hex)?;
         record.proof.execution_ready_packet_hash = Some(hash_hex(execution_ready_packet_hash));
+        let record_json = serde_json::to_vec_pretty(&record)?;
+        atomic_write(
+            &self.decision_dir(decision_id_hex).join("record.json"),
+            &record_json,
+        )?;
+        self.invalidate_cache();
+        Ok(())
+    }
+
+    pub fn write_execution_binding_vector_hash(
+        &self,
+        decision_id_hex: &str,
+        execution_binding_vector_hash: &Hash32,
+    ) -> anyhow::Result<()> {
+        let mut record = self.read_record(decision_id_hex)?;
+        record.proof.execution_binding_vector_hash = Some(hash_hex(execution_binding_vector_hash));
         let record_json = serde_json::to_vec_pretty(&record)?;
         atomic_write(
             &self.decision_dir(decision_id_hex).join("record.json"),

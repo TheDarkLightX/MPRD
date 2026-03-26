@@ -291,6 +291,12 @@ async fn run_handler(
                         .store
                         .write_verified_decision(token, proof, state, candidates, verdicts, decision)
                         .map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
+                    let binding_hash = mprd_core::execution_binding_vector_hash_v1(
+                        token, proof, state, candidates, verdicts, decision,
+                    )?;
+                    self.store
+                        .write_execution_binding_vector_hash(&id, &binding_hash)
+                        .map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
 
                     let _ = self.live_tx.send(
                         serde_json::json!({
@@ -483,6 +489,12 @@ async fn run_handler(
                     let id = self
                         .store
                         .write_verified_decision(token, proof, state, candidates, verdicts, decision)
+                        .map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
+                    let binding_hash = mprd_core::execution_binding_vector_hash_v1(
+                        token, proof, state, candidates, verdicts, decision,
+                    )?;
+                    self.store
+                        .write_execution_binding_vector_hash(&id, &binding_hash)
                         .map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
 
                      // Notify UI
@@ -2195,6 +2207,7 @@ async fn api_decision_detail(
                 .get(mprd_core::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1)
                 .cloned(),
             execution_ready_packet_hash: record.proof.execution_ready_packet_hash.clone(),
+            execution_binding_vector_hash: record.proof.execution_binding_vector_hash.clone(),
             execution_boundary_refinement_hash: record
                 .proof
                 .execution_boundary_refinement_hash

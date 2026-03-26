@@ -418,6 +418,7 @@ const EXECUTION_AUTH_ATTESTATION_METADATA_DOMAIN_V1: &[u8] =
 const EXECUTION_READY_PACKET_HASH_DOMAIN_V1: &[u8] = b"MPRD_EXECUTION_READY_PACKET_HASH_V1";
 const EXECUTION_BOUNDARY_REFINEMENT_HASH_DOMAIN_V1: &[u8] =
     b"MPRD_EXECUTION_BOUNDARY_REFINEMENT_HASH_V1";
+const EXECUTION_BINDING_VECTOR_HASH_DOMAIN_V1: &[u8] = b"MPRD_EXECUTION_BINDING_VECTOR_HASH_V1";
 
 /// Concrete policy authority witness carried on the RC1 path.
 ///
@@ -871,6 +872,93 @@ pub fn execution_boundary_refinement_hash_v1(ready: &ExecutionReadyBundle<'_>) -
         crate::decision_log::attestation_metadata_hash_v1(&ready.proof().attestation_metadata).0,
     );
     Hash32(hasher.finalize().into())
+}
+
+/// Emit a deterministic digest over the concrete verified-decision tuple corresponding to the
+/// binding half of the abstract execution-boundary witness.
+///
+/// This constructor-gated helper re-checks the concrete tuple the orchestrator had in hand right
+/// after verification and before execution:
+/// policy/state identity, state provenance, candidate-set membership, selected allowed verdict,
+/// chosen-action binding, canonical decision commitment, limits-byte binding, and the nonce.
+pub fn execution_binding_vector_hash_v1(
+    token: &DecisionToken,
+    proof: &ProofBundle,
+    state: &StateSnapshot,
+    candidates: &[CandidateAction],
+    verdicts: &[RuleVerdict],
+    decision: &Decision,
+) -> Result<Hash32> {
+    if token.policy_hash != proof.policy_hash || token.policy_hash != decision.policy_hash {
+        return Err(MprdError::InvalidInput(
+            "policy binding drifted before execution binding hash".into(),
+        ));
+    }
+    if token.state_hash != proof.state_hash || token.state_hash != state.state_hash {
+        return Err(MprdError::InvalidInput(
+            "state binding drifted before execution binding hash".into(),
+        ));
+    }
+    if token.state_ref != state.state_ref {
+        return Err(MprdError::InvalidInput(
+            "state provenance drifted before execution binding hash".into(),
+        ));
+    }
+    if proof.candidate_set_hash != hash::hash_candidate_set(candidates) {
+        return Err(MprdError::InvalidInput(
+            "candidate_set_hash drifted before execution binding hash".into(),
+        ));
+    }
+    let selected = candidates.get(decision.chosen_index).ok_or_else(|| {
+        MprdError::InvalidInput("chosen_index out of bounds for execution binding hash".into())
+    })?;
+    if selected != &decision.chosen_action {
+        return Err(MprdError::InvalidInput(
+            "selected candidate drifted before execution binding hash".into(),
+        ));
+    }
+    let chosen_verdict = verdicts.get(decision.chosen_index).ok_or_else(|| {
+        MprdError::InvalidInput("missing selected verdict for execution binding hash".into())
+    })?;
+    if !chosen_verdict.allowed {
+        return Err(MprdError::InvalidInput(
+            "selected verdict was not allowed for execution binding hash".into(),
+        ));
+    }
+    let chosen_action_hash = hash::hash_candidate(&decision.chosen_action);
+    if token.chosen_action_hash != proof.chosen_action_hash
+        || token.chosen_action_hash != chosen_action_hash
+    {
+        return Err(MprdError::InvalidInput(
+            "chosen_action_hash drifted before execution binding hash".into(),
+        ));
+    }
+    if decision.decision_commitment != hash::hash_decision(decision) {
+        return Err(MprdError::InvalidInput(
+            "decision_commitment drifted before execution binding hash".into(),
+        ));
+    }
+    if proof.limits_hash != limits::limits_hash_v1(&proof.limits_bytes) {
+        return Err(MprdError::InvalidInput(
+            "limits_hash drifted before execution binding hash".into(),
+        ));
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(EXECUTION_BINDING_VECTOR_HASH_DOMAIN_V1);
+    hasher.update(decision.decision_commitment.0);
+    hasher.update(token.policy_hash.0);
+    hasher.update(token.policy_ref.policy_epoch.to_le_bytes());
+    hasher.update(token.policy_ref.registry_root.0);
+    hasher.update(token.state_ref.state_source_id.0);
+    hasher.update(token.state_ref.state_epoch.to_le_bytes());
+    hasher.update(token.state_ref.state_attestation_hash.0);
+    hasher.update(token.state_hash.0);
+    hasher.update(proof.candidate_set_hash.0);
+    hasher.update(token.chosen_action_hash.0);
+    hasher.update(token.nonce_or_tx_hash.0);
+    hasher.update(proof.limits_hash.0);
+    Ok(Hash32(hasher.finalize().into()))
 }
 
 /// Emit a deterministic authorization hash over the exact policy/state/governance packet that the
@@ -2529,6 +2617,92 @@ mod tests {
             base_hash,
             execution_boundary_refinement_hash_v1(&ready_with_metadata_drift)
         );
+    }
+
+    #[test]
+    fn execution_binding_vector_hash_changes_when_runtime_binding_membership_changes() {
+        let candidate = valid_http_call_candidate();
+        let candidates = vec![candidate.clone()];
+        let verdicts = vec![RuleVerdict {
+            allowed: true,
+            reasons: vec![],
+            limits: HashMap::new(),
+        }];
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash: dummy_hash(0xD0),
+            decision_commitment: Hash32([0u8; 32]),
+        };
+        let decision = Decision {
+            decision_commitment: hash::hash_decision(&Decision {
+                decision_commitment: Hash32([0u8; 32]),
+                ..decision.clone()
+            }),
+            ..decision
+        };
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(0xD1),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0xD2),
+                state_epoch: 4,
+                state_attestation_hash: dummy_hash(0xD3),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: decision.policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 12,
+                registry_root: dummy_hash(0xD4),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0xD5),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: hash::hash_candidate_set(&candidates),
+            chosen_action_hash: token.chosen_action_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+
+        let base_hash = execution_binding_vector_hash_v1(
+            &token,
+            &proof,
+            &state,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .expect("base hash");
+
+        let changed_token = DecisionToken {
+            policy_ref: PolicyRef {
+                policy_epoch: 13,
+                registry_root: token.policy_ref.registry_root,
+            },
+            ..token.clone()
+        };
+        let changed_hash = execution_binding_vector_hash_v1(
+            &changed_token,
+            &proof,
+            &state,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .expect("changed hash");
+        assert_ne!(base_hash, changed_hash);
     }
 
     #[test]

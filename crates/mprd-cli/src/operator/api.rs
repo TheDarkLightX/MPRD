@@ -135,6 +135,8 @@ pub struct ProofBundle {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_ready_packet_hash: Option<HashHex>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_binding_vector_hash: Option<HashHex>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_boundary_refinement_hash: Option<HashHex>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chosen_action_preimage_storage: Option<ChosenActionPreimageStorage>,
