@@ -48,6 +48,16 @@ export interface PendingEffectBarrier {
     timestampMs: number;
 }
 
+export interface CommittedEffectBarrier {
+    barrierPath: string;
+    policyHash: string;
+    idempotencyKeyV1: string;
+    stateHash: string;
+    actionHash: string;
+    nonceOrTxHash: string;
+    timestampMs: number;
+}
+
 export type PendingEffectBarrierResolution = 'clear' | 'promote_to_committed';
 
 export interface ResolvePendingEffectBarrierRequest {

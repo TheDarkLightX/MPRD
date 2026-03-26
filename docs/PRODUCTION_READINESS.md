@@ -85,7 +85,9 @@ status; the RC1 board separates automated green gates from still-open Tier-0 rel
   single-effect only when a durable effect-commit barrier survives crash and is
   re-checked before any retry emits a second effect. The remaining gap is still
   runtime and deployment closure for that barrier in the shipped adapters and
-  external effect surfaces.
+  external effect surfaces, even though the operator path now has typed pending
+  resolution and committed-barrier inventory for the shipped `idempotent_http`
+  journal.
 - **Remote executor idempotency signal (SHOULD)**: the shipped HTTP, webhook,
   and audit executor surfaces now emit the same deterministic
   `execution_idempotency_key_v1` derived from the

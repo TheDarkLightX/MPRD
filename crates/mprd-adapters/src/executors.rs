@@ -69,6 +69,17 @@ pub struct PendingHttpEffectBarrier {
     pub timestamp_ms: i64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommittedHttpEffectBarrier {
+    pub barrier_path: PathBuf,
+    pub policy_hash_hex: String,
+    pub idempotency_key_v1: String,
+    pub state_hash_hex: String,
+    pub action_hash_hex: String,
+    pub nonce_or_tx_hash_hex: String,
+    pub timestamp_ms: i64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PendingHttpEffectBarrierResolution {
     Clear,
@@ -91,50 +102,61 @@ struct PendingHttpEffectBarrierPayload {
     timestamp_ms: i64,
 }
 
-fn parse_pending_http_effect_barrier(path: &Path) -> Result<PendingHttpEffectBarrier> {
+struct ParsedHttpEffectBarrier {
+    barrier_path: PathBuf,
+    policy_hash_hex: String,
+    idempotency_key_v1: String,
+    state_hash_hex: String,
+    action_hash_hex: String,
+    nonce_or_tx_hash_hex: String,
+    timestamp_ms: i64,
+}
+
+fn parse_http_effect_barrier(
+    path: &Path,
+    suffix: &str,
+    kind: &str,
+) -> Result<ParsedHttpEffectBarrier> {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| {
             MprdError::ExecutionError(format!(
-                "Pending HTTP effect barrier {} has a non-UTF8 filename",
+                "{} {} has a non-UTF8 filename",
+                kind,
                 path.display()
             ))
         })?;
-    if !name.ends_with(".pending.json") {
+    if !name.ends_with(suffix) {
         return Err(MprdError::ExecutionError(format!(
-            "Pending HTTP effect barrier {} does not end with .pending.json",
-            path.display()
+            "{} {} does not end with {}",
+            kind,
+            path.display(),
+            suffix
         )));
     }
 
     let mut file = File::open(path).map_err(|e| {
-        MprdError::ExecutionError(format!(
-            "Failed to read pending HTTP effect barrier {}: {}",
-            path.display(),
-            e
-        ))
+        MprdError::ExecutionError(format!("Failed to read {} {}: {}", kind, path.display(), e))
     })?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).map_err(|e| {
-        MprdError::ExecutionError(format!(
-            "Failed to read pending HTTP effect barrier {}: {}",
-            path.display(),
-            e
-        ))
+        MprdError::ExecutionError(format!("Failed to read {} {}: {}", kind, path.display(), e))
     })?;
     let payload: PendingHttpEffectBarrierPayload = serde_json::from_slice(&bytes).map_err(|e| {
         MprdError::ExecutionError(format!(
-            "Failed to parse pending HTTP effect barrier {}: {}",
+            "Failed to parse {} {}: {}",
+            kind,
             path.display(),
             e
         ))
     })?;
 
-    let expected_idempotency_key = name.trim_end_matches(".pending.json");
+    let expected_idempotency_key = name.trim_end_matches(suffix);
     if payload.idempotency_key_v1 != expected_idempotency_key {
         return Err(MprdError::ExecutionError(format!(
-            "Pending HTTP effect barrier {} has idempotency key drift: file={}, payload={}",
+            "{} {} has idempotency key drift: file={}, payload={}",
+            kind,
             path.display(),
             expected_idempotency_key,
             payload.idempotency_key_v1
@@ -147,20 +169,22 @@ fn parse_pending_http_effect_barrier(path: &Path) -> Result<PendingHttpEffectBar
         .and_then(|name| name.to_str())
         .ok_or_else(|| {
             MprdError::ExecutionError(format!(
-                "Pending HTTP effect barrier {} is missing a policy-hash directory",
+                "{} {} is missing a policy-hash directory",
+                kind,
                 path.display()
             ))
         })?;
     if payload.policy_hash != policy_dir {
         return Err(MprdError::ExecutionError(format!(
-            "Pending HTTP effect barrier {} has policy hash drift: dir={}, payload={}",
+            "{} {} has policy hash drift: dir={}, payload={}",
+            kind,
             path.display(),
             policy_dir,
             payload.policy_hash
         )));
     }
 
-    Ok(PendingHttpEffectBarrier {
+    Ok(ParsedHttpEffectBarrier {
         barrier_path: path.to_path_buf(),
         policy_hash_hex: payload.policy_hash,
         idempotency_key_v1: payload.idempotency_key_v1,
@@ -168,6 +192,33 @@ fn parse_pending_http_effect_barrier(path: &Path) -> Result<PendingHttpEffectBar
         action_hash_hex: payload.action_hash,
         nonce_or_tx_hash_hex: payload.nonce_or_tx_hash,
         timestamp_ms: payload.timestamp_ms,
+    })
+}
+
+fn parse_pending_http_effect_barrier(path: &Path) -> Result<PendingHttpEffectBarrier> {
+    let parsed = parse_http_effect_barrier(path, ".pending.json", "Pending HTTP effect barrier")?;
+    Ok(PendingHttpEffectBarrier {
+        barrier_path: parsed.barrier_path,
+        policy_hash_hex: parsed.policy_hash_hex,
+        idempotency_key_v1: parsed.idempotency_key_v1,
+        state_hash_hex: parsed.state_hash_hex,
+        action_hash_hex: parsed.action_hash_hex,
+        nonce_or_tx_hash_hex: parsed.nonce_or_tx_hash_hex,
+        timestamp_ms: parsed.timestamp_ms,
+    })
+}
+
+fn parse_committed_http_effect_barrier(path: &Path) -> Result<CommittedHttpEffectBarrier> {
+    let parsed =
+        parse_http_effect_barrier(path, ".committed.json", "Committed HTTP effect barrier")?;
+    Ok(CommittedHttpEffectBarrier {
+        barrier_path: parsed.barrier_path,
+        policy_hash_hex: parsed.policy_hash_hex,
+        idempotency_key_v1: parsed.idempotency_key_v1,
+        state_hash_hex: parsed.state_hash_hex,
+        action_hash_hex: parsed.action_hash_hex,
+        nonce_or_tx_hash_hex: parsed.nonce_or_tx_hash_hex,
+        timestamp_ms: parsed.timestamp_ms,
     })
 }
 
@@ -277,6 +328,58 @@ pub fn list_pending_http_effect_barriers(root: &Path) -> Result<Vec<PendingHttpE
     }
 
     barriers.sort_by(|a, b| a.barrier_path.cmp(&b.barrier_path));
+    Ok(barriers)
+}
+
+pub fn list_committed_http_effect_barriers(root: &Path) -> Result<Vec<CommittedHttpEffectBarrier>> {
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    if !root.is_dir() {
+        return Err(MprdError::ConfigError(format!(
+            "HTTP effect journal root is not a directory: {}",
+            root.display()
+        )));
+    }
+
+    let mut barriers = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let mut entries = fs::read_dir(&dir)
+            .map_err(|e| {
+                MprdError::ExecutionError(format!(
+                    "Failed to inspect HTTP effect journal dir {}: {}",
+                    dir.display(),
+                    e
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| {
+                MprdError::ExecutionError(format!(
+                    "Failed to inspect HTTP effect journal dir {}: {}",
+                    dir.display(),
+                    e
+                ))
+            })?;
+        entries.sort_by_key(|entry| entry.path());
+
+        for entry in entries {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.ends_with(".committed.json") {
+                barriers.push(parse_committed_http_effect_barrier(&path)?);
+            }
+        }
+    }
+
     Ok(barriers)
 }
 
@@ -2277,6 +2380,95 @@ mod tests {
         std::fs::write(&path, serde_json::to_vec(&payload).unwrap()).unwrap();
 
         let err = list_pending_http_effect_barriers(&root).expect_err("drift must fail closed");
+        assert!(
+            err.to_string().contains("idempotency key drift"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn list_committed_http_effect_barriers_returns_sorted_validated_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("http_effects");
+
+        let mut token_a = dummy_token();
+        token_a.policy_hash = Hash32([0x51; 32]);
+        token_a.state_hash = Hash32([0x61; 32]);
+        token_a.chosen_action_hash = Hash32([0x71; 32]);
+        token_a.nonce_or_tx_hash = Hash32([0x81; 32]);
+        token_a.timestamp_ms = 333;
+
+        let mut token_b = dummy_token();
+        token_b.policy_hash = Hash32([0x52; 32]);
+        token_b.state_hash = Hash32([0x62; 32]);
+        token_b.chosen_action_hash = Hash32([0x72; 32]);
+        token_b.nonce_or_tx_hash = Hash32([0x82; 32]);
+        token_b.timestamp_ms = 444;
+
+        for token in [&token_b, &token_a] {
+            let policy_dir = root.join(hex::encode(token.policy_hash.0));
+            std::fs::create_dir_all(&policy_dir).unwrap();
+            let key = execution_idempotency_key_v1(token);
+            let payload = serde_json::json!({
+                "idempotency_key_v1": key,
+                "policy_hash": hex::encode(token.policy_hash.0),
+                "state_hash": hex::encode(token.state_hash.0),
+                "action_hash": hex::encode(token.chosen_action_hash.0),
+                "nonce_or_tx_hash": hex::encode(token.nonce_or_tx_hash.0),
+                "timestamp_ms": token.timestamp_ms,
+            });
+            std::fs::write(
+                policy_dir.join(format!("{}.committed.json", key)),
+                serde_json::to_vec(&payload).unwrap(),
+            )
+            .unwrap();
+        }
+
+        let mut barriers = list_committed_http_effect_barriers(&root).expect("barriers");
+        barriers.sort_by(|a, b| a.barrier_path.cmp(&b.barrier_path));
+        assert_eq!(barriers.len(), 2);
+        assert_eq!(
+            barriers[0].policy_hash_hex,
+            hex::encode(token_a.policy_hash.0)
+        );
+        assert_eq!(
+            barriers[0].idempotency_key_v1,
+            execution_idempotency_key_v1(&token_a)
+        );
+        assert_eq!(barriers[0].timestamp_ms, token_a.timestamp_ms);
+        assert_eq!(
+            barriers[1].policy_hash_hex,
+            hex::encode(token_b.policy_hash.0)
+        );
+        assert_eq!(
+            barriers[1].idempotency_key_v1,
+            execution_idempotency_key_v1(&token_b)
+        );
+        assert_eq!(barriers[1].timestamp_ms, token_b.timestamp_ms);
+    }
+
+    #[test]
+    fn list_committed_http_effect_barriers_rejects_filename_payload_drift() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("http_effects");
+        let token = dummy_token();
+        let policy_dir = root.join(hex::encode(token.policy_hash.0));
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        let payload = serde_json::json!({
+            "idempotency_key_v1": "badc0ffee",
+            "policy_hash": hex::encode(token.policy_hash.0),
+            "state_hash": hex::encode(token.state_hash.0),
+            "action_hash": hex::encode(token.chosen_action_hash.0),
+            "nonce_or_tx_hash": hex::encode(token.nonce_or_tx_hash.0),
+            "timestamp_ms": token.timestamp_ms,
+        });
+        let path = policy_dir.join(format!(
+            "{}.committed.json",
+            execution_idempotency_key_v1(&token)
+        ));
+        std::fs::write(&path, serde_json::to_vec(&payload).unwrap()).unwrap();
+
+        let err = list_committed_http_effect_barriers(&root).expect_err("drift must fail closed");
         assert!(
             err.to_string().contains("idempotency key drift"),
             "unexpected error: {err}"

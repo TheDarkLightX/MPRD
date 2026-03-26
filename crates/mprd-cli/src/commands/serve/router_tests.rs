@@ -183,6 +183,27 @@ fn write_pending_http_barrier(
     path
 }
 
+fn write_committed_http_barrier(
+    root: &std::path::Path,
+    policy_hash_hex: &str,
+    idempotency_key_v1: &str,
+    timestamp_ms: i64,
+) -> std::path::PathBuf {
+    let policy_dir = root.join(policy_hash_hex);
+    std::fs::create_dir_all(&policy_dir).expect("policy dir");
+    let path = policy_dir.join(format!("{idempotency_key_v1}.committed.json"));
+    let payload = serde_json::json!({
+        "idempotency_key_v1": idempotency_key_v1,
+        "policy_hash": policy_hash_hex,
+        "state_hash": format!("{:064x}", 0x55),
+        "action_hash": format!("{:064x}", 0x66),
+        "nonce_or_tx_hash": format!("{:064x}", 0x77),
+        "timestamp_ms": timestamp_ms,
+    });
+    std::fs::write(&path, serde_json::to_vec(&payload).expect("payload")).expect("write barrier");
+    path
+}
+
 fn write_simple_decision(
     store: &OperatorStore,
     timestamp_ms: i64,
@@ -502,6 +523,41 @@ async fn api_pending_effect_barriers_returns_sorted_http_pending_entries() {
     assert_eq!(body[1].idempotency_key_v1, "older");
     assert_eq!(body[1].timestamp_ms, 10);
     assert_eq!(body[1].barrier_path, older.display().to_string());
+}
+
+#[tokio::test]
+async fn api_committed_effect_barriers_returns_sorted_http_committed_entries() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut state = test_state(&tmp);
+    let root = tmp.path().join("http_effects");
+    let older = write_committed_http_barrier(&root, "cccc", "older-committed", 30);
+    let newer = write_committed_http_barrier(&root, "aaaa", "newer-committed", 40);
+    state.config.execution.executor_type = "idempotent_http".into();
+    state.config.execution.http_url = Some("http://127.0.0.1:8080".into());
+    state.config.execution.effect_journal_dir = Some(root.clone());
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/effect-barriers/committed")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: Vec<op_api::CommittedEffectBarrier> = read_json(res).await;
+    assert_eq!(body.len(), 2);
+    assert_eq!(body[0].barrier_path, newer.display().to_string());
+    assert_eq!(body[0].policy_hash, "aaaa");
+    assert_eq!(body[0].idempotency_key_v1, "newer-committed");
+    assert_eq!(body[0].timestamp_ms, 40);
+    assert_eq!(body[1].barrier_path, older.display().to_string());
+    assert_eq!(body[1].policy_hash, "cccc");
+    assert_eq!(body[1].idempotency_key_v1, "older-committed");
+    assert_eq!(body[1].timestamp_ms, 30);
 }
 
 #[tokio::test]

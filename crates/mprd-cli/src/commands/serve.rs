@@ -1838,6 +1838,20 @@ fn map_pending_effect_barrier(
     }
 }
 
+fn map_committed_effect_barrier(
+    barrier: mprd_adapters::executors::CommittedHttpEffectBarrier,
+) -> op_api::CommittedEffectBarrier {
+    op_api::CommittedEffectBarrier {
+        barrier_path: barrier.barrier_path.display().to_string(),
+        policy_hash: barrier.policy_hash_hex,
+        idempotency_key_v1: barrier.idempotency_key_v1,
+        state_hash: barrier.state_hash_hex,
+        action_hash: barrier.action_hash_hex,
+        nonce_or_tx_hash: barrier.nonce_or_tx_hash_hex,
+        timestamp_ms: barrier.timestamp_ms,
+    }
+}
+
 fn map_pending_http_effect_barrier_error(err: &mprd_core::MprdError) -> StatusCode {
     let message = err.to_string();
     if message.contains("not found") {
@@ -1873,19 +1887,53 @@ fn load_pending_http_effect_barriers(
     Ok(barriers)
 }
 
+fn load_committed_http_effect_barriers(
+    config: &super::MprdConfigFile,
+) -> Result<Vec<op_api::CommittedEffectBarrier>, StatusCode> {
+    let executor_type = config.execution.executor_type.trim().to_ascii_lowercase();
+    if executor_type != "idempotent_http" {
+        return Ok(Vec::new());
+    }
+    let Some(root) = config.execution.effect_journal_dir.as_ref() else {
+        return Ok(Vec::new());
+    };
+
+    let mut barriers = mprd_adapters::executors::list_committed_http_effect_barriers(root)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter()
+        .map(map_committed_effect_barrier)
+        .collect::<Vec<_>>();
+    barriers.sort_by(|a, b| {
+        b.timestamp_ms
+            .cmp(&a.timestamp_ms)
+            .then_with(|| a.barrier_path.cmp(&b.barrier_path))
+    });
+    Ok(barriers)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PendingEffectBarriersQuery {
+struct EffectBarriersQuery {
     #[serde(default)]
     limit: Option<u32>,
 }
 
 async fn api_pending_effect_barriers(
     State(state): State<AppState>,
-    Query(q): Query<PendingEffectBarriersQuery>,
+    Query(q): Query<EffectBarriersQuery>,
 ) -> Result<Json<Vec<op_api::PendingEffectBarrier>>, StatusCode> {
     let limit = q.limit.unwrap_or(100).clamp(1, 500) as usize;
     let mut barriers = load_pending_http_effect_barriers(&state.config)?;
+    barriers.truncate(limit);
+    Ok(Json(barriers))
+}
+
+async fn api_committed_effect_barriers(
+    State(state): State<AppState>,
+    Query(q): Query<EffectBarriersQuery>,
+) -> Result<Json<Vec<op_api::CommittedEffectBarrier>>, StatusCode> {
+    let limit = q.limit.unwrap_or(100).clamp(1, 500) as usize;
+    let mut barriers = load_committed_http_effect_barriers(&state.config)?;
     barriers.truncate(limit);
     Ok(Json(barriers))
 }
@@ -3074,6 +3122,10 @@ fn build_app(state: AppState, api_key: operator::auth::ApiKeyConfig) -> Router {
         )
         .route("/status", get(api_status))
         .route("/effect-barriers/pending", get(api_pending_effect_barriers))
+        .route(
+            "/effect-barriers/committed",
+            get(api_committed_effect_barriers),
+        )
         .route(
             "/effect-barriers/pending/:policy_hash/:idempotency_key_v1/resolve",
             post(api_resolve_pending_effect_barrier),

@@ -78,6 +78,18 @@ pub struct PendingEffectBarrier {
     pub timestamp_ms: i64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommittedEffectBarrier {
+    pub barrier_path: String,
+    pub policy_hash: HashHex,
+    pub idempotency_key_v1: String,
+    pub state_hash: HashHex,
+    pub action_hash: HashHex,
+    pub nonce_or_tx_hash: HashHex,
+    pub timestamp_ms: i64,
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingEffectBarrierResolution {
