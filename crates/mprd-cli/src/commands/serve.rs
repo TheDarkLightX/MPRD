@@ -1484,15 +1484,21 @@ fn executor_component_health(config: &super::MprdConfigFile) -> op_api::Componen
                 version: None,
                 last_check: now,
                 message: Some(format!(
-                    "idempotent http executor: {url}; effect journal root: {}; pending barriers: {}; committed barriers: {}",
+                    "idempotent http executor: {url}; effect journal root: {}; pending barriers: {}; committed barriers: {} (automatic: {}, manual_promote: {}, legacy: {})",
                     path.display(),
                     summary.pending_entries,
-                    summary.committed_entries
+                    summary.committed_entries,
+                    summary.committed_automatic_entries,
+                    summary.committed_manual_promote_entries,
+                    summary.committed_legacy_entries
                 )),
                 effect_barrier_summary: Some(op_api::EffectBarrierSummary {
                     root_path: Some(path.display().to_string()),
                     pending_entries: summary.pending_entries,
                     committed_entries: summary.committed_entries,
+                    committed_automatic_entries: summary.committed_automatic_entries,
+                    committed_manual_promote_entries: summary.committed_manual_promote_entries,
+                    committed_legacy_entries: summary.committed_legacy_entries,
                 }),
             }
         }

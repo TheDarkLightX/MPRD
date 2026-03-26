@@ -35,6 +35,9 @@ pub struct EffectBarrierSummary {
     pub root_path: Option<String>,
     pub pending_entries: usize,
     pub committed_entries: usize,
+    pub committed_automatic_entries: usize,
+    pub committed_manual_promote_entries: usize,
+    pub committed_legacy_entries: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

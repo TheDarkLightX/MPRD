@@ -298,11 +298,14 @@ fn check_executor(config: &MprdConfigFile) -> CheckResult {
                     };
                 if summary.pending_entries > 0 {
                     let message = format!(
-                        "Idempotent HTTP executor: {} with effect journal {} (pending barriers: {}, committed barriers: {})",
+                        "Idempotent HTTP executor: {} with effect journal {} (pending barriers: {}, committed barriers: {}, automatic: {}, manual_promote: {}, legacy: {})",
                         url,
                         path.display(),
                         summary.pending_entries,
-                        summary.committed_entries
+                        summary.committed_entries,
+                        summary.committed_automatic_entries,
+                        summary.committed_manual_promote_entries,
+                        summary.committed_legacy_entries
                     );
                     let suggestion =
                         "Resolve or clear pending effect barriers before restarting production serve"
@@ -319,13 +322,30 @@ fn check_executor(config: &MprdConfigFile) -> CheckResult {
                             suggestion,
                         }
                     }
+                } else if summary.committed_manual_promote_entries > 0 {
+                    CheckResult::Warn {
+                        message: format!(
+                            "Idempotent HTTP executor: {} with effect journal {} (pending barriers: 0, committed barriers: {}, automatic: {}, manual_promote: {}, legacy: {})",
+                            url,
+                            path.display(),
+                            summary.committed_entries,
+                            summary.committed_automatic_entries,
+                            summary.committed_manual_promote_entries,
+                            summary.committed_legacy_entries
+                        ),
+                        suggestion:
+                            "Review manually promoted committed HTTP barriers and confirm downstream reconciliation".into(),
+                    }
                 } else {
                     CheckResult::Pass {
                         message: format!(
-                            "Idempotent HTTP executor: {} with effect journal {} (pending barriers: 0, committed barriers: {})",
+                            "Idempotent HTTP executor: {} with effect journal {} (pending barriers: 0, committed barriers: {}, automatic: {}, manual_promote: {}, legacy: {})",
                             url,
                             path.display(),
-                            summary.committed_entries
+                            summary.committed_entries,
+                            summary.committed_automatic_entries,
+                            summary.committed_manual_promote_entries,
+                            summary.committed_legacy_entries
                         ),
                     }
                 }
@@ -469,6 +489,51 @@ mod tests {
                 );
             }
             other => panic!("expected failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_executor_warns_on_manual_promoted_http_barriers() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("http_effects");
+        let policy_dir = root.join("deadbeef");
+        std::fs::create_dir_all(&policy_dir).expect("policy dir");
+        std::fs::write(
+            policy_dir.join("manual.committed.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "idempotency_key_v1": "manual",
+                "policy_hash": "deadbeef",
+                "state_hash": format!("{:064x}", 0x11),
+                "action_hash": format!("{:064x}", 0x22),
+                "nonce_or_tx_hash": format!("{:064x}", 0x33),
+                "timestamp_ms": 1,
+                "effect_barrier_resolution_kind": "manual_promote",
+            }))
+            .expect("payload"),
+        )
+        .expect("write marker");
+
+        let mut config = MprdConfigFile::default();
+        config.mode = "trustless".into();
+        config.execution.executor_type = "idempotent_http".into();
+        config.execution.http_url = Some("http://127.0.0.1:8080".into());
+        config.execution.effect_journal_dir = Some(root);
+
+        match check_executor(&config) {
+            CheckResult::Warn {
+                message,
+                suggestion,
+            } => {
+                assert!(
+                    message.contains("manual_promote: 1"),
+                    "unexpected message: {message}"
+                );
+                assert!(
+                    suggestion.contains("Review manually promoted committed HTTP barriers"),
+                    "unexpected suggestion: {suggestion}"
+                );
+            }
+            other => panic!("expected warning, got {other:?}"),
         }
     }
 }

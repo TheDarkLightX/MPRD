@@ -18,6 +18,9 @@ export interface EffectBarrierSummary {
     rootPath?: string;
     pendingEntries: number;
     committedEntries: number;
+    committedAutomaticEntries: number;
+    committedManualPromoteEntries: number;
+    committedLegacyEntries: number;
 }
 
 export interface ComponentHealth {

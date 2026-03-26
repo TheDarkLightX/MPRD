@@ -87,8 +87,9 @@ status; the RC1 board separates automated green gates from still-open Tier-0 rel
   runtime and deployment closure for that barrier in the shipped adapters and
   external effect surfaces, even though the operator path now has typed pending
   resolution and committed-barrier inventory for the shipped `idempotent_http`
-  journal, and the committed inventory now distinguishes automatic commit from
-  manual promotion explicitly.
+  journal, the committed inventory now distinguishes automatic commit from
+  manual promotion explicitly, and status/doctor also summarize legacy committed
+  markers separately instead of flattening all committed state into one count.
 - **Remote executor idempotency signal (SHOULD)**: the shipped HTTP, webhook,
   and audit executor surfaces now emit the same deterministic
   `execution_idempotency_key_v1` derived from the

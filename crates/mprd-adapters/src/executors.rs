@@ -56,6 +56,9 @@ const EXECUTION_IDEMPOTENCY_KEY_DOMAIN_V1: &[u8] = b"mprd-execution-idempotency-
 pub struct EffectJournalSummary {
     pub pending_entries: usize,
     pub committed_entries: usize,
+    pub committed_automatic_entries: usize,
+    pub committed_manual_promote_entries: usize,
+    pub committed_legacy_entries: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -297,6 +300,17 @@ pub fn summarize_http_effect_journal_root(root: &Path) -> Result<EffectJournalSu
                 summary.pending_entries += 1;
             } else if name.ends_with(".committed.json") {
                 summary.committed_entries += 1;
+                match parse_committed_http_effect_barrier(&path)?.resolution_kind {
+                    Some(CommittedHttpEffectBarrierResolutionKind::Automatic) => {
+                        summary.committed_automatic_entries += 1;
+                    }
+                    Some(CommittedHttpEffectBarrierResolutionKind::ManualPromote) => {
+                        summary.committed_manual_promote_entries += 1;
+                    }
+                    None => {
+                        summary.committed_legacy_entries += 1;
+                    }
+                }
             }
         }
     }
@@ -2368,7 +2382,19 @@ mod tests {
         let policy_dir = root.join("deadbeef");
         std::fs::create_dir_all(&policy_dir).unwrap();
         std::fs::write(policy_dir.join("a.pending.json"), b"{}\n").unwrap();
-        std::fs::write(policy_dir.join("b.committed.json"), b"{}\n").unwrap();
+        std::fs::write(
+            policy_dir.join("b.committed.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "idempotency_key_v1": "b",
+                "policy_hash": "deadbeef",
+                "state_hash": format!("{:064x}", 0x11),
+                "action_hash": format!("{:064x}", 0x22),
+                "nonce_or_tx_hash": format!("{:064x}", 0x33),
+                "timestamp_ms": 1,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         std::fs::write(policy_dir.join("ignored.txt"), b"noop\n").unwrap();
 
         let summary = summarize_http_effect_journal_root(&root).expect("summary");
@@ -2377,6 +2403,9 @@ mod tests {
             EffectJournalSummary {
                 pending_entries: 1,
                 committed_entries: 1,
+                committed_automatic_entries: 0,
+                committed_manual_promote_entries: 0,
+                committed_legacy_entries: 1,
             }
         );
     }
@@ -2387,6 +2416,67 @@ mod tests {
         let root = dir.path().join("missing");
         let summary = summarize_http_effect_journal_root(&root).expect("summary");
         assert_eq!(summary, EffectJournalSummary::default());
+    }
+
+    #[test]
+    fn summarize_http_effect_journal_root_counts_committed_resolution_kinds() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("http_effects");
+        let policy_dir = root.join("deadbeef");
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        std::fs::write(
+            policy_dir.join("legacy.committed.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "idempotency_key_v1": "legacy",
+                "policy_hash": "deadbeef",
+                "state_hash": format!("{:064x}", 0x11),
+                "action_hash": format!("{:064x}", 0x22),
+                "nonce_or_tx_hash": format!("{:064x}", 0x33),
+                "timestamp_ms": 1,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            policy_dir.join("auto.committed.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "idempotency_key_v1": "auto",
+                "policy_hash": "deadbeef",
+                "state_hash": format!("{:064x}", 0x44),
+                "action_hash": format!("{:064x}", 0x55),
+                "nonce_or_tx_hash": format!("{:064x}", 0x66),
+                "timestamp_ms": 2,
+                "effect_barrier_resolution_kind": "automatic",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            policy_dir.join("manual.committed.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "idempotency_key_v1": "manual",
+                "policy_hash": "deadbeef",
+                "state_hash": format!("{:064x}", 0x77),
+                "action_hash": format!("{:064x}", 0x88),
+                "nonce_or_tx_hash": format!("{:064x}", 0x99),
+                "timestamp_ms": 3,
+                "effect_barrier_resolution_kind": "manual_promote",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let summary = summarize_http_effect_journal_root(&root).expect("summary");
+        assert_eq!(
+            summary,
+            EffectJournalSummary {
+                pending_entries: 0,
+                committed_entries: 3,
+                committed_automatic_entries: 1,
+                committed_manual_promote_entries: 1,
+                committed_legacy_entries: 1,
+            }
+        );
     }
 
     #[test]

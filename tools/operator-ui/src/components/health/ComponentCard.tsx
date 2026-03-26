@@ -173,6 +173,15 @@ export function ComponentCard({ name, health, icon }: ComponentCardProps) {
                     <div className="rounded-md border border-dark-700/40 bg-dark-900/30 px-2 py-1">
                         Committed: {health.effectBarrierSummary.committedEntries}
                     </div>
+                    <div className="rounded-md border border-dark-700/40 bg-dark-900/30 px-2 py-1">
+                        Auto: {health.effectBarrierSummary.committedAutomaticEntries}
+                    </div>
+                    <div className="rounded-md border border-dark-700/40 bg-dark-900/30 px-2 py-1">
+                        Manual: {health.effectBarrierSummary.committedManualPromoteEntries}
+                    </div>
+                    <div className="rounded-md border border-dark-700/40 bg-dark-900/30 px-2 py-1 col-span-2">
+                        Legacy: {health.effectBarrierSummary.committedLegacyEntries}
+                    </div>
                     {health.effectBarrierSummary.rootPath && (
                         <p className="col-span-2 truncate text-dark-500">
                             Journal: {health.effectBarrierSummary.rootPath}

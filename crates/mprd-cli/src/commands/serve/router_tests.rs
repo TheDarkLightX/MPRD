@@ -487,6 +487,9 @@ async fn api_status_reports_typed_idempotent_http_effect_barrier_summary() {
         .expect("typed effect barrier summary");
     assert_eq!(summary.pending_entries, 1);
     assert_eq!(summary.committed_entries, 0);
+    assert_eq!(summary.committed_automatic_entries, 0);
+    assert_eq!(summary.committed_manual_promote_entries, 0);
+    assert_eq!(summary.committed_legacy_entries, 0);
     assert_eq!(
         summary.root_path.as_deref(),
         Some(root.to_str().expect("utf8 root"))

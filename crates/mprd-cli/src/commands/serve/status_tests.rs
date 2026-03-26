@@ -605,10 +605,16 @@ fn executor_component_health_reports_idempotent_http_root() {
         .expect("typed barrier summary");
     assert_eq!(summary.pending_entries, 0);
     assert_eq!(summary.committed_entries, 0);
+    assert_eq!(summary.committed_automatic_entries, 0);
+    assert_eq!(summary.committed_manual_promote_entries, 0);
+    assert_eq!(summary.committed_legacy_entries, 0);
     assert!(
-        health.message.as_deref().is_some_and(
-            |m| m.contains("effect journal root:") && m.contains("pending barriers: 0")
-        ),
+        health
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("effect journal root:")
+                && m.contains("pending barriers: 0")
+                && m.contains("manual_promote: 0")),
         "unexpected health message: {:?}",
         health.message
     );
@@ -635,11 +641,60 @@ fn executor_component_health_degrades_on_unresolved_idempotent_http_pending_barr
         .expect("typed barrier summary");
     assert_eq!(summary.pending_entries, 1);
     assert_eq!(summary.committed_entries, 0);
+    assert_eq!(summary.committed_automatic_entries, 0);
+    assert_eq!(summary.committed_manual_promote_entries, 0);
+    assert_eq!(summary.committed_legacy_entries, 0);
     assert!(
         health
             .message
             .as_deref()
-            .is_some_and(|m| m.contains("pending barriers: 1")),
+            .is_some_and(|m| m.contains("pending barriers: 1") && m.contains("manual_promote: 0")),
+        "unexpected health message: {:?}",
+        health.message
+    );
+}
+
+#[test]
+fn executor_component_health_reports_committed_resolution_summary() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let root = tmp.path().join("http_effects");
+    let policy_dir = root.join("deadbeef");
+    std::fs::create_dir_all(&policy_dir).expect("policy dir");
+    std::fs::write(
+        policy_dir.join("manual.committed.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "idempotency_key_v1": "manual",
+            "policy_hash": "deadbeef",
+            "state_hash": format!("{:064x}", 0x11),
+            "action_hash": format!("{:064x}", 0x22),
+            "nonce_or_tx_hash": format!("{:064x}", 0x33),
+            "timestamp_ms": 7,
+            "effect_barrier_resolution_kind": "manual_promote",
+        }))
+        .expect("payload"),
+    )
+    .expect("write committed marker");
+
+    let mut config = super::super::MprdConfigFile::default();
+    config.execution.executor_type = "idempotent_http".into();
+    config.execution.http_url = Some("http://127.0.0.1:8080".into());
+    config.execution.effect_journal_dir = Some(root);
+
+    let health = executor_component_health(&config);
+    assert!(matches!(health.status, op_api::HealthLevel::Healthy));
+    let summary = health
+        .effect_barrier_summary
+        .as_ref()
+        .expect("typed barrier summary");
+    assert_eq!(summary.pending_entries, 0);
+    assert_eq!(summary.committed_entries, 1);
+    assert_eq!(summary.committed_automatic_entries, 0);
+    assert_eq!(summary.committed_manual_promote_entries, 1);
+    assert_eq!(summary.committed_legacy_entries, 0);
+    assert!(
+        health.message.as_deref().is_some_and(
+            |m| m.contains("committed barriers: 1") && m.contains("manual_promote: 1")
+        ),
         "unexpected health message: {:?}",
         health.message
     );
