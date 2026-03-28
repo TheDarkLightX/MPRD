@@ -1603,6 +1603,7 @@ mod tests {
         saw_authorization: Arc<std::sync::atomic::AtomicBool>,
         saw_governance: Arc<std::sync::atomic::AtomicBool>,
         saw_bridge: Arc<std::sync::atomic::AtomicBool>,
+        expected_registry_authorization: Option<mprd_core::RegistryAuthorizationWitnessV1>,
         expected_registry_authorization_hash: Option<mprd_core::Hash32>,
         expected_registry_checkpoint_attestation_hash: Option<mprd_core::Hash32>,
     }
@@ -1634,6 +1635,9 @@ mod tests {
             let bridge = ready.bridge();
             self.saw_bridge
                 .store(bridge.is_some(), std::sync::atomic::Ordering::SeqCst);
+            if let Some(expected) = self.expected_registry_authorization.as_ref() {
+                assert_eq!(bridge.expect("bridge").registry_authorization(), expected);
+            }
             if let Some(expected) = self.expected_registry_authorization_hash {
                 assert_eq!(
                     bridge.expect("bridge").registry_authorization_hash(),
@@ -1939,6 +1943,18 @@ mod tests {
         .expect("resolve");
         let expected_checkpoint_hash =
             crate::registry_state::signed_registry_checkpoint_attestation_hash_v1(&signed);
+        let expected_registry_authorization = mprd_core::registry_authorization_witness_v1(
+            crate::registry_state::registry_authorization_attestation_hash_v1(&resolution),
+            mprd_core::artifact_repo::Id32(resolution.authorized_policy.policy_exec_kind_id),
+            mprd_core::artifact_repo::Id32(resolution.authorized_policy.policy_exec_version_id),
+            mprd_core::artifact_repo::Id32(resolution.image_id),
+            resolution
+                .authorized_policy
+                .policy_source_kind_id
+                .map(mprd_core::artifact_repo::Id32),
+            resolution.authorized_policy.policy_source_hash,
+        )
+        .expect("expected registry authorization");
         let verified = verify_bundle(&token, &proof);
         let saw_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let saw_authorization = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1949,6 +1965,7 @@ mod tests {
             saw_authorization: Arc::clone(&saw_authorization),
             saw_governance: Arc::clone(&saw_governance),
             saw_bridge: Arc::clone(&saw_bridge),
+            expected_registry_authorization: Some(expected_registry_authorization),
             expected_registry_authorization_hash: Some(
                 crate::registry_state::registry_authorization_attestation_hash_v1(&resolution),
             ),
@@ -1992,6 +2009,7 @@ mod tests {
             saw_authorization: Arc::clone(&saw_authorization),
             saw_governance: Arc::clone(&saw_governance),
             saw_bridge: Arc::clone(&saw_bridge),
+            expected_registry_authorization: None,
             expected_registry_authorization_hash: None,
             expected_registry_checkpoint_attestation_hash: None,
         };
