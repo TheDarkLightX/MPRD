@@ -1269,11 +1269,15 @@ pub fn prepare_execution_ready_with_registry_bridge<'a>(
     ready: &ExecutionReadyBundle<'a>,
     bridge: ExecutionRegistryBridgeWitnessV1,
 ) -> Result<ExecutionReadyBundle<'a>> {
-    if ready.authorization().is_none() {
-        return Err(MprdError::InvalidInput(
-            "registry bridge requires execution authorization witness".into(),
-        ));
-    }
+    let authorization = ready.authorization().ok_or_else(|| {
+        MprdError::InvalidInput("registry bridge requires execution authorization witness".into())
+    })?;
+    verify_execution_authorization_attestation_metadata_v1(
+        ready.proof(),
+        authorization.policy_authority(),
+        authorization.state_binding(),
+        authorization.governance(),
+    )?;
     let mut enriched = ready.clone();
     enriched.packet.bridge = Some(bridge);
     Ok(enriched)
@@ -1933,6 +1937,13 @@ mod tests {
             risc0_receipt: vec![],
             attestation_metadata: HashMap::new(),
         };
+        let mut proof = proof;
+        insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &token,
+            &state,
+            None,
+        );
         let authority =
             policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
         let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
@@ -1992,6 +2003,68 @@ mod tests {
             err,
             MprdError::InvalidInput(msg)
                 if msg == "registry bridge requires execution authorization witness"
+        ));
+    }
+
+    #[test]
+    fn prepare_execution_ready_with_registry_bridge_rejects_missing_execution_authorization_attestation_metadata(
+    ) {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(0x81),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0x82),
+                state_epoch: 6,
+                state_attestation_hash: dummy_hash(0x83),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x84),
+            policy_ref: PolicyRef {
+                policy_epoch: 4,
+                registry_root: dummy_hash(0x85),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x86),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0x87),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready");
+
+        let err = prepare_execution_ready_with_registry_bridge(
+            &ready,
+            execution_registry_bridge_witness_v1(dummy_hash(0x88), Some(dummy_hash(0x89))),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            MprdError::InvalidInput(msg)
+                if msg == "missing execution_authorization_hash_v1 attestation metadata"
         ));
     }
 
@@ -2637,6 +2710,13 @@ mod tests {
             state_ref: state.state_ref.clone(),
             ..token
         };
+        let mut proof = proof;
+        insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &token,
+            &state,
+            None,
+        );
         let authority =
             policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
         let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
@@ -2704,6 +2784,12 @@ mod tests {
             state_ref: state.state_ref.clone(),
             ..token
         };
+        insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &token,
+            &state,
+            None,
+        );
         let authority =
             policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
         let state_binding = crate::state_provenance::state_binding_witness_v1(&state);

@@ -1814,6 +1814,12 @@ mod tests {
             state_hash: token.state_hash,
             state_ref: token.state_ref.clone(),
         };
+        mprd_core::insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            token,
+            &state,
+            Some(&governance),
+        );
         let authority =
             mprd_core::policy_authority_witness_v1(&token.policy_hash, &token.policy_ref)
                 .expect("policy authority");
