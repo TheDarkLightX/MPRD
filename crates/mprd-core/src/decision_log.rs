@@ -25,6 +25,23 @@ pub const DECISION_LOG_RECORD_DOMAIN_V3: &[u8] = b"MPRD_DECISION_LOG_RECORD_V3";
 pub const DECISION_LOG_ATTESTATION_METADATA_HASH_DOMAIN_V1: &[u8] =
     b"MPRD_DECISION_LOG_ATTESTATION_METADATA_HASH_V1";
 
+#[derive(Clone, Debug, Default)]
+struct GovernanceMetadataFields {
+    update_kind: Option<String>,
+    profile_app_ok: Option<bool>,
+    profile_safety_ok: Option<bool>,
+    link_ok: Option<bool>,
+}
+
+struct RecordHashV3Inputs<'a> {
+    limits_hash: &'a Hash32,
+    limits_bytes_hash: &'a Hash32,
+    chosen_action_preimage_hash: &'a Hash32,
+    risc0_receipt_hash: &'a Hash32,
+    attestation_metadata_hash: &'a Hash32,
+    governance: &'a GovernanceMetadataFields,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DecisionLogRecordV1 {
     pub record_version: u32,
@@ -136,9 +153,7 @@ pub fn attestation_metadata_hash_v1(
     sha256(&bytes)
 }
 
-fn governance_metadata_fields_from_proof(
-    proof: &ProofBundle,
-) -> Result<(Option<String>, Option<bool>, Option<bool>, Option<bool>)> {
+fn governance_metadata_fields_from_proof(proof: &ProofBundle) -> Result<GovernanceMetadataFields> {
     let metadata = &proof.attestation_metadata;
     let update_kind = metadata.get(crate::GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1);
     let profile_app_ok = metadata.get(crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1);
@@ -151,7 +166,7 @@ fn governance_metadata_fields_from_proof(
         + usize::from(profile_safety_ok.is_some())
         + usize::from(link_ok.is_some());
     if present_count == 0 {
-        return Ok((None, None, None, None));
+        return Ok(GovernanceMetadataFields::default());
     }
     if present_count != 4 {
         return Err(MprdError::ExecutionError(
@@ -183,12 +198,12 @@ fn governance_metadata_fields_from_proof(
         link_ok.expect("checked above"),
     )?;
 
-    Ok((
-        Some(update_kind),
-        Some(profile_app_ok),
-        Some(profile_safety_ok),
-        Some(link_ok),
-    ))
+    Ok(GovernanceMetadataFields {
+        update_kind: Some(update_kind),
+        profile_app_ok: Some(profile_app_ok),
+        profile_safety_ok: Some(profile_safety_ok),
+        link_ok: Some(link_ok),
+    })
 }
 
 pub fn record_hash_v1(
@@ -283,15 +298,7 @@ fn record_hash_v3_fields(
     prev_record_hash: &Hash32,
     published_at_ms: i64,
     token: &DecisionToken,
-    limits_hash: &Hash32,
-    limits_bytes_hash: &Hash32,
-    chosen_action_preimage_hash: &Hash32,
-    risc0_receipt_hash: &Hash32,
-    attestation_metadata_hash: &Hash32,
-    governance_update_kind: Option<&str>,
-    governance_profile_app_ok: Option<bool>,
-    governance_profile_safety_ok: Option<bool>,
-    governance_link_ok: Option<bool>,
+    inputs: RecordHashV3Inputs<'_>,
 ) -> Hash32 {
     let mut bytes = Vec::with_capacity(640);
     bytes.extend_from_slice(DECISION_LOG_RECORD_DOMAIN_V3);
@@ -309,13 +316,13 @@ fn record_hash_v3_fields(
     bytes.extend_from_slice(&token.chosen_action_hash.0);
     bytes.extend_from_slice(&token.nonce_or_tx_hash.0);
 
-    bytes.extend_from_slice(&limits_hash.0);
-    bytes.extend_from_slice(&limits_bytes_hash.0);
-    bytes.extend_from_slice(&chosen_action_preimage_hash.0);
-    bytes.extend_from_slice(&risc0_receipt_hash.0);
-    bytes.extend_from_slice(&attestation_metadata_hash.0);
+    bytes.extend_from_slice(&inputs.limits_hash.0);
+    bytes.extend_from_slice(&inputs.limits_bytes_hash.0);
+    bytes.extend_from_slice(&inputs.chosen_action_preimage_hash.0);
+    bytes.extend_from_slice(&inputs.risc0_receipt_hash.0);
+    bytes.extend_from_slice(&inputs.attestation_metadata_hash.0);
 
-    match governance_update_kind {
+    match inputs.governance.update_kind.as_deref() {
         Some(kind) => {
             bytes.push(1);
             bytes.extend_from_slice(&(kind.len() as u32).to_le_bytes());
@@ -323,21 +330,21 @@ fn record_hash_v3_fields(
         }
         None => bytes.push(0),
     }
-    match governance_profile_app_ok {
+    match inputs.governance.profile_app_ok {
         Some(value) => {
             bytes.push(1);
             bytes.push(u8::from(value));
         }
         None => bytes.push(0),
     }
-    match governance_profile_safety_ok {
+    match inputs.governance.profile_safety_ok {
         Some(value) => {
             bytes.push(1);
             bytes.push(u8::from(value));
         }
         None => bytes.push(0),
     }
-    match governance_link_ok {
+    match inputs.governance.link_ok {
         Some(value) => {
             bytes.push(1);
             bytes.push(u8::from(value));
@@ -358,26 +365,20 @@ pub fn record_hash_v3(
     let chosen_action_preimage_hash = sha256(&proof.chosen_action_preimage);
     let risc0_receipt_hash = sha256(&proof.risc0_receipt);
     let attestation_metadata_hash = attestation_metadata_hash_v1(&proof.attestation_metadata);
-    let (
-        governance_update_kind,
-        governance_profile_app_ok,
-        governance_profile_safety_ok,
-        governance_link_ok,
-    ) = governance_metadata_fields_from_proof(proof)?;
+    let governance = governance_metadata_fields_from_proof(proof)?;
 
     Ok(record_hash_v3_fields(
         prev_record_hash,
         published_at_ms,
         token,
-        &proof.limits_hash,
-        &limits_bytes_hash,
-        &chosen_action_preimage_hash,
-        &risc0_receipt_hash,
-        &attestation_metadata_hash,
-        governance_update_kind.as_deref(),
-        governance_profile_app_ok,
-        governance_profile_safety_ok,
-        governance_link_ok,
+        RecordHashV3Inputs {
+            limits_hash: &proof.limits_hash,
+            limits_bytes_hash: &limits_bytes_hash,
+            chosen_action_preimage_hash: &chosen_action_preimage_hash,
+            risc0_receipt_hash: &risc0_receipt_hash,
+            attestation_metadata_hash: &attestation_metadata_hash,
+            governance: &governance,
+        },
     ))
 }
 
@@ -434,15 +435,19 @@ pub fn record_hash_v3_from_record(record: &DecisionLogRecordV3) -> Hash32 {
         &record.prev_record_hash,
         record.published_at_ms,
         &token,
-        &record.limits_hash,
-        &record.limits_bytes_hash,
-        &record.chosen_action_preimage_hash,
-        &record.risc0_receipt_hash,
-        &record.attestation_metadata_hash,
-        record.governance_update_kind.as_deref(),
-        record.governance_profile_app_ok,
-        record.governance_profile_safety_ok,
-        record.governance_link_ok,
+        RecordHashV3Inputs {
+            limits_hash: &record.limits_hash,
+            limits_bytes_hash: &record.limits_bytes_hash,
+            chosen_action_preimage_hash: &record.chosen_action_preimage_hash,
+            risc0_receipt_hash: &record.risc0_receipt_hash,
+            attestation_metadata_hash: &record.attestation_metadata_hash,
+            governance: &GovernanceMetadataFields {
+                update_kind: record.governance_update_kind.clone(),
+                profile_app_ok: record.governance_profile_app_ok,
+                profile_safety_ok: record.governance_profile_safety_ok,
+                link_ok: record.governance_link_ok,
+            },
+        },
     )
 }
 
@@ -602,12 +607,7 @@ fn decision_log_record_v3(
     proof: &ProofBundle,
 ) -> Result<DecisionLogRecordV3> {
     let record_hash = record_hash_v3(&prev_hash, published_at_ms, token, proof)?;
-    let (
-        governance_update_kind,
-        governance_profile_app_ok,
-        governance_profile_safety_ok,
-        governance_link_ok,
-    ) = governance_metadata_fields_from_proof(proof)?;
+    let governance = governance_metadata_fields_from_proof(proof)?;
 
     Ok(DecisionLogRecordV3 {
         record_version: 3,
@@ -632,10 +632,10 @@ fn decision_log_record_v3(
         chosen_action_preimage_hash: sha256(&proof.chosen_action_preimage),
         risc0_receipt_hash: sha256(&proof.risc0_receipt),
         attestation_metadata_hash: attestation_metadata_hash_v1(&proof.attestation_metadata),
-        governance_update_kind,
-        governance_profile_app_ok,
-        governance_profile_safety_ok,
-        governance_link_ok,
+        governance_update_kind: governance.update_kind,
+        governance_profile_app_ok: governance.profile_app_ok,
+        governance_profile_safety_ok: governance.profile_safety_ok,
+        governance_link_ok: governance.link_ok,
     })
 }
 

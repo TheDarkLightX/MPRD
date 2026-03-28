@@ -382,9 +382,11 @@ fn load_signed_state_provider_from_config_accepts_signed_snapshot() {
     )
     .expect("write snapshot");
 
-    let mut config = super::super::MprdConfigFile::default();
-    config.state_snapshot_path = Some(snapshot_path);
-    config.state_verifying_key_hex = Some(hex::encode(vk.to_bytes()));
+    let config = super::super::MprdConfigFile {
+        state_snapshot_path: Some(snapshot_path),
+        state_verifying_key_hex: Some(hex::encode(vk.to_bytes())),
+        ..super::super::MprdConfigFile::default()
+    };
 
     let provider =
         super::load_signed_state_provider_from_config(&config).expect("provider must load");

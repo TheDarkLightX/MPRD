@@ -1751,17 +1751,19 @@ fn compute_system_status(
     let mode = config.mode.trim().to_ascii_lowercase();
     let trustless = mode == "trustless" || mode == "private";
 
-    let overall = if !anchors_ok {
-        op_api::OverallStatus::Critical
-    } else if trustless && matches!(components.risc0.status, op_api::HealthLevel::Unavailable) {
-        op_api::OverallStatus::Critical
-    } else if matches!(components.executor.status, op_api::HealthLevel::Unavailable) {
-        op_api::OverallStatus::Degraded
-    } else if trustless && matches!(components.executor.status, op_api::HealthLevel::Degraded) {
-        op_api::OverallStatus::Degraded
-    } else if matches!(components.tau.status, op_api::HealthLevel::Unavailable)
-        && config.tau_binary.is_some()
+    let executor_unavailable =
+        matches!(components.executor.status, op_api::HealthLevel::Unavailable);
+    let executor_effectively_degraded = executor_unavailable
+        || (trustless && matches!(components.executor.status, op_api::HealthLevel::Degraded));
+    let tau_required_unavailable =
+        matches!(components.tau.status, op_api::HealthLevel::Unavailable)
+            && config.tau_binary.is_some();
+
+    let overall = if !anchors_ok
+        || (trustless && matches!(components.risc0.status, op_api::HealthLevel::Unavailable))
     {
+        op_api::OverallStatus::Critical
+    } else if executor_effectively_degraded || tau_required_unavailable {
         op_api::OverallStatus::Degraded
     } else {
         op_api::OverallStatus::Operational
@@ -1812,9 +1814,9 @@ fn is_hex64_path_id(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn pending_http_effect_journal_root<'a>(
-    config: &'a super::MprdConfigFile,
-) -> Result<&'a std::path::Path, StatusCode> {
+fn pending_http_effect_journal_root(
+    config: &super::MprdConfigFile,
+) -> Result<&std::path::Path, StatusCode> {
     if !config
         .execution
         .executor_type

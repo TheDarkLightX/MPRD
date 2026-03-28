@@ -450,11 +450,16 @@ mod tests {
         std::fs::create_dir_all(&policy_dir).expect("policy dir");
         std::fs::write(policy_dir.join("stuck.pending.json"), b"{}\n").expect("pending marker");
 
-        let mut config = MprdConfigFile::default();
-        config.mode = "local".into();
-        config.execution.executor_type = "idempotent_http".into();
-        config.execution.http_url = Some("http://127.0.0.1:8080".into());
-        config.execution.effect_journal_dir = Some(root);
+        let config = MprdConfigFile {
+            mode: "local".into(),
+            execution: crate::commands::ExecutionConfig {
+                executor_type: "idempotent_http".into(),
+                http_url: Some("http://127.0.0.1:8080".into()),
+                audit_file: Some(std::path::PathBuf::from(".mprd/audit.jsonl")),
+                effect_journal_dir: Some(root),
+            },
+            ..MprdConfigFile::default()
+        };
 
         match check_executor(&config) {
             CheckResult::Warn { message, .. } => {
@@ -475,11 +480,16 @@ mod tests {
         std::fs::create_dir_all(&policy_dir).expect("policy dir");
         std::fs::write(policy_dir.join("stuck.pending.json"), b"{}\n").expect("pending marker");
 
-        let mut config = MprdConfigFile::default();
-        config.mode = "trustless".into();
-        config.execution.executor_type = "idempotent_http".into();
-        config.execution.http_url = Some("http://127.0.0.1:8080".into());
-        config.execution.effect_journal_dir = Some(root);
+        let config = MprdConfigFile {
+            mode: "trustless".into(),
+            execution: crate::commands::ExecutionConfig {
+                executor_type: "idempotent_http".into(),
+                http_url: Some("http://127.0.0.1:8080".into()),
+                audit_file: Some(std::path::PathBuf::from(".mprd/audit.jsonl")),
+                effect_journal_dir: Some(root),
+            },
+            ..MprdConfigFile::default()
+        };
 
         match check_executor(&config) {
             CheckResult::Fail { message, .. } => {
@@ -513,11 +523,16 @@ mod tests {
         )
         .expect("write marker");
 
-        let mut config = MprdConfigFile::default();
-        config.mode = "trustless".into();
-        config.execution.executor_type = "idempotent_http".into();
-        config.execution.http_url = Some("http://127.0.0.1:8080".into());
-        config.execution.effect_journal_dir = Some(root);
+        let config = MprdConfigFile {
+            mode: "trustless".into(),
+            execution: crate::commands::ExecutionConfig {
+                executor_type: "idempotent_http".into(),
+                http_url: Some("http://127.0.0.1:8080".into()),
+                audit_file: Some(std::path::PathBuf::from(".mprd/audit.jsonl")),
+                effect_journal_dir: Some(root),
+            },
+            ..MprdConfigFile::default()
+        };
 
         match check_executor(&config) {
             CheckResult::Warn {

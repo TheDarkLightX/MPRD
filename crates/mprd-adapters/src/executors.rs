@@ -840,7 +840,7 @@ impl IdempotentHttpExecutor {
 
     fn persist_barrier_payload<T: Serialize>(
         mut file: File,
-        path: &PathBuf,
+        path: &Path,
         payload: &T,
     ) -> Result<()> {
         let json = serde_json::to_vec(payload).map_err(|e| {
@@ -981,21 +981,17 @@ impl IdempotentHttpExecutor {
         payload: &ExecutePayload,
     ) -> Result<ExecutionResult> {
         match self.prepare_pending_barrier(token, payload)? {
-            EffectBarrierState::Committed(path) => {
-                return Ok(ExecutionResult {
-                    success: true,
-                    message: Some(format!(
-                        "Already committed remote effect barrier: {}",
-                        path.display()
-                    )),
-                });
-            }
-            EffectBarrierState::BlockedPending(path) => {
-                return Err(MprdError::ExecutionError(format!(
-                    "HTTP effect barrier pending at {}; manual resolution required before retry",
+            EffectBarrierState::Committed(path) => Ok(ExecutionResult {
+                success: true,
+                message: Some(format!(
+                    "Already committed remote effect barrier: {}",
                     path.display()
-                )));
-            }
+                )),
+            }),
+            EffectBarrierState::BlockedPending(path) => Err(MprdError::ExecutionError(format!(
+                "HTTP effect barrier pending at {}; manual resolution required before retry",
+                path.display()
+            ))),
             EffectBarrierState::Pending { pending, committed } => {
                 let result = self.inner.execute_payload(token, payload);
                 match result {
