@@ -32,6 +32,7 @@ lean_lib MPRDLeanProofs where
     `MPRD_GovernanceStateLinkage,
     `MPRD_GovernanceExecutionBridge,
     `MPRD_SignedRegistryCheckpointBridge,
+    `MPRD_SignedRegistryBridgeMetadataPacketBoundary,
     `MPRD_SignedRegistryBridgeWitnessBoundary,
     `MPRD_SignedRegistryExecutionBoundary,
     `MPRD_SignedRegistryServeEndToEndRefinement,

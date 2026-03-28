@@ -695,6 +695,12 @@ pub struct RegistryAuthorizationAttestationMetadataV1 {
     pub policy_source_hash: Option<Hash32>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignedRegistryBridgeMetadataPacketV1 {
+    pub registry_authorization: RegistryAuthorizationAttestationMetadataV1,
+    pub registry_checkpoint_attestation_hash: Option<Hash32>,
+}
+
 pub fn registry_authorization_attestation_hash_v1(
     resolution: &AuthorizedPolicyResolutionV1,
 ) -> Hash32 {
@@ -754,37 +760,71 @@ pub fn insert_registry_checkpoint_attestation_metadata_v1(
     );
 }
 
+pub(crate) fn registry_authorization_attestation_metadata_from_resolution_v1(
+    resolution: &AuthorizedPolicyResolutionV1,
+) -> RegistryAuthorizationAttestationMetadataV1 {
+    RegistryAuthorizationAttestationMetadataV1 {
+        resolution_hash: registry_authorization_attestation_hash_v1(resolution),
+        exec_kind_id: resolution.authorized_policy.policy_exec_kind_id,
+        exec_version_id: resolution.authorized_policy.policy_exec_version_id,
+        image_id: resolution.image_id,
+        policy_source_kind_id: resolution.authorized_policy.policy_source_kind_id,
+        policy_source_hash: resolution.authorized_policy.policy_source_hash,
+    }
+}
+
 pub fn insert_registry_authorization_attestation_metadata_v1(
     metadata: &mut std::collections::HashMap<String, String>,
     resolution: &AuthorizedPolicyResolutionV1,
 ) {
+    insert_registry_authorization_attestation_packet_v1(
+        metadata,
+        &registry_authorization_attestation_metadata_from_resolution_v1(resolution),
+    );
+}
+
+pub(crate) fn insert_registry_authorization_attestation_packet_v1(
+    metadata: &mut std::collections::HashMap<String, String>,
+    registry_authorization: &RegistryAuthorizationAttestationMetadataV1,
+) {
     metadata.insert(
         REGISTRY_AUTH_METADATA_RESOLUTION_HASH_V1.into(),
-        hex::encode(registry_authorization_attestation_hash_v1(resolution).0),
+        hex::encode(registry_authorization.resolution_hash.0),
     );
     metadata.insert(
         REGISTRY_AUTH_METADATA_EXEC_KIND_ID_V1.into(),
-        hex::encode(resolution.authorized_policy.policy_exec_kind_id),
+        hex::encode(registry_authorization.exec_kind_id),
     );
     metadata.insert(
         REGISTRY_AUTH_METADATA_EXEC_VERSION_ID_V1.into(),
-        hex::encode(resolution.authorized_policy.policy_exec_version_id),
+        hex::encode(registry_authorization.exec_version_id),
     );
     metadata.insert(
         REGISTRY_AUTH_METADATA_IMAGE_ID_V1.into(),
-        hex::encode(resolution.image_id),
+        hex::encode(registry_authorization.image_id),
     );
-    if let Some(kind_id) = resolution.authorized_policy.policy_source_kind_id {
+    if let Some(kind_id) = registry_authorization.policy_source_kind_id {
         metadata.insert(
             REGISTRY_AUTH_METADATA_POLICY_SOURCE_KIND_ID_V1.into(),
             hex::encode(kind_id),
         );
     }
-    if let Some(source_hash) = resolution.authorized_policy.policy_source_hash {
+    if let Some(source_hash) = registry_authorization.policy_source_hash {
         metadata.insert(
             REGISTRY_AUTH_METADATA_POLICY_SOURCE_HASH_V1.into(),
             hex::encode(source_hash.0),
         );
+    }
+}
+
+pub fn insert_signed_registry_bridge_metadata_packet_v1(
+    metadata: &mut std::collections::HashMap<String, String>,
+    packet: &SignedRegistryBridgeMetadataPacketV1,
+) {
+    insert_registry_authorization_attestation_packet_v1(metadata, &packet.registry_authorization);
+    if let Some(checkpoint_attestation_hash) = packet.registry_checkpoint_attestation_hash.as_ref()
+    {
+        insert_registry_checkpoint_attestation_metadata_v1(metadata, checkpoint_attestation_hash);
     }
 }
 
@@ -887,6 +927,35 @@ pub fn registry_authorization_attestation_metadata_from_metadata_v1(
             None => None,
         },
     }))
+}
+
+pub fn signed_registry_bridge_metadata_packet_from_metadata_v1(
+    metadata: &std::collections::HashMap<String, String>,
+) -> Result<Option<SignedRegistryBridgeMetadataPacketV1>> {
+    let registry_authorization =
+        registry_authorization_attestation_metadata_from_metadata_v1(metadata)?;
+    let registry_checkpoint_attestation_hash =
+        match metadata.get(REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1) {
+            Some(value) => Some(parse_registry_metadata_hash32_v1(
+                value,
+                REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1,
+            )?),
+            None => None,
+        };
+
+    match (registry_authorization, registry_checkpoint_attestation_hash) {
+        (None, None) => Ok(None),
+        (Some(registry_authorization), registry_checkpoint_attestation_hash) => {
+            Ok(Some(SignedRegistryBridgeMetadataPacketV1 {
+                registry_authorization,
+                registry_checkpoint_attestation_hash,
+            }))
+        }
+        (None, Some(_)) => Err(mprd_core::MprdError::InvalidInput(
+            "checkpoint attestation metadata without registry authorization metadata cannot reconstruct signed registry bridge"
+                .into(),
+        )),
+    }
 }
 
 pub fn verify_registry_authorization_attestation_metadata_v1(
@@ -1642,6 +1711,83 @@ mod tests {
         );
         verify_signed_registry_checkpoint_attestation_metadata_v1(&proof, &signed)
             .expect("verify checkpoint metadata");
+    }
+
+    #[test]
+    fn signed_registry_bridge_metadata_packet_round_trips() {
+        let key = TokenSigningKey::from_seed(&[0x63; 32]);
+        let signed = SignedRegistryStateV1::sign(
+            &key,
+            777,
+            RegistryStateV1 {
+                policy_epoch: 9,
+                registry_root: dummy_hash(0x43),
+                authorized_policies: vec![],
+                guest_image_manifest: GuestImageManifestV1::sign(&key, 125, vec![])
+                    .expect("manifest"),
+            },
+        )
+        .expect("signed registry");
+        let resolution = AuthorizedPolicyResolutionV1 {
+            authorized_policy: AuthorizedPolicyV1 {
+                policy_hash: dummy_hash(0x44),
+                policy_exec_kind_id: [0x45; 32],
+                policy_exec_version_id: [0x46; 32],
+                policy_source_kind_id: Some([0x47; 32]),
+                policy_source_hash: Some(dummy_hash(0x48)),
+            },
+            image_id: [0x49; 32],
+        };
+        let expected = SignedRegistryBridgeMetadataPacketV1 {
+            registry_authorization: registry_authorization_attestation_metadata_from_resolution_v1(
+                &resolution,
+            ),
+            registry_checkpoint_attestation_hash: Some(
+                signed_registry_checkpoint_attestation_hash_v1(&signed),
+            ),
+        };
+
+        let mut metadata = std::collections::HashMap::new();
+        insert_signed_registry_bridge_metadata_packet_v1(&mut metadata, &expected);
+
+        let actual = signed_registry_bridge_metadata_packet_from_metadata_v1(&metadata)
+            .expect("packet")
+            .expect("signed registry bridge packet");
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn signed_registry_bridge_metadata_packet_rejects_checkpoint_without_registry_auth() {
+        let key = TokenSigningKey::from_seed(&[0x64; 32]);
+        let signed = SignedRegistryStateV1::sign(
+            &key,
+            888,
+            RegistryStateV1 {
+                policy_epoch: 10,
+                registry_root: dummy_hash(0x4A),
+                authorized_policies: vec![],
+                guest_image_manifest: GuestImageManifestV1::sign(&key, 126, vec![])
+                    .expect("manifest"),
+            },
+        )
+        .expect("signed registry");
+        let mut metadata = std::collections::HashMap::new();
+        insert_registry_checkpoint_attestation_metadata_v1(
+            &mut metadata,
+            &signed_registry_checkpoint_attestation_hash_v1(&signed),
+        );
+
+        let err = signed_registry_bridge_metadata_packet_from_metadata_v1(&metadata).unwrap_err();
+        match err {
+            mprd_core::MprdError::InvalidInput(msg) => {
+                assert_eq!(
+                    msg,
+                    "checkpoint attestation metadata without registry authorization metadata cannot reconstruct signed registry bridge"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]
