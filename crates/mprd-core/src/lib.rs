@@ -393,6 +393,59 @@ impl<'a> ExecutionReadyBundle<'a> {
     }
 }
 
+/// Constructor-gated runtime witness for the next execute-boundary refinement step.
+///
+/// This is the smallest exact runtime object that simultaneously carries:
+/// - the live execution-boundary witness,
+/// - the admitted execution authorization (with concrete governance),
+/// - the exact binding-vector packet for the verified-decision tuple, and
+/// - the executor-side signature / provenance / replay admissions.
+///
+/// It does not close the top-level refinement theorem by itself, but it removes one more
+/// "adjacent by convention" seam from the runtime side of that proof lane.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionReadyRefinementWitnessV1 {
+    boundary: ExecutionBoundaryWitnessV1,
+    authorization: ExecutionAuthorizationWitnessV1,
+    binding_vector: ExecutionBindingVectorPacketV1,
+    signature: crate::crypto::SignatureAdmissionWitnessV1,
+    state_provenance: crate::state_provenance::StateProvenanceWitnessV1,
+    replay_clearance: crate::anti_replay::ReplayClearanceWitnessV1,
+}
+
+impl ExecutionReadyRefinementWitnessV1 {
+    pub fn boundary(&self) -> &ExecutionBoundaryWitnessV1 {
+        &self.boundary
+    }
+
+    pub fn authorization(&self) -> &ExecutionAuthorizationWitnessV1 {
+        &self.authorization
+    }
+
+    pub fn governance(&self) -> &GovernanceAdmissionWitnessV1 {
+        self.authorization.governance().unwrap_or_else(|| {
+            unreachable!("execution ready refinement witness always carries governance")
+        })
+    }
+
+    pub fn binding_vector(&self) -> &ExecutionBindingVectorPacketV1 {
+        &self.binding_vector
+    }
+
+    pub fn signature(&self) -> &crate::crypto::SignatureAdmissionWitnessV1 {
+        &self.signature
+    }
+
+    pub fn state_provenance(&self) -> &crate::state_provenance::StateProvenanceWitnessV1 {
+        &self.state_provenance
+    }
+
+    pub fn replay_clearance(&self) -> &crate::anti_replay::ReplayClearanceWitnessV1 {
+        &self.replay_clearance
+    }
+}
+
 /// A token/decision/state packet admitted for attestation after fail-closed identity checks.
 #[derive(Clone, Debug)]
 pub struct AttestationReadyBundle<'a> {
@@ -1539,6 +1592,72 @@ pub fn execution_binding_vector_hash_v1(
             token, proof, state, candidates, verdicts, decision,
         )?,
     ))
+}
+
+/// Construct the runtime refinement witness from a fully admitted ready bundle and the exact
+/// verified-decision tuple that led to execution.
+///
+/// The constructor fails closed unless one concrete governance witness, one complete executor
+/// admission surface, and one exact binding-vector packet all agree on the same ready bundle.
+pub fn execution_ready_refinement_witness_v1(
+    ready: &ExecutionReadyBundle<'_>,
+    state: &StateSnapshot,
+    candidates: &[CandidateAction],
+    verdicts: &[RuleVerdict],
+    decision: &Decision,
+) -> Result<ExecutionReadyRefinementWitnessV1> {
+    let authorization = ready.authorization().ok_or_else(|| {
+        MprdError::InvalidInput(
+            "execution ready refinement witness requires execution authorization witness".into(),
+        )
+    })?;
+    if authorization.governance().is_none() {
+        return Err(MprdError::InvalidInput(
+            "execution ready refinement witness requires governance witness".into(),
+        ));
+    }
+    let executor_admission = ready.executor_admission().ok_or_else(|| {
+        MprdError::InvalidInput(
+            "execution ready refinement witness requires executor admission witness".into(),
+        )
+    })?;
+    let signature = executor_admission.signature().ok_or_else(|| {
+        MprdError::InvalidInput(
+            "execution ready refinement witness requires signature admission witness".into(),
+        )
+    })?;
+    let state_provenance = executor_admission.state_provenance().ok_or_else(|| {
+        MprdError::InvalidInput(
+            "execution ready refinement witness requires state provenance witness".into(),
+        )
+    })?;
+    let replay_clearance = executor_admission.replay_clearance().ok_or_else(|| {
+        MprdError::InvalidInput(
+            "execution ready refinement witness requires replay clearance witness".into(),
+        )
+    })?;
+    if state_provenance.state_ref() != authorization.state_binding().state_ref() {
+        return Err(MprdError::InvalidInput(
+            "execution ready refinement witness drifted between authorization and state provenance"
+                .into(),
+        ));
+    }
+    let binding_vector = execution_binding_vector_packet_from_verified_decision_v1(
+        ready.token(),
+        ready.proof(),
+        state,
+        candidates,
+        verdicts,
+        decision,
+    )?;
+    Ok(ExecutionReadyRefinementWitnessV1 {
+        boundary: ready.boundary().clone(),
+        authorization: authorization.clone(),
+        binding_vector,
+        signature: signature.clone(),
+        state_provenance: state_provenance.clone(),
+        replay_clearance: *replay_clearance,
+    })
 }
 
 /// Emit a deterministic authorization hash over the exact policy/state/governance packet that the
@@ -3994,6 +4113,247 @@ mod tests {
             admission.replay_clearance().expect("replay").claim(),
             crate::anti_replay::NonceClaim::NotClaimed
         );
+    }
+
+    type ExecutionReadyRefinementFixture = (
+        DecisionToken,
+        ProofBundle,
+        StateSnapshot,
+        Vec<CandidateAction>,
+        Vec<RuleVerdict>,
+        Decision,
+        ExecutionReadyBundle<'static>,
+        crate::crypto::TokenVerifyingKey,
+    );
+
+    fn execution_ready_refinement_fixture(
+        include_governance: bool,
+    ) -> ExecutionReadyRefinementFixture {
+        #[derive(Clone, Copy)]
+        struct AcceptingNonceValidator;
+
+        impl crate::anti_replay::NonceValidator for AcceptingNonceValidator {
+            fn validate(&self, _token: &DecisionToken) -> Result<()> {
+                Ok(())
+            }
+
+            fn validate_and_claim(
+                &self,
+                _token: &DecisionToken,
+            ) -> Result<crate::anti_replay::NonceClaim> {
+                Ok(crate::anti_replay::NonceClaim::NotClaimed)
+            }
+
+            fn mark_used(&self, _token: &DecisionToken) -> Result<()> {
+                Ok(())
+            }
+
+            fn cleanup(&self) {}
+        }
+
+        let signing_key = crate::crypto::TokenSigningKey::generate();
+        let verifying_key = signing_key.verifying_key();
+        let state_source_id = dummy_hash(0x71);
+        let candidate = valid_http_call_candidate();
+        let candidates = vec![candidate.clone()];
+        let verdicts = vec![RuleVerdict {
+            allowed: true,
+            reasons: vec![],
+            limits: HashMap::new(),
+        }];
+        let mut decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash: dummy_hash(0x72),
+            decision_commitment: Hash32([0u8; 32]),
+        };
+        decision.decision_commitment = hash::hash_decision(&decision);
+
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(0x73),
+            state_ref: StateRef {
+                state_source_id,
+                state_epoch: 5,
+                state_attestation_hash: dummy_hash(0x74),
+            },
+        };
+        let governance = include_governance.then(|| {
+            governance_admission_witness_from_fields_v1(
+                GovernanceUpdateKindV1::PolicyTweak,
+                true,
+                false,
+                true,
+            )
+            .expect("governance")
+        });
+        let token = DecisionToken {
+            policy_hash: decision.policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 3,
+                registry_root: dummy_hash(0x75),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x76),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let mut token = token;
+        token.signature = signing_key.sign_token(&token).to_vec();
+
+        let mut proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: hash::hash_candidate_set(&candidates),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        if let Some(governance) = governance.as_ref() {
+            insert_governance_attestation_metadata_v1(&mut proof.attestation_metadata, governance);
+        }
+        insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &token,
+            &state,
+            governance.as_ref(),
+        );
+
+        let leaked_token = Box::leak(Box::new(token));
+        let leaked_proof = Box::leak(Box::new(proof));
+        let leaked_state = Box::leak(Box::new(state));
+        let leaked_candidates = candidates.clone();
+        let leaked_verdicts = verdicts.clone();
+        let leaked_decision = decision.clone();
+
+        let authority =
+            policy_authority_witness_v1(&leaked_token.policy_hash, &leaked_token.policy_ref)
+                .expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(leaked_state);
+        let ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(leaked_token, leaked_proof),
+            &authority,
+            &state_binding,
+            governance,
+        )
+        .expect("ready");
+        let ready = prepare_execution_ready_with_signature(&ready, &verifying_key)
+            .expect("signature witness");
+        let ready = prepare_execution_ready_with_state_provenance(&ready, &[state_source_id])
+            .expect("state provenance witness");
+        let (ready, _replay) =
+            prepare_execution_ready_with_replay_clearance(&ready, &AcceptingNonceValidator)
+                .expect("replay witness");
+
+        (
+            leaked_token.clone(),
+            leaked_proof.clone(),
+            leaked_state.clone(),
+            leaked_candidates,
+            leaked_verdicts,
+            leaked_decision,
+            ready,
+            verifying_key,
+        )
+    }
+
+    #[test]
+    fn execution_ready_refinement_witness_accepts_fully_admitted_ready_bundle() {
+        let (_token, _proof, state, candidates, verdicts, decision, ready, verifying_key) =
+            execution_ready_refinement_fixture(true);
+
+        let witness = execution_ready_refinement_witness_v1(
+            &ready,
+            &state,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .expect("execution_ready_refinement_witness_v1");
+
+        assert_eq!(witness.boundary(), ready.boundary());
+        assert_eq!(
+            witness.authorization().policy_authority().policy_hash(),
+            &ready.token().policy_hash
+        );
+        assert_eq!(
+            witness.governance().update_kind(),
+            GovernanceUpdateKindV1::PolicyTweak
+        );
+        assert_eq!(
+            witness.signature().signer_pubkey(),
+            &verifying_key.to_bytes()
+        );
+        assert_eq!(witness.state_provenance().state_ref(), &state.state_ref);
+        assert_eq!(
+            witness.replay_clearance().claim(),
+            crate::anti_replay::NonceClaim::NotClaimed
+        );
+        assert_eq!(
+            witness.binding_vector(),
+            &execution_binding_vector_packet_from_verified_decision_v1(
+                ready.token(),
+                ready.proof(),
+                &state,
+                &candidates,
+                &verdicts,
+                &decision,
+            )
+            .expect("binding vector packet")
+        );
+    }
+
+    #[test]
+    fn execution_ready_refinement_witness_rejects_missing_governance() {
+        let (_token, _proof, state, candidates, verdicts, decision, ready, _vk) =
+            execution_ready_refinement_fixture(false);
+
+        let err = execution_ready_refinement_witness_v1(
+            &ready,
+            &state,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("execution ready refinement witness requires governance witness"));
+    }
+
+    #[test]
+    fn execution_ready_refinement_witness_rejects_binding_drift() {
+        let (_token, _proof, state, candidates, verdicts, mut decision, ready, _vk) =
+            execution_ready_refinement_fixture(true);
+        decision.chosen_action = CandidateAction {
+            action_type: "http_call".into(),
+            params: HashMap::from([
+                ("url".into(), Value::String("https://drift.example".into())),
+                ("method".into(), Value::String("POST".into())),
+            ]),
+            score: Score(0),
+            candidate_hash: dummy_hash(0x77),
+        };
+
+        let err = execution_ready_refinement_witness_v1(
+            &ready,
+            &state,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("selected candidate drifted before execution binding hash"));
     }
 
     #[test]
