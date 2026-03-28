@@ -374,6 +374,17 @@ impl GovernanceUpdateKindV1 {
             Self::AgentCapabilityExpand => "agent_capability_expand",
         }
     }
+
+    pub fn from_str_v1(value: &str) -> Result<Self> {
+        match value {
+            "policy_tweak" => Ok(Self::PolicyTweak),
+            "safety_rule_change" => Ok(Self::SafetyRuleChange),
+            "agent_capability_expand" => Ok(Self::AgentCapabilityExpand),
+            _ => Err(MprdError::InvalidInput(
+                "invalid governance_update_kind attestation metadata".into(),
+            )),
+        }
+    }
 }
 
 /// Concrete governance-admission witness derived from the prepared Tau governance lane surface.
@@ -642,6 +653,16 @@ fn governance_attestation_bool_v1(value: bool) -> &'static str {
     }
 }
 
+fn governance_attestation_bool_from_str_v1(key: &'static str, value: &str) -> Result<bool> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(MprdError::InvalidInput(format!(
+            "invalid {key} attestation metadata bool"
+        ))),
+    }
+}
+
 /// Emit canonical governance attestation metadata for the admitted governance witness.
 pub fn insert_governance_attestation_metadata_v1(
     metadata: &mut HashMap<String, String>,
@@ -663,6 +684,55 @@ pub fn insert_governance_attestation_metadata_v1(
         GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1.into(),
         governance_attestation_bool_v1(governance.link_ok()).into(),
     );
+}
+
+/// Reconstruct the admitted governance witness from canonical proof metadata.
+///
+/// This is used by audit and export surfaces that must expose governance provenance as a typed
+/// object instead of burying it inside the raw metadata map.
+pub fn governance_admission_witness_from_attestation_metadata_v1(
+    metadata: &HashMap<String, String>,
+) -> Result<Option<GovernanceAdmissionWitnessV1>> {
+    let update_kind = metadata.get(GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1);
+    let profile_app_ok = metadata.get(GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1);
+    let profile_safety_ok = metadata.get(GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1);
+    let link_ok = metadata.get(GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1);
+
+    let present_count = usize::from(update_kind.is_some())
+        + usize::from(profile_app_ok.is_some())
+        + usize::from(profile_safety_ok.is_some())
+        + usize::from(link_ok.is_some());
+    if present_count == 0 {
+        return Ok(None);
+    }
+    if present_count != 4 {
+        return Err(MprdError::InvalidInput(
+            "partial governance attestation metadata cannot reconstruct admitted governance".into(),
+        ));
+    }
+
+    let update_kind =
+        GovernanceUpdateKindV1::from_str_v1(update_kind.expect("checked above").as_str())?;
+    let profile_app_ok = governance_attestation_bool_from_str_v1(
+        GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1,
+        profile_app_ok.expect("checked above").as_str(),
+    )?;
+    let profile_safety_ok = governance_attestation_bool_from_str_v1(
+        GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1,
+        profile_safety_ok.expect("checked above").as_str(),
+    )?;
+    let link_ok = governance_attestation_bool_from_str_v1(
+        GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1,
+        link_ok.expect("checked above").as_str(),
+    )?;
+
+    governance_admission_witness_from_fields_v1(
+        update_kind,
+        profile_app_ok,
+        profile_safety_ok,
+        link_ok,
+    )
+    .map(Some)
 }
 
 fn require_governance_attestation_metadata_value_v1<'a>(
@@ -3188,6 +3258,91 @@ mod tests {
         .unwrap_err();
         assert!(
             matches!(err, MprdError::InvalidInput(message) if message == "governance admission requires link_ok")
+        );
+    }
+
+    #[test]
+    fn governance_admission_witness_from_attestation_metadata_accepts_full_metadata() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1.into(),
+            GovernanceUpdateKindV1::SafetyRuleChange.as_str().into(),
+        );
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1.into(),
+            "true".into(),
+        );
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1.into(),
+            "true".into(),
+        );
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1.into(),
+            "true".into(),
+        );
+
+        let witness = governance_admission_witness_from_attestation_metadata_v1(&metadata)
+            .expect("witness")
+            .expect("governance");
+
+        assert_eq!(
+            witness.update_kind(),
+            GovernanceUpdateKindV1::SafetyRuleChange
+        );
+        assert!(witness.profile_app_ok());
+        assert!(witness.profile_safety_ok());
+        assert!(witness.link_ok());
+    }
+
+    #[test]
+    fn governance_admission_witness_from_attestation_metadata_returns_none_when_absent() {
+        let witness = governance_admission_witness_from_attestation_metadata_v1(&HashMap::new())
+            .expect("no metadata should be accepted");
+        assert!(witness.is_none());
+    }
+
+    #[test]
+    fn governance_admission_witness_from_attestation_metadata_accepts_false_bool_when_admitted() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1.into(),
+            GovernanceUpdateKindV1::PolicyTweak.as_str().into(),
+        );
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1.into(),
+            "true".into(),
+        );
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1.into(),
+            "false".into(),
+        );
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1.into(),
+            "true".into(),
+        );
+
+        let witness = governance_admission_witness_from_attestation_metadata_v1(&metadata)
+            .expect("witness")
+            .expect("governance");
+
+        assert_eq!(witness.update_kind(), GovernanceUpdateKindV1::PolicyTweak);
+        assert!(witness.profile_app_ok());
+        assert!(!witness.profile_safety_ok());
+        assert!(witness.link_ok());
+    }
+
+    #[test]
+    fn governance_admission_witness_from_attestation_metadata_rejects_partial_metadata() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1.into(),
+            GovernanceUpdateKindV1::PolicyTweak.as_str().into(),
+        );
+
+        let err = governance_admission_witness_from_attestation_metadata_v1(&metadata).unwrap_err();
+
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "partial governance attestation metadata cannot reconstruct admitted governance")
         );
     }
 

@@ -154,55 +154,19 @@ pub fn attestation_metadata_hash_v1(
 }
 
 fn governance_metadata_fields_from_proof(proof: &ProofBundle) -> Result<GovernanceMetadataFields> {
-    let metadata = &proof.attestation_metadata;
-    let update_kind = metadata.get(crate::GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1);
-    let profile_app_ok = metadata.get(crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1);
-    let profile_safety_ok =
-        metadata.get(crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1);
-    let link_ok = metadata.get(crate::GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1);
+    let governance = crate::governance_admission_witness_from_attestation_metadata_v1(
+        &proof.attestation_metadata,
+    )
+    .map_err(|e| MprdError::ExecutionError(e.to_string()))?;
 
-    let present_count = usize::from(update_kind.is_some())
-        + usize::from(profile_app_ok.is_some())
-        + usize::from(profile_safety_ok.is_some())
-        + usize::from(link_ok.is_some());
-    if present_count == 0 {
-        return Ok(GovernanceMetadataFields::default());
-    }
-    if present_count != 4 {
-        return Err(MprdError::ExecutionError(
-            "partial governance attestation metadata cannot be recorded in decision log".into(),
-        ));
-    }
-
-    let parse_bool = |key: &'static str, raw: &str| -> Result<bool> {
-        match raw {
-            "true" => Ok(true),
-            "false" => Ok(false),
-            _ => Err(MprdError::ExecutionError(format!(
-                "invalid {key} attestation metadata bool in decision log"
-            ))),
-        }
-    };
-
-    let update_kind = update_kind.expect("checked above").clone();
-    let profile_app_ok = parse_bool(
-        crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1,
-        profile_app_ok.expect("checked above"),
-    )?;
-    let profile_safety_ok = parse_bool(
-        crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1,
-        profile_safety_ok.expect("checked above"),
-    )?;
-    let link_ok = parse_bool(
-        crate::GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1,
-        link_ok.expect("checked above"),
-    )?;
-
-    Ok(GovernanceMetadataFields {
-        update_kind: Some(update_kind),
-        profile_app_ok: Some(profile_app_ok),
-        profile_safety_ok: Some(profile_safety_ok),
-        link_ok: Some(link_ok),
+    Ok(match governance {
+        None => GovernanceMetadataFields::default(),
+        Some(governance) => GovernanceMetadataFields {
+            update_kind: Some(governance.update_kind().as_str().into()),
+            profile_app_ok: Some(governance.profile_app_ok()),
+            profile_safety_ok: Some(governance.profile_safety_ok()),
+            link_ok: Some(governance.link_ok()),
+        },
     })
 }
 
@@ -934,7 +898,7 @@ mod tests {
                 vec![
                     (
                         crate::GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1,
-                        "SafetyRuleChange",
+                        "safety_rule_change",
                     ),
                     (
                         crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1,
@@ -942,7 +906,7 @@ mod tests {
                     ),
                     (
                         crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1,
-                        "false",
+                        "true",
                     ),
                     (crate::GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1, "true"),
                 ],

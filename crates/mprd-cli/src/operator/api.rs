@@ -213,7 +213,26 @@ pub struct ProofBundle {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_boundary_refinement_hash: Option<HashHex>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub governance: Option<GovernanceAttestation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub chosen_action_preimage_storage: Option<ChosenActionPreimageStorage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GovernanceUpdateKind {
+    PolicyTweak,
+    SafetyRuleChange,
+    AgentCapabilityExpand,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GovernanceAttestation {
+    pub update_kind: GovernanceUpdateKind,
+    pub profile_app_ok: bool,
+    pub profile_safety_ok: bool,
+    pub link_ok: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

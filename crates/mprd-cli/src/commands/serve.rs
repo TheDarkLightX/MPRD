@@ -68,6 +68,35 @@ fn map_chosen_action_preimage_storage(
     }
 }
 
+fn map_governance_update_kind(
+    kind: mprd_core::GovernanceUpdateKindV1,
+) -> op_api::GovernanceUpdateKind {
+    match kind {
+        mprd_core::GovernanceUpdateKindV1::PolicyTweak => op_api::GovernanceUpdateKind::PolicyTweak,
+        mprd_core::GovernanceUpdateKindV1::SafetyRuleChange => {
+            op_api::GovernanceUpdateKind::SafetyRuleChange
+        }
+        mprd_core::GovernanceUpdateKindV1::AgentCapabilityExpand => {
+            op_api::GovernanceUpdateKind::AgentCapabilityExpand
+        }
+    }
+}
+
+fn governance_attestation_from_metadata(
+    metadata: &HashMap<String, String>,
+) -> CoreResult<Option<op_api::GovernanceAttestation>> {
+    Ok(
+        mprd_core::governance_admission_witness_from_attestation_metadata_v1(metadata)?.map(
+            |governance| op_api::GovernanceAttestation {
+                update_kind: map_governance_update_kind(governance.update_kind()),
+                profile_app_ok: governance.profile_app_ok(),
+                profile_safety_ok: governance.profile_safety_ok(),
+                link_ok: governance.link_ok(),
+            },
+        ),
+    )
+}
+
 struct CliAllowAllPolicyEngine;
 
 impl PolicyEngine for CliAllowAllPolicyEngine {
@@ -2472,6 +2501,13 @@ async fn api_decision_detail(
         .store
         .read_record(&id)
         .map_err(|_| StatusCode::NOT_FOUND)?;
+    let governance = governance_attestation_from_metadata(&record.proof.attestation_metadata)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let chosen_action_preimage_storage = record
+        .proof
+        .chosen_action_preimage_storage_mode
+        .clone()
+        .map(map_chosen_action_preimage_storage);
 
     let summary = op_api::DecisionSummary {
         id: id.clone(),
@@ -2487,7 +2523,7 @@ async fn api_decision_detail(
         proof_status: record.summary.proof_status.clone(),
         execution_status: record.summary.execution_status.clone(),
         latency_ms: record.summary.latency_ms,
-        chosen_action_preimage_storage: None,
+        chosen_action_preimage_storage: chosen_action_preimage_storage.clone(),
     };
 
     Ok(Json(op_api::DecisionDetail {
@@ -2534,10 +2570,8 @@ async fn api_decision_detail(
                 .proof
                 .execution_boundary_refinement_hash
                 .clone(),
-            chosen_action_preimage_storage: record
-                .proof
-                .chosen_action_preimage_storage_mode
-                .map(map_chosen_action_preimage_storage),
+            governance,
+            chosen_action_preimage_storage,
         },
         state: op_api::StateSnapshot {
             fields: record.state.fields_json,

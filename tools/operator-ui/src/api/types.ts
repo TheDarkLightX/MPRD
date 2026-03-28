@@ -133,7 +133,20 @@ export interface ProofBundle {
     executionReadyPacketHash?: string;
     executionBindingVectorHash?: string;
     executionBoundaryRefinementHash?: string;
+    governance?: GovernanceAttestation;
     chosenActionPreimageStorage?: ChosenActionPreimageStorage;
+}
+
+export type GovernanceUpdateKind =
+    | 'policy_tweak'
+    | 'safety_rule_change'
+    | 'agent_capability_expand';
+
+export interface GovernanceAttestation {
+    updateKind: GovernanceUpdateKind;
+    profileAppOk: boolean;
+    profileSafetyOk: boolean;
+    linkOk: boolean;
 }
 
 export interface StateSnapshot {
