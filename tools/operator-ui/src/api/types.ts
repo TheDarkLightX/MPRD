@@ -129,12 +129,22 @@ export interface ProofBundle {
     attestationMetadataHash: string;
     registryAuthorizationHash?: string;
     registryCheckpointAttestationHash?: string;
+    registryAuthorization?: RegistryAuthorizationAttestation;
     executionAuthorizationHash?: string;
     executionReadyPacketHash?: string;
     executionBindingVectorHash?: string;
     executionBoundaryRefinementHash?: string;
     governance?: GovernanceAttestation;
     chosenActionPreimageStorage?: ChosenActionPreimageStorage;
+}
+
+export interface RegistryAuthorizationAttestation {
+    resolutionHash: string;
+    execKindId: string;
+    execVersionId: string;
+    imageId: string;
+    policySourceKindId?: string;
+    policySourceHash?: string;
 }
 
 export type GovernanceUpdateKind =

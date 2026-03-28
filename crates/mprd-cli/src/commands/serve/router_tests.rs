@@ -839,6 +839,31 @@ async fn decision_detail_reports_attestation_execution_and_ready_packet_hashes()
         mprd_zk::registry_state::REGISTRY_AUTH_METADATA_RESOLUTION_HASH_V1.into(),
         expected_registry_authorization_hash.clone(),
     );
+    let expected_registry_exec_kind_id = hex::encode([0x91u8; 32]);
+    proof.attestation_metadata.insert(
+        mprd_zk::registry_state::REGISTRY_AUTH_METADATA_EXEC_KIND_ID_V1.into(),
+        expected_registry_exec_kind_id.clone(),
+    );
+    let expected_registry_exec_version_id = hex::encode([0x92u8; 32]);
+    proof.attestation_metadata.insert(
+        mprd_zk::registry_state::REGISTRY_AUTH_METADATA_EXEC_VERSION_ID_V1.into(),
+        expected_registry_exec_version_id.clone(),
+    );
+    let expected_registry_image_id = hex::encode([0x93u8; 32]);
+    proof.attestation_metadata.insert(
+        mprd_zk::registry_state::REGISTRY_AUTH_METADATA_IMAGE_ID_V1.into(),
+        expected_registry_image_id.clone(),
+    );
+    let expected_registry_policy_source_kind_id = hex::encode([0x94u8; 32]);
+    proof.attestation_metadata.insert(
+        mprd_zk::registry_state::REGISTRY_AUTH_METADATA_POLICY_SOURCE_KIND_ID_V1.into(),
+        expected_registry_policy_source_kind_id.clone(),
+    );
+    let expected_registry_policy_source_hash = hex::encode([0x95u8; 32]);
+    proof.attestation_metadata.insert(
+        mprd_zk::registry_state::REGISTRY_AUTH_METADATA_POLICY_SOURCE_HASH_V1.into(),
+        expected_registry_policy_source_hash.clone(),
+    );
     let expected_execution_authorization_hash = hex::encode([0xabu8; 32]);
     proof.attestation_metadata.insert(
         mprd_core::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1.into(),
@@ -925,6 +950,17 @@ async fn decision_detail_reports_attestation_execution_and_ready_packet_hashes()
         Some(expected_registry_authorization_hash.as_str())
     );
     assert_eq!(
+        body.proof.registry_authorization,
+        Some(op_api::RegistryAuthorizationAttestation {
+            resolution_hash: expected_registry_authorization_hash,
+            exec_kind_id: expected_registry_exec_kind_id,
+            exec_version_id: expected_registry_exec_version_id,
+            image_id: expected_registry_image_id,
+            policy_source_kind_id: Some(expected_registry_policy_source_kind_id),
+            policy_source_hash: Some(expected_registry_policy_source_hash),
+        })
+    );
+    assert_eq!(
         body.proof.execution_ready_packet_hash.as_deref(),
         Some(expected_execution_ready_packet_hash.as_str())
     );
@@ -963,6 +999,43 @@ async fn decision_detail_rejects_partial_governance_attestation_metadata() {
         mprd_core::GovernanceUpdateKindV1::PolicyTweak
             .as_str()
             .into(),
+    );
+
+    let id = state
+        .store
+        .write_verified_decision(
+            &token,
+            &proof,
+            &state_snapshot,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .expect("write decision");
+
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/decisions/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn decision_detail_rejects_partial_registry_authorization_attestation_metadata() {
+    let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state = test_state(&tmp);
+    let (token, mut proof, state_snapshot, candidates, verdicts, decision) =
+        sample_mpb_lite_decision_inputs();
+    proof.attestation_metadata.insert(
+        mprd_zk::registry_state::REGISTRY_AUTH_METADATA_EXEC_KIND_ID_V1.into(),
+        hex::encode([0x91u8; 32]),
     );
 
     let id = state

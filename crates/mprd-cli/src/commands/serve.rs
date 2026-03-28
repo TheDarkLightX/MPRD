@@ -97,6 +97,24 @@ fn governance_attestation_from_metadata(
     )
 }
 
+fn registry_authorization_from_metadata(
+    metadata: &HashMap<String, String>,
+) -> CoreResult<Option<op_api::RegistryAuthorizationAttestation>> {
+    Ok(
+        mprd_zk::registry_state::registry_authorization_attestation_metadata_from_metadata_v1(
+            metadata,
+        )?
+        .map(|registry| op_api::RegistryAuthorizationAttestation {
+            resolution_hash: hex::encode(registry.resolution_hash.0),
+            exec_kind_id: hex::encode(registry.exec_kind_id),
+            exec_version_id: hex::encode(registry.exec_version_id),
+            image_id: hex::encode(registry.image_id),
+            policy_source_kind_id: registry.policy_source_kind_id.map(hex::encode),
+            policy_source_hash: registry.policy_source_hash.map(|hash| hex::encode(hash.0)),
+        }),
+    )
+}
+
 struct CliAllowAllPolicyEngine;
 
 impl PolicyEngine for CliAllowAllPolicyEngine {
@@ -2503,6 +2521,9 @@ async fn api_decision_detail(
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let governance = governance_attestation_from_metadata(&record.proof.attestation_metadata)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let registry_authorization =
+        registry_authorization_from_metadata(&record.proof.attestation_metadata)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let chosen_action_preimage_storage = record
         .proof
         .chosen_action_preimage_storage_mode
@@ -2559,6 +2580,7 @@ async fn api_decision_detail(
                 .attestation_metadata
                 .get(mprd_zk::registry_state::REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1)
                 .cloned(),
+            registry_authorization,
             execution_authorization_hash: record
                 .proof
                 .attestation_metadata

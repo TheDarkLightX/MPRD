@@ -685,6 +685,16 @@ pub struct AuthorizedPolicyResolutionV1 {
     pub image_id: Id32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegistryAuthorizationAttestationMetadataV1 {
+    pub resolution_hash: Hash32,
+    pub exec_kind_id: Id32,
+    pub exec_version_id: Id32,
+    pub image_id: Id32,
+    pub policy_source_kind_id: Option<Id32>,
+    pub policy_source_hash: Option<Hash32>,
+}
+
 pub fn registry_authorization_attestation_hash_v1(
     resolution: &AuthorizedPolicyResolutionV1,
 ) -> Hash32 {
@@ -785,6 +795,98 @@ fn require_registry_authorization_metadata_value_v1<'a>(
     metadata.get(key).map(String::as_str).ok_or_else(|| {
         mprd_core::MprdError::InvalidInput(format!("missing {key} attestation metadata"))
     })
+}
+
+fn parse_registry_metadata_id32_v1(value: &str, key: &'static str) -> Result<Id32> {
+    let bytes = hex::decode(value).map_err(|_| {
+        mprd_core::MprdError::InvalidInput(format!("invalid {key} attestation metadata hex"))
+    })?;
+    if bytes.len() != 32 {
+        return Err(mprd_core::MprdError::InvalidInput(format!(
+            "invalid {key} attestation metadata length"
+        )));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn parse_registry_metadata_hash32_v1(value: &str, key: &'static str) -> Result<Hash32> {
+    let bytes = hex::decode(value).map_err(|_| {
+        mprd_core::MprdError::InvalidInput(format!("invalid {key} attestation metadata hex"))
+    })?;
+    if bytes.len() != 32 {
+        return Err(mprd_core::MprdError::InvalidInput(format!(
+            "invalid {key} attestation metadata length"
+        )));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(Hash32(out))
+}
+
+pub fn registry_authorization_attestation_metadata_from_metadata_v1(
+    metadata: &std::collections::HashMap<String, String>,
+) -> Result<Option<RegistryAuthorizationAttestationMetadataV1>> {
+    let resolution_hash = metadata.get(REGISTRY_AUTH_METADATA_RESOLUTION_HASH_V1);
+    let exec_kind_id = metadata.get(REGISTRY_AUTH_METADATA_EXEC_KIND_ID_V1);
+    let exec_version_id = metadata.get(REGISTRY_AUTH_METADATA_EXEC_VERSION_ID_V1);
+    let image_id = metadata.get(REGISTRY_AUTH_METADATA_IMAGE_ID_V1);
+    let source_kind_id = metadata.get(REGISTRY_AUTH_METADATA_POLICY_SOURCE_KIND_ID_V1);
+    let source_hash = metadata.get(REGISTRY_AUTH_METADATA_POLICY_SOURCE_HASH_V1);
+
+    let required_count = usize::from(resolution_hash.is_some())
+        + usize::from(exec_kind_id.is_some())
+        + usize::from(exec_version_id.is_some())
+        + usize::from(image_id.is_some());
+    let source_count = usize::from(source_kind_id.is_some()) + usize::from(source_hash.is_some());
+
+    if required_count == 0 && source_count == 0 {
+        return Ok(None);
+    }
+    if required_count != 4 {
+        return Err(mprd_core::MprdError::InvalidInput(
+            "partial registry authorization attestation metadata cannot reconstruct registry authorization".into(),
+        ));
+    }
+    if source_count != 0 && source_count != 2 {
+        return Err(mprd_core::MprdError::InvalidInput(
+            "incomplete registry authorization policy_source attestation metadata".into(),
+        ));
+    }
+
+    Ok(Some(RegistryAuthorizationAttestationMetadataV1 {
+        resolution_hash: parse_registry_metadata_hash32_v1(
+            resolution_hash.expect("checked above"),
+            REGISTRY_AUTH_METADATA_RESOLUTION_HASH_V1,
+        )?,
+        exec_kind_id: parse_registry_metadata_id32_v1(
+            exec_kind_id.expect("checked above"),
+            REGISTRY_AUTH_METADATA_EXEC_KIND_ID_V1,
+        )?,
+        exec_version_id: parse_registry_metadata_id32_v1(
+            exec_version_id.expect("checked above"),
+            REGISTRY_AUTH_METADATA_EXEC_VERSION_ID_V1,
+        )?,
+        image_id: parse_registry_metadata_id32_v1(
+            image_id.expect("checked above"),
+            REGISTRY_AUTH_METADATA_IMAGE_ID_V1,
+        )?,
+        policy_source_kind_id: match source_kind_id {
+            Some(value) => Some(parse_registry_metadata_id32_v1(
+                value,
+                REGISTRY_AUTH_METADATA_POLICY_SOURCE_KIND_ID_V1,
+            )?),
+            None => None,
+        },
+        policy_source_hash: match source_hash {
+            Some(value) => Some(parse_registry_metadata_hash32_v1(
+                value,
+                REGISTRY_AUTH_METADATA_POLICY_SOURCE_HASH_V1,
+            )?),
+            None => None,
+        },
+    }))
 }
 
 pub fn verify_registry_authorization_attestation_metadata_v1(
@@ -1366,6 +1468,98 @@ mod tests {
         );
         verify_registry_authorization_attestation_metadata_v1(&proof, &resolution)
             .expect("verify metadata");
+        let metadata = registry_authorization_attestation_metadata_from_metadata_v1(
+            &proof.attestation_metadata,
+        )
+        .expect("parse metadata")
+        .expect("metadata");
+        assert_eq!(
+            metadata,
+            RegistryAuthorizationAttestationMetadataV1 {
+                resolution_hash: registry_authorization_attestation_hash_v1(&resolution),
+                exec_kind_id: resolution.authorized_policy.policy_exec_kind_id,
+                exec_version_id: resolution.authorized_policy.policy_exec_version_id,
+                image_id: resolution.image_id,
+                policy_source_kind_id: resolution.authorized_policy.policy_source_kind_id,
+                policy_source_hash: resolution.authorized_policy.policy_source_hash,
+            }
+        );
+    }
+
+    #[test]
+    fn registry_authorization_attestation_metadata_returns_none_when_absent() {
+        let metadata = registry_authorization_attestation_metadata_from_metadata_v1(
+            &std::collections::HashMap::new(),
+        )
+        .expect("empty metadata");
+        assert!(metadata.is_none());
+    }
+
+    #[test]
+    fn registry_authorization_attestation_metadata_rejects_partial_required_fields() {
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert(
+            REGISTRY_AUTH_METADATA_EXEC_KIND_ID_V1.into(),
+            hex::encode([0x11; 32]),
+        );
+
+        let err =
+            registry_authorization_attestation_metadata_from_metadata_v1(&metadata).unwrap_err();
+        match err {
+            mprd_core::MprdError::InvalidInput(msg) => {
+                assert_eq!(
+                    msg,
+                    "partial registry authorization attestation metadata cannot reconstruct registry authorization"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn registry_authorization_attestation_metadata_rejects_incomplete_source_mapping() {
+        let resolution = AuthorizedPolicyResolutionV1 {
+            authorized_policy: AuthorizedPolicyV1 {
+                policy_hash: dummy_hash(0x31),
+                policy_exec_kind_id: [0x32; 32],
+                policy_exec_version_id: [0x33; 32],
+                policy_source_kind_id: Some([0x34; 32]),
+                policy_source_hash: Some(dummy_hash(0x35)),
+            },
+            image_id: [0x36; 32],
+        };
+        let mut proof = mprd_core::ProofBundle {
+            policy_hash: dummy_hash(0),
+            state_hash: dummy_hash(0),
+            candidate_set_hash: dummy_hash(0),
+            chosen_action_hash: dummy_hash(0),
+            limits_hash: dummy_hash(0),
+            limits_bytes: vec![],
+            chosen_action_preimage: vec![],
+            risc0_receipt: vec![],
+            attestation_metadata: Default::default(),
+        };
+        insert_registry_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &resolution,
+        );
+        proof
+            .attestation_metadata
+            .remove(REGISTRY_AUTH_METADATA_POLICY_SOURCE_HASH_V1);
+
+        let err = registry_authorization_attestation_metadata_from_metadata_v1(
+            &proof.attestation_metadata,
+        )
+        .unwrap_err();
+        match err {
+            mprd_core::MprdError::InvalidInput(msg) => {
+                assert_eq!(
+                    msg,
+                    "incomplete registry authorization policy_source attestation metadata"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]

@@ -205,6 +205,8 @@ pub struct ProofBundle {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registry_checkpoint_attestation_hash: Option<HashHex>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub registry_authorization: Option<RegistryAuthorizationAttestation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_authorization_hash: Option<HashHex>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_ready_packet_hash: Option<HashHex>,
@@ -233,6 +235,19 @@ pub struct GovernanceAttestation {
     pub profile_app_ok: bool,
     pub profile_safety_ok: bool,
     pub link_ok: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryAuthorizationAttestation {
+    pub resolution_hash: HashHex,
+    pub exec_kind_id: HashHex,
+    pub exec_version_id: HashHex,
+    pub image_id: HashHex,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_source_kind_id: Option<HashHex>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_source_hash: Option<HashHex>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
