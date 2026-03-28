@@ -32,6 +32,7 @@ assumption.
 - `MPRD_SignedRegistryBridgeMetadataPacketBoundary.lean`: a lightweight local theorem for the grouped signed-registry bridge metadata packet: the grouped `SignedRegistryBridgeMetadataPacketV1` language is extensionally equal to a separate loose two-field language carrying the exact registry-authorization attestation packet plus the optional signed-registry checkpoint attestation hash reconstructed from metadata.
 - `MPRD_SignedRegistryExecutionMetadataPacketBoundary.lean`: a lightweight local theorem for the grouped signed-registry execution metadata packet: the grouped `SignedRegistryExecutionMetadataPacketV1` language is extensionally equal to a separate loose two-field language carrying the exact execution-authorization metadata packet plus the exact signed-registry bridge metadata packet.
 - `MPRD_SignedRegistryExecutionRefinementPacketBoundary.lean`: a lightweight local theorem for the grouped signed-registry execution refinement packet: the grouped `SignedRegistryExecutionRefinementPacketV1` language is extensionally equal to a separate loose four-field language carrying the exact grouped ready packet, binding-vector packet, refinement packet, and signed-registry execution metadata packet.
+- `MPRD_SignedRegistryExecutionRefinementWitnessCompiler.lean`: a lightweight local compiler theorem for the grouped signed-registry execution refinement packet: once that grouped packet language exists, there is one canonical abstract `ExecutionReadyPacket` refinement witness shape for the next proof step.
 - `MPRD_SignedRegistryBridgeWitnessBoundary.lean`: a lightweight proof of the next stricter signed-registry boundary: executed states require the registry-authorization hash binding and preservation of the concrete bridge witness into the rebuilt ready bundle, in addition to the signed-registry bridge facts.
 - `MPRD_SignedRegistryExecutionBoundary.lean`: a lightweight joined boundary proof for the shipped signed-registry path: executed states require the signed-registry bridge facts plus the concrete execution guards (verified, allowed, replay, binding, executor).
 - `MPRD_SignedRegistryServeEndToEndRefinement.lean`: a lightweight top-level composed refinement bridge for the shipped signed-registry `mprd serve` path: executed serve states refine through the grouped local `ExecutionReadyPacketV1` boundary and then into the abstract `MPRD_ExecutionBoundary` theorem, with a canonical witness discharged from the serve-boundary state instead of passed in as an extra theorem parameter.
@@ -83,6 +84,7 @@ lake env lean MPRD_SignedRegistryCheckpointBridge.lean
 lake env lean MPRD_SignedRegistryBridgeMetadataPacketBoundary.lean
 lake env lean MPRD_SignedRegistryExecutionMetadataPacketBoundary.lean
 lake env lean MPRD_SignedRegistryExecutionRefinementPacketBoundary.lean
+lake env lean MPRD_SignedRegistryExecutionRefinementWitnessCompiler.lean
 lake env lean MPRD_SignedRegistryBridgeWitnessBoundary.lean
 lake env lean MPRD_SignedRegistryExecutionBoundary.lean
 lake env lean MPRD_SignedRegistryServeEndToEndRefinement.lean
