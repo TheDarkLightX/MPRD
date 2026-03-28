@@ -30,6 +30,7 @@ assumption.
 - `MPRD_GovernanceExecutionBridge.lean`: a lightweight cross-slice proof that execution-time `governance_ok` requires both a resolved live policy and an admitted governance update before execution can occur.
 - `MPRD_SignedRegistryCheckpointBridge.lean`: a lightweight proof of the stricter signed-registry execution path: rebuilding the live ready bundle, and therefore executing, requires registry resolution, exact checkpoint binding, execution-authorization binding, and governance alignment.
 - `MPRD_SignedRegistryBridgeMetadataPacketBoundary.lean`: a lightweight local theorem for the grouped signed-registry bridge metadata packet: the grouped `SignedRegistryBridgeMetadataPacketV1` language is extensionally equal to a separate loose two-field language carrying the exact registry-authorization attestation packet plus the optional signed-registry checkpoint attestation hash reconstructed from metadata.
+- `MPRD_SignedRegistryExecutionMetadataPacketBoundary.lean`: a lightweight local theorem for the grouped signed-registry execution metadata packet: the grouped `SignedRegistryExecutionMetadataPacketV1` language is extensionally equal to a separate loose two-field language carrying the exact execution-authorization metadata packet plus the exact signed-registry bridge metadata packet.
 - `MPRD_SignedRegistryBridgeWitnessBoundary.lean`: a lightweight proof of the next stricter signed-registry boundary: executed states require the registry-authorization hash binding and preservation of the concrete bridge witness into the rebuilt ready bundle, in addition to the signed-registry bridge facts.
 - `MPRD_SignedRegistryExecutionBoundary.lean`: a lightweight joined boundary proof for the shipped signed-registry path: executed states require the signed-registry bridge facts plus the concrete execution guards (verified, allowed, replay, binding, executor).
 - `MPRD_SignedRegistryServeEndToEndRefinement.lean`: a lightweight top-level composed refinement bridge for the shipped signed-registry `mprd serve` path: executed serve states refine through the grouped local `ExecutionReadyPacketV1` boundary and then into the abstract `MPRD_ExecutionBoundary` theorem, with a canonical witness discharged from the serve-boundary state instead of passed in as an extra theorem parameter.
@@ -79,6 +80,7 @@ lake env lean MPRD_GovernanceStateLinkage.lean
 lake env lean MPRD_GovernanceExecutionBridge.lean
 lake env lean MPRD_SignedRegistryCheckpointBridge.lean
 lake env lean MPRD_SignedRegistryBridgeMetadataPacketBoundary.lean
+lake env lean MPRD_SignedRegistryExecutionMetadataPacketBoundary.lean
 lake env lean MPRD_SignedRegistryBridgeWitnessBoundary.lean
 lake env lean MPRD_SignedRegistryExecutionBoundary.lean
 lake env lean MPRD_SignedRegistryServeEndToEndRefinement.lean

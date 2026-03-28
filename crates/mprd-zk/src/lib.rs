@@ -145,6 +145,25 @@ pub type RegistryBoundAttestorAndVerifier = (
     Box<dyn mprd_core::ZkLocalVerifier>,
 );
 
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignedRegistryExecutionMetadataPacketV1 {
+    execution_authorization: mprd_core::ExecutionAuthorizationMetadataPacketV1,
+    signed_registry_bridge: crate::registry_state::SignedRegistryBridgeMetadataPacketV1,
+}
+
+impl SignedRegistryExecutionMetadataPacketV1 {
+    pub fn execution_authorization(&self) -> &mprd_core::ExecutionAuthorizationMetadataPacketV1 {
+        &self.execution_authorization
+    }
+
+    pub fn signed_registry_bridge(
+        &self,
+    ) -> &crate::registry_state::SignedRegistryBridgeMetadataPacketV1 {
+        &self.signed_registry_bridge
+    }
+}
+
 /// Create a registry-bound Risc0 MPB attestor that fetches policy artifacts by `policy_hash`.
 ///
 /// This is the production-grade proving path for mpb-v1:
@@ -364,6 +383,87 @@ pub fn prepare_execution_ready_from_registry_and_governance_v1<'a>(
     )
 }
 
+pub fn signed_registry_bridge_metadata_packet_from_witness_v1(
+    bridge: &mprd_core::ExecutionRegistryBridgeWitnessV1,
+) -> crate::registry_state::SignedRegistryBridgeMetadataPacketV1 {
+    let registry_authorization = bridge.registry_authorization();
+    crate::registry_state::SignedRegistryBridgeMetadataPacketV1 {
+        registry_authorization: crate::registry_state::RegistryAuthorizationAttestationMetadataV1 {
+            resolution_hash: *registry_authorization.resolution_hash(),
+            exec_kind_id: registry_authorization.exec_kind_id().0,
+            exec_version_id: registry_authorization.exec_version_id().0,
+            image_id: registry_authorization.image_id().0,
+            policy_source_kind_id: registry_authorization
+                .policy_source_kind_id()
+                .map(|id| id.0),
+            policy_source_hash: registry_authorization.policy_source_hash().copied(),
+        },
+        registry_checkpoint_attestation_hash: bridge
+            .registry_checkpoint_attestation_hash()
+            .copied(),
+    }
+}
+
+pub fn signed_registry_execution_metadata_packet_from_ready_v1(
+    ready: &mprd_core::ExecutionReadyBundle<'_>,
+) -> mprd_core::Result<SignedRegistryExecutionMetadataPacketV1> {
+    let authorization = ready.authorization().ok_or_else(|| {
+        mprd_core::MprdError::InvalidInput(
+            "signed registry execution metadata packet requires execution authorization witness"
+                .into(),
+        )
+    })?;
+    let bridge = ready.bridge().ok_or_else(|| {
+        mprd_core::MprdError::InvalidInput(
+            "signed registry execution metadata packet requires signed registry bridge witness"
+                .into(),
+        )
+    })?;
+    Ok(SignedRegistryExecutionMetadataPacketV1 {
+        execution_authorization: mprd_core::execution_authorization_metadata_packet_from_witness_v1(
+            authorization,
+        ),
+        signed_registry_bridge: signed_registry_bridge_metadata_packet_from_witness_v1(bridge),
+    })
+}
+
+pub fn signed_registry_execution_metadata_packet_from_metadata_v1(
+    metadata: &std::collections::HashMap<String, String>,
+    policy_hash: &mprd_core::PolicyHash,
+    policy_ref: &mprd_core::PolicyRef,
+    state_hash: &mprd_core::StateHash,
+    state_ref: &mprd_core::StateRef,
+) -> mprd_core::Result<Option<SignedRegistryExecutionMetadataPacketV1>> {
+    let execution_authorization =
+        mprd_core::execution_authorization_metadata_packet_from_attestation_metadata_v1(
+            metadata,
+            policy_hash,
+            policy_ref,
+            state_hash,
+            state_ref,
+        )?;
+    let signed_registry_bridge =
+        crate::registry_state::signed_registry_bridge_metadata_packet_from_metadata_v1(metadata)?;
+
+    match (execution_authorization, signed_registry_bridge) {
+        (None, None) => Ok(None),
+        (Some(execution_authorization), Some(signed_registry_bridge)) => {
+            Ok(Some(SignedRegistryExecutionMetadataPacketV1 {
+                execution_authorization,
+                signed_registry_bridge,
+            }))
+        }
+        (None, Some(_)) => Err(mprd_core::MprdError::InvalidInput(
+            "signed registry execution metadata packet requires execution authorization metadata"
+                .into(),
+        )),
+        (Some(_), None) => Err(mprd_core::MprdError::InvalidInput(
+            "signed registry execution metadata packet requires signed registry bridge metadata"
+                .into(),
+        )),
+    }
+}
+
 fn prepare_execution_ready_from_registry_and_governance_inner_v1<'a>(
     verified: mprd_core::VerifiedBundle<'a>,
     state: &'a mprd_core::StateSnapshot,
@@ -431,7 +531,26 @@ fn prepare_execution_ready_from_registry_and_governance_inner_v1<'a>(
         registry_authorization,
         registry_checkpoint_attestation_hash,
     )?;
-    mprd_core::prepare_execution_ready_with_registry_bridge(&ready, bridge)
+    let ready = mprd_core::prepare_execution_ready_with_registry_bridge(&ready, bridge)?;
+    let actual_metadata_packet = signed_registry_execution_metadata_packet_from_metadata_v1(
+        &verified.proof().attestation_metadata,
+        &verified.token().policy_hash,
+        &verified.token().policy_ref,
+        &verified.token().state_hash,
+        &verified.token().state_ref,
+    )?
+    .ok_or_else(|| {
+        mprd_core::MprdError::InvalidInput(
+            "signed registry execution metadata packet missing from attestation metadata".into(),
+        )
+    })?;
+    let expected_metadata_packet = signed_registry_execution_metadata_packet_from_ready_v1(&ready)?;
+    if actual_metadata_packet != expected_metadata_packet {
+        return Err(mprd_core::MprdError::InvalidInput(
+            "signed registry execution metadata packet drifted from ready bridge context".into(),
+        ));
+    }
+    Ok(ready)
 }
 
 /// Convenience wrapper for the common production case where the registry authority surface is a
@@ -1805,6 +1924,36 @@ mod tests {
     }
 
     #[test]
+    fn signed_registry_execution_metadata_packet_from_ready_matches_metadata_packet() {
+        let (token, proof, state, governance_input, signed, registry_vk, manifest_vk) =
+            ready_bridge_fixture();
+        let verified = verify_bundle(&token, &proof);
+        let ready = prepare_execution_ready_from_signed_registry_and_governance_v1(
+            verified,
+            &state,
+            signed,
+            registry_vk,
+            manifest_vk,
+            Some(&governance_input),
+        )
+        .expect("prepare_execution_ready_from_signed_registry_and_governance_v1");
+
+        let from_ready =
+            signed_registry_execution_metadata_packet_from_ready_v1(&ready).expect("from ready");
+        let from_metadata = signed_registry_execution_metadata_packet_from_metadata_v1(
+            &proof.attestation_metadata,
+            &token.policy_hash,
+            &token.policy_ref,
+            &token.state_hash,
+            &token.state_ref,
+        )
+        .expect("from metadata")
+        .expect("signed registry execution metadata packet");
+
+        assert_eq!(from_metadata, from_ready);
+    }
+
+    #[test]
     fn prepare_execution_ready_from_registry_and_governance_rejects_gate_input_drift() {
         let (token, proof, state, mut governance_input, signed, registry_vk, manifest_vk) =
             ready_bridge_fixture();
@@ -1925,6 +2074,39 @@ mod tests {
 
         assert!(err.to_string().contains(
             "registry_auth_checkpoint_attestation_hash_v1 attestation metadata drifted from signed registry checkpoint"
+        ));
+    }
+
+    #[test]
+    fn prepare_execution_ready_from_registry_and_governance_rejects_unexpected_checkpoint_metadata_on_generic_path(
+    ) {
+        let (token, mut proof, state, governance_input, signed, registry_vk, manifest_vk) =
+            ready_bridge_fixture();
+        let provider = RegistryStatePolicyAuthorizationProvider::new(
+            Arc::new(SignedStaticRegistryStateProvider::new(
+                signed.clone(),
+                registry_vk.clone(),
+            )),
+            manifest_vk,
+        );
+        proof.attestation_metadata.insert(
+            crate::registry_state::REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1.into(),
+            hex::encode(
+                crate::registry_state::signed_registry_checkpoint_attestation_hash_v1(&signed).0,
+            ),
+        );
+        let verified = verify_bundle(&token, &proof);
+
+        let err = prepare_execution_ready_from_registry_and_governance_v1(
+            verified,
+            &state,
+            &provider,
+            Some(&governance_input),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains(
+            "signed registry execution metadata packet drifted from ready bridge context"
         ));
     }
 
