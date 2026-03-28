@@ -186,6 +186,9 @@ pub struct DecisionToken {
     pub policy_epoch: u64,
     pub registry_root: HashHex,
     pub state_hash: HashHex,
+    pub state_source_id: HashHex,
+    pub state_epoch: u64,
+    pub state_attestation_hash: HashHex,
     pub chosen_action_hash: HashHex,
     pub nonce_or_tx_hash: HashHex,
     pub timestamp_ms: i64,
@@ -208,6 +211,8 @@ pub struct ProofBundle {
     pub registry_authorization: Option<RegistryAuthorizationAttestation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_authorization_hash: Option<HashHex>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_authorization: Option<ExecutionAuthorizationAttestation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_ready_packet_hash: Option<HashHex>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -248,6 +253,20 @@ pub struct RegistryAuthorizationAttestation {
     pub policy_source_kind_id: Option<HashHex>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub policy_source_hash: Option<HashHex>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionAuthorizationAttestation {
+    pub policy_hash: HashHex,
+    pub policy_epoch: u64,
+    pub registry_root: HashHex,
+    pub state_hash: HashHex,
+    pub state_source_id: HashHex,
+    pub state_epoch: u64,
+    pub state_attestation_hash: HashHex,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub governance: Option<GovernanceAttestation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

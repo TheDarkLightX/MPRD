@@ -481,6 +481,44 @@ impl ExecutionAuthorizationWitnessV1 {
     }
 }
 
+/// Typed execution-authorization attestation packet reconstructed from proof metadata.
+///
+/// This is the smallest concrete audit packet for the attested policy/state/governance identity:
+/// it preserves the exact authorization fields that are hashed into
+/// `execution_authorization_hash_v1` without requiring consumers to reverse-engineer them from
+/// unrelated hashes or raw metadata.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionAuthorizationAttestationV1 {
+    policy_hash: PolicyHash,
+    policy_ref: PolicyRef,
+    state_hash: StateHash,
+    state_ref: StateRef,
+    governance: Option<GovernanceAdmissionWitnessV1>,
+}
+
+impl ExecutionAuthorizationAttestationV1 {
+    pub fn policy_hash(&self) -> &PolicyHash {
+        &self.policy_hash
+    }
+
+    pub fn policy_ref(&self) -> &PolicyRef {
+        &self.policy_ref
+    }
+
+    pub fn state_hash(&self) -> &StateHash {
+        &self.state_hash
+    }
+
+    pub fn state_ref(&self) -> &StateRef {
+        &self.state_ref
+    }
+
+    pub fn governance(&self) -> Option<&GovernanceAdmissionWitnessV1> {
+        self.governance.as_ref()
+    }
+}
+
 /// Concrete signed-registry bridge witness carried into the live execute path.
 ///
 /// This preserves the exact concrete registry authorization tuple and optional checkpoint binding
@@ -843,7 +881,7 @@ pub fn verify_governance_attestation_metadata_v1(
     Ok(())
 }
 
-fn execution_authorization_attestation_hash_v1(
+pub fn execution_authorization_attestation_hash_from_fields_v1(
     policy_hash: &PolicyHash,
     policy_ref: &PolicyRef,
     state_hash: &Hash32,
@@ -870,6 +908,56 @@ fn execution_authorization_attestation_hash_v1(
         None => hasher.update([0u8]),
     }
     Hash32(hasher.finalize().into())
+}
+
+/// Construct the typed execution-authorization attestation packet from exact fields.
+pub fn execution_authorization_attestation_from_fields_v1(
+    policy_hash: &PolicyHash,
+    policy_ref: &PolicyRef,
+    state_hash: &StateHash,
+    state_ref: &StateRef,
+    governance: Option<GovernanceAdmissionWitnessV1>,
+) -> ExecutionAuthorizationAttestationV1 {
+    ExecutionAuthorizationAttestationV1 {
+        policy_hash: *policy_hash,
+        policy_ref: policy_ref.clone(),
+        state_hash: *state_hash,
+        state_ref: state_ref.clone(),
+        governance,
+    }
+}
+
+/// Reconstruct and verify the typed execution-authorization attestation packet from proof metadata.
+pub fn execution_authorization_attestation_from_attestation_metadata_v1(
+    metadata: &HashMap<String, String>,
+    policy_hash: &PolicyHash,
+    policy_ref: &PolicyRef,
+    state_hash: &StateHash,
+    state_ref: &StateRef,
+) -> Result<Option<ExecutionAuthorizationAttestationV1>> {
+    let Some(actual) = metadata.get(EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1) else {
+        return Ok(None);
+    };
+    let governance = governance_admission_witness_from_attestation_metadata_v1(metadata)?;
+    let expected = execution_authorization_attestation_hash_from_fields_v1(
+        policy_hash,
+        policy_ref,
+        state_hash,
+        state_ref,
+        governance.as_ref(),
+    );
+    if actual != &hex::encode(expected.0) {
+        return Err(MprdError::InvalidInput(
+            "execution_authorization_hash_v1 attestation metadata drifted from admitted execution authorization".into(),
+        ));
+    }
+    Ok(Some(execution_authorization_attestation_from_fields_v1(
+        policy_hash,
+        policy_ref,
+        state_hash,
+        state_ref,
+        governance,
+    )))
 }
 
 pub fn registry_authorization_attestation_hash_from_fields_v1(
@@ -949,7 +1037,7 @@ pub fn execution_ready_packet_hash_v1(packet: &ExecutionReadyPacketV1) -> Hash32
         Some(authorization) => {
             hasher.update([1u8]);
             hasher.update(
-                execution_authorization_attestation_hash_v1(
+                execution_authorization_attestation_hash_from_fields_v1(
                     authorization.policy_authority().policy_hash(),
                     authorization.policy_authority().policy_ref(),
                     authorization.state_binding().state_hash(),
@@ -1123,7 +1211,7 @@ pub fn insert_execution_authorization_attestation_metadata_v1(
     state: &StateSnapshot,
     governance: Option<&GovernanceAdmissionWitnessV1>,
 ) {
-    let digest = execution_authorization_attestation_hash_v1(
+    let digest = execution_authorization_attestation_hash_from_fields_v1(
         &token.policy_hash,
         &token.policy_ref,
         &state.state_hash,
@@ -1147,7 +1235,7 @@ pub fn verify_execution_authorization_attestation_metadata_v1(
         &proof.attestation_metadata,
         EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1,
     )?;
-    let expected = execution_authorization_attestation_hash_v1(
+    let expected = execution_authorization_attestation_hash_from_fields_v1(
         authority.policy_hash(),
         authority.policy_ref(),
         state_binding.state_hash(),
@@ -2574,6 +2662,87 @@ mod tests {
         assert!(
             matches!(err, MprdError::InvalidInput(message) if message == "execution_authorization_hash_v1 attestation metadata drifted from admitted execution authorization")
         );
+    }
+
+    #[test]
+    fn execution_authorization_attestation_from_metadata_accepts_aligned_metadata() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: governance_policy_inputs(
+                GovernanceUpdateKindV1::PolicyTweak,
+                true,
+                false,
+                true,
+            ),
+            state_hash: dummy_hash(0x7C),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0x7D),
+                state_epoch: 13,
+                state_attestation_hash: dummy_hash(0x7E),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x7F),
+            policy_ref: PolicyRef {
+                policy_epoch: 6,
+                registry_root: dummy_hash(0x80),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x81),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let governance = governance_admission_witness_v1(&state)
+            .expect("governance")
+            .expect("governance witness");
+        let mut metadata = HashMap::new();
+        insert_governance_attestation_metadata_v1(&mut metadata, &governance);
+        insert_execution_authorization_attestation_metadata_v1(
+            &mut metadata,
+            &token,
+            &state,
+            Some(&governance),
+        );
+
+        let attestation = execution_authorization_attestation_from_attestation_metadata_v1(
+            &metadata,
+            &token.policy_hash,
+            &token.policy_ref,
+            &token.state_hash,
+            &token.state_ref,
+        )
+        .expect("attestation")
+        .expect("execution auth");
+
+        assert_eq!(attestation.policy_hash(), &token.policy_hash);
+        assert_eq!(attestation.policy_ref(), &token.policy_ref);
+        assert_eq!(attestation.state_hash(), &token.state_hash);
+        assert_eq!(attestation.state_ref(), &token.state_ref);
+        assert_eq!(attestation.governance(), Some(&governance));
+    }
+
+    #[test]
+    fn execution_authorization_attestation_from_metadata_returns_none_when_absent() {
+        let attestation = execution_authorization_attestation_from_attestation_metadata_v1(
+            &HashMap::new(),
+            &dummy_hash(0x82),
+            &PolicyRef {
+                policy_epoch: 1,
+                registry_root: dummy_hash(0x83),
+            },
+            &dummy_hash(0x84),
+            &StateRef {
+                state_source_id: dummy_hash(0x85),
+                state_epoch: 1,
+                state_attestation_hash: dummy_hash(0x86),
+            },
+        )
+        .expect("no attestation");
+
+        assert!(attestation.is_none());
     }
 
     #[test]

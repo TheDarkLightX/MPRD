@@ -864,7 +864,30 @@ async fn decision_detail_reports_attestation_execution_and_ready_packet_hashes()
         mprd_zk::registry_state::REGISTRY_AUTH_METADATA_POLICY_SOURCE_HASH_V1.into(),
         expected_registry_policy_source_hash.clone(),
     );
-    let expected_execution_authorization_hash = hex::encode([0xabu8; 32]);
+    let expected_governance = op_api::GovernanceAttestation {
+        update_kind: op_api::GovernanceUpdateKind::SafetyRuleChange,
+        profile_app_ok: true,
+        profile_safety_ok: true,
+        link_ok: true,
+    };
+    let expected_execution_authorization_hash = hex::encode(
+        mprd_core::execution_authorization_attestation_hash_from_fields_v1(
+            &token.policy_hash,
+            &token.policy_ref,
+            &state_snapshot.state_hash,
+            &state_snapshot.state_ref,
+            Some(
+                &mprd_core::governance_admission_witness_from_fields_v1(
+                    mprd_core::GovernanceUpdateKindV1::SafetyRuleChange,
+                    true,
+                    true,
+                    true,
+                )
+                .expect("governance witness"),
+            ),
+        )
+        .0,
+    );
     proof.attestation_metadata.insert(
         mprd_core::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1.into(),
         expected_execution_authorization_hash.clone(),
@@ -961,6 +984,19 @@ async fn decision_detail_reports_attestation_execution_and_ready_packet_hashes()
         })
     );
     assert_eq!(
+        body.proof.execution_authorization,
+        Some(op_api::ExecutionAuthorizationAttestation {
+            policy_hash: hex::encode(token.policy_hash.0),
+            policy_epoch: token.policy_ref.policy_epoch,
+            registry_root: hex::encode(token.policy_ref.registry_root.0),
+            state_hash: hex::encode(token.state_hash.0),
+            state_source_id: hex::encode(token.state_ref.state_source_id.0),
+            state_epoch: token.state_ref.state_epoch,
+            state_attestation_hash: hex::encode(token.state_ref.state_attestation_hash.0),
+            governance: Some(expected_governance.clone()),
+        })
+    );
+    assert_eq!(
         body.proof.execution_ready_packet_hash.as_deref(),
         Some(expected_execution_ready_packet_hash.as_str())
     );
@@ -972,19 +1008,57 @@ async fn decision_detail_reports_attestation_execution_and_ready_packet_hashes()
         body.proof.execution_boundary_refinement_hash.as_deref(),
         Some(expected_execution_boundary_refinement_hash.as_str())
     );
+    assert_eq!(body.proof.governance, Some(expected_governance));
     assert_eq!(
-        body.proof.governance,
-        Some(op_api::GovernanceAttestation {
-            update_kind: op_api::GovernanceUpdateKind::SafetyRuleChange,
-            profile_app_ok: true,
-            profile_safety_ok: true,
-            link_ok: true,
-        })
+        body.token.state_source_id,
+        hex::encode(token.state_ref.state_source_id.0)
+    );
+    assert_eq!(body.token.state_epoch, token.state_ref.state_epoch);
+    assert_eq!(
+        body.token.state_attestation_hash,
+        hex::encode(token.state_ref.state_attestation_hash.0)
     );
     assert_eq!(
         body.summary.chosen_action_preimage_storage,
         Some(op_api::ChosenActionPreimageStorage::DerivedFromReceipt)
     );
+}
+
+#[tokio::test]
+async fn decision_detail_rejects_execution_authorization_attestation_metadata_drift() {
+    let _g = EnvGuard::set_many(&[("MPRD_OPERATOR_STORE_SENSITIVE", "1")]);
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let state = test_state(&tmp);
+    let (token, mut proof, state_snapshot, candidates, verdicts, decision) =
+        sample_mpb_lite_decision_inputs();
+    proof.attestation_metadata.insert(
+        mprd_core::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1.into(),
+        hex::encode([0xabu8; 32]),
+    );
+
+    let id = state
+        .store
+        .write_verified_decision(
+            &token,
+            &proof,
+            &state_snapshot,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .expect("write decision");
+
+    let app = build_app(state, ApiKeyConfig { api_key: None });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/decisions/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 #[tokio::test]

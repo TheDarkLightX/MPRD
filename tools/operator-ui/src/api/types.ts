@@ -115,6 +115,9 @@ export interface DecisionToken {
     policyEpoch: number;
     registryRoot: string;
     stateHash: string;
+    stateSourceId: string;
+    stateEpoch: number;
+    stateAttestationHash: string;
     chosenActionHash: string;
     nonceOrTxHash: string;
     timestampMs: number;
@@ -131,6 +134,7 @@ export interface ProofBundle {
     registryCheckpointAttestationHash?: string;
     registryAuthorization?: RegistryAuthorizationAttestation;
     executionAuthorizationHash?: string;
+    executionAuthorization?: ExecutionAuthorizationAttestation;
     executionReadyPacketHash?: string;
     executionBindingVectorHash?: string;
     executionBoundaryRefinementHash?: string;
@@ -145,6 +149,17 @@ export interface RegistryAuthorizationAttestation {
     imageId: string;
     policySourceKindId?: string;
     policySourceHash?: string;
+}
+
+export interface ExecutionAuthorizationAttestation {
+    policyHash: string;
+    policyEpoch: number;
+    registryRoot: string;
+    stateHash: string;
+    stateSourceId: string;
+    stateEpoch: number;
+    stateAttestationHash: string;
+    governance?: GovernanceAttestation;
 }
 
 export type GovernanceUpdateKind =
