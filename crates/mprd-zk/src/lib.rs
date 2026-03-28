@@ -164,6 +164,33 @@ impl SignedRegistryExecutionMetadataPacketV1 {
     }
 }
 
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignedRegistryExecutionRefinementPacketV1 {
+    execution_ready: mprd_core::ExecutionReadyPacketV1,
+    execution_binding_vector: mprd_core::ExecutionBindingVectorPacketV1,
+    execution_boundary_refinement: mprd_core::ExecutionBoundaryRefinementPacketV1,
+    signed_registry_execution_metadata: SignedRegistryExecutionMetadataPacketV1,
+}
+
+impl SignedRegistryExecutionRefinementPacketV1 {
+    pub fn execution_ready(&self) -> &mprd_core::ExecutionReadyPacketV1 {
+        &self.execution_ready
+    }
+
+    pub fn execution_binding_vector(&self) -> &mprd_core::ExecutionBindingVectorPacketV1 {
+        &self.execution_binding_vector
+    }
+
+    pub fn execution_boundary_refinement(&self) -> &mprd_core::ExecutionBoundaryRefinementPacketV1 {
+        &self.execution_boundary_refinement
+    }
+
+    pub fn signed_registry_execution_metadata(&self) -> &SignedRegistryExecutionMetadataPacketV1 {
+        &self.signed_registry_execution_metadata
+    }
+}
+
 /// Create a registry-bound Risc0 MPB attestor that fetches policy artifacts by `policy_hash`.
 ///
 /// This is the production-grade proving path for mpb-v1:
@@ -462,6 +489,31 @@ pub fn signed_registry_execution_metadata_packet_from_metadata_v1(
                 .into(),
         )),
     }
+}
+
+pub fn signed_registry_execution_refinement_packet_from_ready_v1(
+    ready: &mprd_core::ExecutionReadyBundle<'_>,
+    state: &mprd_core::StateSnapshot,
+    candidates: &[mprd_core::CandidateAction],
+    verdicts: &[mprd_core::RuleVerdict],
+    decision: &mprd_core::Decision,
+) -> mprd_core::Result<SignedRegistryExecutionRefinementPacketV1> {
+    Ok(SignedRegistryExecutionRefinementPacketV1 {
+        execution_ready: ready.packet().clone(),
+        execution_binding_vector:
+            mprd_core::execution_binding_vector_packet_from_verified_decision_v1(
+                ready.token(),
+                ready.proof(),
+                state,
+                candidates,
+                verdicts,
+                decision,
+            )?,
+        execution_boundary_refinement:
+            mprd_core::execution_boundary_refinement_packet_from_ready_v1(ready),
+        signed_registry_execution_metadata:
+            signed_registry_execution_metadata_packet_from_ready_v1(ready)?,
+    })
 }
 
 fn prepare_execution_ready_from_registry_and_governance_inner_v1<'a>(
@@ -1717,6 +1769,50 @@ mod tests {
         )
     }
 
+    type AlignedReadyBridgeExecutionFixture = (
+        mprd_core::DecisionToken,
+        mprd_core::ProofBundle,
+        mprd_core::StateSnapshot,
+        GovernanceGateInput,
+        SignedRegistryStateV1,
+        mprd_core::TokenVerifyingKey,
+        mprd_core::TokenVerifyingKey,
+        Vec<mprd_core::CandidateAction>,
+        Vec<mprd_core::RuleVerdict>,
+        mprd_core::Decision,
+    );
+
+    fn aligned_ready_bridge_execution_fixture() -> AlignedReadyBridgeExecutionFixture {
+        let (token, mut proof, state, governance_input, signed, registry_vk, manifest_vk) =
+            ready_bridge_fixture();
+        let candidates = vec![valid_http_call_candidate()];
+        let verdicts = vec![mprd_core::RuleVerdict {
+            allowed: true,
+            reasons: vec![],
+            limits: HashMap::new(),
+        }];
+        let mut decision = mprd_core::Decision {
+            chosen_index: 0,
+            chosen_action: candidates[0].clone(),
+            policy_hash: token.policy_hash,
+            decision_commitment: mprd_core::Hash32([0u8; 32]),
+        };
+        decision.decision_commitment = mprd_core::hash::hash_decision(&decision);
+        proof.candidate_set_hash = mprd_core::hash::hash_candidate_set(&candidates);
+        (
+            token,
+            proof,
+            state,
+            governance_input,
+            signed,
+            registry_vk,
+            manifest_vk,
+            candidates,
+            verdicts,
+            decision,
+        )
+    }
+
     struct CaptureReadyExecutor {
         saw_ready: Arc<std::sync::atomic::AtomicBool>,
         saw_authorization: Arc<std::sync::atomic::AtomicBool>,
@@ -1951,6 +2047,116 @@ mod tests {
         .expect("signed registry execution metadata packet");
 
         assert_eq!(from_metadata, from_ready);
+    }
+
+    #[test]
+    fn signed_registry_execution_refinement_packet_from_ready_matches_component_packets() {
+        let (
+            token,
+            proof,
+            state,
+            governance_input,
+            signed,
+            registry_vk,
+            manifest_vk,
+            candidates,
+            verdicts,
+            decision,
+        ) = aligned_ready_bridge_execution_fixture();
+        let verified = verify_bundle(&token, &proof);
+        let ready = prepare_execution_ready_from_signed_registry_and_governance_v1(
+            verified,
+            &state,
+            signed,
+            registry_vk,
+            manifest_vk,
+            Some(&governance_input),
+        )
+        .expect("prepare_execution_ready_from_signed_registry_and_governance_v1");
+
+        let packet = signed_registry_execution_refinement_packet_from_ready_v1(
+            &ready,
+            &state,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .expect("signed_registry_execution_refinement_packet_from_ready_v1");
+
+        assert_eq!(packet.execution_ready(), ready.packet());
+        assert_eq!(
+            packet.execution_binding_vector(),
+            &mprd_core::execution_binding_vector_packet_from_verified_decision_v1(
+                &token,
+                &proof,
+                &state,
+                &candidates,
+                &verdicts,
+                &decision,
+            )
+            .expect("binding packet")
+        );
+        assert_eq!(
+            packet.execution_boundary_refinement(),
+            &mprd_core::execution_boundary_refinement_packet_from_ready_v1(&ready)
+        );
+        assert_eq!(
+            packet.signed_registry_execution_metadata(),
+            &signed_registry_execution_metadata_packet_from_ready_v1(&ready)
+                .expect("signed registry execution metadata packet")
+        );
+    }
+
+    #[test]
+    fn signed_registry_execution_refinement_packet_from_ready_rejects_binding_drift() {
+        let (
+            token,
+            proof,
+            state,
+            governance_input,
+            signed,
+            registry_vk,
+            manifest_vk,
+            candidates,
+            verdicts,
+            mut decision,
+        ) = aligned_ready_bridge_execution_fixture();
+        let verified = verify_bundle(&token, &proof);
+        let ready = prepare_execution_ready_from_signed_registry_and_governance_v1(
+            verified,
+            &state,
+            signed,
+            registry_vk,
+            manifest_vk,
+            Some(&governance_input),
+        )
+        .expect("prepare_execution_ready_from_signed_registry_and_governance_v1");
+
+        decision.chosen_action = mprd_core::CandidateAction {
+            action_type: "http_call".into(),
+            params: HashMap::from([
+                (
+                    "url".into(),
+                    mprd_core::Value::String("https://drift.example".into()),
+                ),
+                ("method".into(), mprd_core::Value::String("POST".into())),
+            ]),
+            score: mprd_core::Score(0),
+            candidate_hash: mprd_core::Hash32([0xabu8; 32]),
+        };
+
+        let err = signed_registry_execution_refinement_packet_from_ready_v1(
+            &ready,
+            &state,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("selected candidate drifted before execution binding hash"));
     }
 
     #[test]
