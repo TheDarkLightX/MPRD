@@ -16,6 +16,7 @@ assumption.
 - `MPRD_ExecutionReadyPacketRefinement.lean`: a lightweight witness-gated refinement bridge from the grouped local `ExecutionReadyPacketV1` runtime boundary into the abstract `MPRD_ExecutionBoundary` theorem: once the abstract verdict/governance/binding/executor witness materializes, executed grouped-packet states refine into a reachable abstract execution-boundary state.
 - `MPRD_AttestationReadyExecutionAuthorizationBoundary.lean`: a lightweight local theorem for the attestation-ready refactor boundary: once `prepare_attestation_ready(...)` succeeds, the grouped execution-authorization packet carried by `AttestationReadyBundle` is extensionally equal to the old loose policy/state/governance tuple used for attestation stamping.
 - `MPRD_ExecutionAuthorizationWitnessProjection.lean`: a lightweight local theorem for the live execute-path authorization refactor: projecting `ExecutionAuthorizationWitnessV1` into the grouped attestation packet is extensionally equal to the old loose policy/state/governance stamping language.
+- `MPRD_ExecutionRegistryBridgeWitnessProjection.lean`: a lightweight local theorem for the live signed-registry bridge refactor: projecting `ExecutionRegistryBridgeWitnessV1` into the grouped bridge attestation packet is extensionally equal to the old loose registry tuple plus optional checkpoint language.
 - `MPRD_SelectorContractBinding.lean`: a lightweight reachable-state proof that execution also requires the selector-specific chosen-index and chosen-action-preimage bindings, so runtime effects cannot drift to a different allowed action.
 - `MPRD_TauPolicyAuthority.lean`: a small reachable-state proof of the architectural split: models propose, Tau decides, the selector chooses from the Tau-allowed set, and execution follows only that choice.
 - `MPRD_GovernedPolicySource.lean`: a lightweight registry-bound proof that if Tau source bytes are the governed rule surface, execution through a compiled artifact still requires pinned policy authorization, routed image selection, and explicit source mapping.
@@ -60,6 +61,7 @@ lake env lean MPRD_ExecutionReadyPacketBoundary.lean
 lake env lean MPRD_ExecutionReadyPacketRefinement.lean
 lake env lean MPRD_AttestationReadyExecutionAuthorizationBoundary.lean
 lake env lean MPRD_ExecutionAuthorizationWitnessProjection.lean
+lake env lean MPRD_ExecutionRegistryBridgeWitnessProjection.lean
 lake env lean MPRD_SelectorContractBinding.lean
 lake env lean MPRD_TauPolicyAuthority.lean
 lake env lean MPRD_GovernedPolicySource.lean
