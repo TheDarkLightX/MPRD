@@ -226,6 +226,7 @@ impl<'a> VerifiedBundle<'a> {
 ///
 /// This is the first runtime step toward replacing free execution booleans with witness-carrying
 /// types on the RC1 path.
+#[must_use]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutionBoundaryWitnessV1 {
     chosen_action_preimage: Vec<u8>,
@@ -424,6 +425,7 @@ const EXECUTION_BINDING_VECTOR_HASH_DOMAIN_V1: &[u8] = b"MPRD_EXECUTION_BINDING_
 ///
 /// This binds the exact `(policy_hash, policy_ref)` pair the orchestrator was authorized to use
 /// and lets downstream stages fail closed on any selector/token drift.
+#[must_use]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PolicyAuthorityWitnessV1 {
     policy_hash: PolicyHash,
