@@ -5,7 +5,7 @@ on:
     paths:
       - '.github/workflows/network-replay.yml'
       - 'docs/specs/**'
-      - 'docs/receipts/rc1_network_replay_20260325.json'
+      - 'docs/receipts/rc1_network_replay_20260328.json'
       - 'docs/PARALLELIZATION_AND_NETWORK_RESILIENCE.md'
       - 'docs/RC1_BLOCKERS.md'
       - 'docs/PRODUCTION_READINESS.md'
@@ -17,7 +17,7 @@ on:
     paths:
       - '.github/workflows/network-replay.yml'
       - 'docs/specs/**'
-      - 'docs/receipts/rc1_network_replay_20260325.json'
+      - 'docs/receipts/rc1_network_replay_20260328.json'
       - 'docs/PARALLELIZATION_AND_NETWORK_RESILIENCE.md'
       - 'docs/RC1_BLOCKERS.md'
       - 'docs/PRODUCTION_READINESS.md'
@@ -69,7 +69,7 @@ jobs:
           import os
           import sys
 
-          with open("docs/receipts/rc1_network_replay_20260325.json", "r", encoding="utf-8") as f:
+          with open("docs/receipts/rc1_network_replay_20260328.json", "r", encoding="utf-8") as f:
               expected = json.load(f)
           with open(os.environ["GENERATED_SUMMARY"], "r", encoding="utf-8") as f:
               generated = json.load(f)

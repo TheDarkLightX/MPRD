@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OUTPUT = REPO_ROOT / "docs/receipts/rc1_policy_menu_tau_equivalence_20260326.json"
+DEFAULT_OUTPUT = REPO_ROOT / "docs/receipts/rc1_policy_menu_tau_equivalence_20260328.json"
 CLI_PREFIX = ["cargo", "run", "-q", "-p", "mprd-cli", "--", "policy"]
 SCHEMA = "mprd/rc1-policy-menu-tau-equivalence-receipt/v1"
 

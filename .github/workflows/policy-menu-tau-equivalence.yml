@@ -13,7 +13,7 @@ on:
       - 'docs/RC1_BLOCKERS.md'
       - 'docs/TIER0_BOUNDARY_MATRIX.md'
       - 'docs/PRODUCTION_READINESS.md'
-      - 'docs/receipts/rc1_policy_menu_tau_equivalence_20260326.json'
+      - 'docs/receipts/rc1_policy_menu_tau_equivalence_20260328.json'
       - 'tools/policy/**'
   push:
     branches:
@@ -29,7 +29,7 @@ on:
       - 'docs/RC1_BLOCKERS.md'
       - 'docs/TIER0_BOUNDARY_MATRIX.md'
       - 'docs/PRODUCTION_READINESS.md'
-      - 'docs/receipts/rc1_policy_menu_tau_equivalence_20260326.json'
+      - 'docs/receipts/rc1_policy_menu_tau_equivalence_20260328.json'
       - 'tools/policy/**'
   workflow_dispatch:
 
@@ -65,7 +65,7 @@ jobs:
           import sys
 
           with open(
-              "docs/receipts/rc1_policy_menu_tau_equivalence_20260326.json",
+              "docs/receipts/rc1_policy_menu_tau_equivalence_20260328.json",
               "r",
               encoding="utf-8",
           ) as f:

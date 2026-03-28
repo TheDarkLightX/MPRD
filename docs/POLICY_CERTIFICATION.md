@@ -82,12 +82,12 @@ Replay it locally with:
 ```bash
 cd /home/trevormoc/Downloads/MPRD
 python3 tools/policy/replay_menu_tau_equivalence_rc1.py \
-  --output docs/receipts/rc1_policy_menu_tau_equivalence_20260326.json
+  --output docs/receipts/rc1_policy_menu_tau_equivalence_20260328.json
 ```
 
 The tracked receipt is:
 
-- `docs/receipts/rc1_policy_menu_tau_equivalence_20260326.json`
+- `docs/receipts/rc1_policy_menu_tau_equivalence_20260328.json`
 
 The tracked CI workflow is:
 

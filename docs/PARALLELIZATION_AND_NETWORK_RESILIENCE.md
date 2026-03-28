@@ -65,7 +65,7 @@ The next required replayable disaster states are:
 The tracked RC1 replay script and receipt for the current model series are:
 
 - `tools/replay_network_barriers_rc1.py`
-- `docs/receipts/rc1_network_replay_20260325.json`
+- `docs/receipts/rc1_network_replay_20260328.json`
 - `.github/workflows/network-replay.yml`
 
 The current receipt is green across 14 tracked safety models:
@@ -90,7 +90,7 @@ Replay command:
 ```bash
 TLA2TOOLS_JAR=/path/to/tla2tools.jar \
 python3 tools/replay_network_barriers_rc1.py \
-  --output docs/receipts/rc1_network_replay_20260325.json
+  --output docs/receipts/rc1_network_replay_20260328.json
 ```
 
 The first tracked replay surface for this frontier is:
