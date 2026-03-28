@@ -1837,6 +1837,7 @@ mod tests {
             Some(Hash32([0xBB; 32])),
         );
         mprd_core::prepare_execution_ready_with_registry_bridge(&ready, bridge)
+            .expect("prepare_execution_ready_with_registry_bridge")
     }
 
     struct CountingExecutor {

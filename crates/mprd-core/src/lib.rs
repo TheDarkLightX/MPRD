@@ -1268,10 +1268,15 @@ pub fn prepare_execution_ready_with_authorization<'a>(
 pub fn prepare_execution_ready_with_registry_bridge<'a>(
     ready: &ExecutionReadyBundle<'a>,
     bridge: ExecutionRegistryBridgeWitnessV1,
-) -> ExecutionReadyBundle<'a> {
+) -> Result<ExecutionReadyBundle<'a>> {
+    if ready.authorization().is_none() {
+        return Err(MprdError::InvalidInput(
+            "registry bridge requires execution authorization witness".into(),
+        ));
+    }
     let mut enriched = ready.clone();
     enriched.packet.bridge = Some(bridge);
-    enriched
+    Ok(enriched)
 }
 
 /// Enrich an execution-ready bundle with a constructor-gated signature-admission witness.
@@ -1894,14 +1899,24 @@ mod tests {
     #[test]
     fn prepare_execution_ready_with_registry_bridge_threads_bridge_witness() {
         let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(0x73),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0x78),
+                state_epoch: 2,
+                state_attestation_hash: dummy_hash(0x79),
+            },
+        };
         let token = DecisionToken {
             policy_hash: dummy_hash(0x71),
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: dummy_hash(0x72),
             },
-            state_hash: dummy_hash(0x73),
-            state_ref: StateRef::unknown(),
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
             chosen_action_hash: candidate.candidate_hash,
             nonce_or_tx_hash: dummy_hash(0x74),
             timestamp_ms: 0,
@@ -1918,13 +1933,66 @@ mod tests {
             risc0_receipt: vec![],
             attestation_metadata: HashMap::new(),
         };
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
 
-        let ready = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).expect("ready");
+        let ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready");
         let bridge = execution_registry_bridge_witness_v1(dummy_hash(0x76), Some(dummy_hash(0x77)));
-        let ready = prepare_execution_ready_with_registry_bridge(&ready, bridge.clone());
+        let ready = prepare_execution_ready_with_registry_bridge(&ready, bridge.clone())
+            .expect("ready with bridge");
 
         assert_eq!(ready.bridge(), Some(&bridge));
         assert_eq!(ready.packet().bridge(), Some(&bridge));
+    }
+
+    #[test]
+    fn prepare_execution_ready_with_registry_bridge_rejects_missing_execution_authorization_witness(
+    ) {
+        let candidate = valid_http_call_candidate();
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x7A),
+            policy_ref: PolicyRef {
+                policy_epoch: 3,
+                registry_root: dummy_hash(0x7B),
+            },
+            state_hash: dummy_hash(0x7C),
+            state_ref: StateRef::unknown(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x7D),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0x7E),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let ready = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).expect("ready");
+
+        let err = prepare_execution_ready_with_registry_bridge(
+            &ready,
+            execution_registry_bridge_witness_v1(dummy_hash(0x7F), Some(dummy_hash(0x80))),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            MprdError::InvalidInput(msg)
+                if msg == "registry bridge requires execution authorization witness"
+        ));
     }
 
     #[test]
@@ -2555,14 +2623,38 @@ mod tests {
             attestation_metadata: HashMap::new(),
         };
 
-        let ready = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).expect("ready");
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: token.state_hash,
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0xB7),
+                state_epoch: 4,
+                state_attestation_hash: dummy_hash(0xB8),
+            },
+        };
+        let token = DecisionToken {
+            state_ref: state.state_ref.clone(),
+            ..token
+        };
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready");
         let base_hash = execution_ready_packet_hash_v1(ready.packet());
         assert_eq!(base_hash, execution_ready_packet_hash_v1(ready.packet()));
 
         let bridged = prepare_execution_ready_with_registry_bridge(
             &ready,
             execution_registry_bridge_witness_v1(dummy_hash(0xB5), Some(dummy_hash(0xB6))),
-        );
+        )
+        .expect("bridged");
 
         assert_ne!(base_hash, execution_ready_packet_hash_v1(bridged.packet()));
     }
@@ -2598,23 +2690,51 @@ mod tests {
             .attestation_metadata
             .insert("custom".into(), "base".into());
 
-        let ready = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).expect("ready");
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: token.state_hash,
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0xC7),
+                state_epoch: 5,
+                state_attestation_hash: dummy_hash(0xC8),
+            },
+        };
+        let token = DecisionToken {
+            state_ref: state.state_ref.clone(),
+            ..token
+        };
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready");
         let base_hash = execution_boundary_refinement_hash_v1(&ready);
         assert_eq!(base_hash, execution_boundary_refinement_hash_v1(&ready));
 
         let bridged = prepare_execution_ready_with_registry_bridge(
             &ready,
             execution_registry_bridge_witness_v1(dummy_hash(0xC5), Some(dummy_hash(0xC6))),
-        );
+        )
+        .expect("bridged");
         assert_ne!(base_hash, execution_boundary_refinement_hash_v1(&bridged));
 
         let mut proof_with_metadata_drift = proof.clone();
         proof_with_metadata_drift
             .attestation_metadata
             .insert("custom".into(), "drifted".into());
-        let ready_with_metadata_drift =
-            prepare_execution_ready(VerifiedBundle::new(&token, &proof_with_metadata_drift))
-                .expect("ready with metadata drift");
+        let ready_with_metadata_drift = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof_with_metadata_drift),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready with metadata drift");
         assert_ne!(
             base_hash,
             execution_boundary_refinement_hash_v1(&ready_with_metadata_drift)

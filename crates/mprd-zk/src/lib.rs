@@ -419,9 +419,7 @@ fn prepare_execution_ready_from_registry_and_governance_inner_v1<'a>(
         crate::registry_state::registry_authorization_attestation_hash_v1(&resolution),
         registry_checkpoint_attestation_hash,
     );
-    Ok(mprd_core::prepare_execution_ready_with_registry_bridge(
-        &ready, bridge,
-    ))
+    mprd_core::prepare_execution_ready_with_registry_bridge(&ready, bridge)
 }
 
 /// Convenience wrapper for the common production case where the registry authority surface is a
