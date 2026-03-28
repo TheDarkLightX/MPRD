@@ -317,12 +317,13 @@ impl<'a> ExecutionReadyBundle<'a> {
 }
 
 /// A token/decision/state packet admitted for attestation after fail-closed identity checks.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct AttestationReadyBundle<'a> {
     token: &'a DecisionToken,
     decision: &'a Decision,
     state: &'a StateSnapshot,
     governance: Option<GovernanceAdmissionWitnessV1>,
+    execution_authorization: ExecutionAuthorizationAttestationV1,
 }
 
 impl<'a> AttestationReadyBundle<'a> {
@@ -340,6 +341,10 @@ impl<'a> AttestationReadyBundle<'a> {
 
     pub fn governance(&self) -> Option<&GovernanceAdmissionWitnessV1> {
         self.governance.as_ref()
+    }
+
+    pub fn execution_authorization(&self) -> &ExecutionAuthorizationAttestationV1 {
+        &self.execution_authorization
     }
 }
 
@@ -1224,6 +1229,24 @@ pub fn insert_execution_authorization_attestation_metadata_v1(
     );
 }
 
+/// Emit canonical execution-authorization attestation metadata from the constructor-gated packet.
+pub fn insert_execution_authorization_attestation_from_packet_v1(
+    metadata: &mut HashMap<String, String>,
+    execution_authorization: &ExecutionAuthorizationAttestationV1,
+) {
+    let digest = execution_authorization_attestation_hash_from_fields_v1(
+        execution_authorization.policy_hash(),
+        execution_authorization.policy_ref(),
+        execution_authorization.state_hash(),
+        execution_authorization.state_ref(),
+        execution_authorization.governance(),
+    );
+    metadata.insert(
+        EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1.into(),
+        hex::encode(digest.0),
+    );
+}
+
 /// Verify that proof metadata preserved the same concrete execution-authorization packet.
 pub fn verify_execution_authorization_attestation_metadata_v1(
     proof: &ProofBundle,
@@ -1258,11 +1281,9 @@ pub fn attach_governance_attestation_to_proof_v1(
     if let Some(governance) = ready.governance() {
         insert_governance_attestation_metadata_v1(&mut proof.attestation_metadata, governance);
     }
-    insert_execution_authorization_attestation_metadata_v1(
+    insert_execution_authorization_attestation_from_packet_v1(
         &mut proof.attestation_metadata,
-        ready.token(),
-        ready.state(),
-        ready.governance(),
+        ready.execution_authorization(),
     );
 }
 
@@ -1665,12 +1686,20 @@ pub fn prepare_attestation_ready<'a>(
         ));
     }
     let governance = governance_admission_witness_v1(state)?;
+    let execution_authorization = execution_authorization_attestation_from_fields_v1(
+        &token.policy_hash,
+        &token.policy_ref,
+        &state.state_hash,
+        &state.state_ref,
+        governance,
+    );
 
     Ok(AttestationReadyBundle {
         token,
         decision,
         state,
         governance,
+        execution_authorization,
     })
 }
 
@@ -3535,6 +3564,12 @@ mod tests {
         assert_eq!(ready.decision(), &decision);
         assert_eq!(ready.state(), &state);
         assert!(ready.governance().is_none());
+        let execution_authorization = ready.execution_authorization();
+        assert_eq!(execution_authorization.policy_hash(), &token.policy_hash);
+        assert_eq!(execution_authorization.policy_ref(), &token.policy_ref);
+        assert_eq!(execution_authorization.state_hash(), &token.state_hash);
+        assert_eq!(execution_authorization.state_ref(), &token.state_ref);
+        assert!(execution_authorization.governance().is_none());
     }
 
     #[test]
@@ -3584,6 +3619,12 @@ mod tests {
         assert!(governance.profile_app_ok());
         assert!(governance.profile_safety_ok());
         assert!(governance.link_ok());
+        let execution_authorization = ready.execution_authorization();
+        assert_eq!(execution_authorization.policy_hash(), &token.policy_hash);
+        assert_eq!(execution_authorization.policy_ref(), &token.policy_ref);
+        assert_eq!(execution_authorization.state_hash(), &token.state_hash);
+        assert_eq!(execution_authorization.state_ref(), &token.state_ref);
+        assert_eq!(execution_authorization.governance(), Some(governance));
     }
 
     #[test]
