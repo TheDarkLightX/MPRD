@@ -299,6 +299,27 @@ impl ExecutionBindingVectorPacketV1 {
     }
 }
 
+/// Typed packet for the concrete refinement artifact at the live execute boundary.
+///
+/// This groups the exact ready-packet hash with the verified proof attestation-metadata hash,
+/// instead of leaving the top-level refinement artifact as two adjacent hashes by convention.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionBoundaryRefinementPacketV1 {
+    execution_ready_packet_hash: Hash32,
+    attestation_metadata_hash: Hash32,
+}
+
+impl ExecutionBoundaryRefinementPacketV1 {
+    pub fn execution_ready_packet_hash(&self) -> &Hash32 {
+        &self.execution_ready_packet_hash
+    }
+
+    pub fn attestation_metadata_hash(&self) -> &Hash32 {
+        &self.attestation_metadata_hash
+    }
+}
+
 /// Constructor-gated runtime packet carried into the live execute boundary on the RC1 path.
 ///
 /// This groups the concrete execution boundary witness with the optional orchestrator
@@ -1311,14 +1332,32 @@ pub fn execution_ready_packet_hash_v1(packet: &ExecutionReadyPacketV1) -> Hash32
 /// This binds the grouped `ExecutionReadyPacketV1` to the verified proof metadata that reached the
 /// live `execute_ready(...)` boundary, so the operator surface can audit one concrete refinement
 /// artifact rather than only a local stack object plus separate metadata.
-pub fn execution_boundary_refinement_hash_v1(ready: &ExecutionReadyBundle<'_>) -> Hash32 {
+pub fn execution_boundary_refinement_packet_from_ready_v1(
+    ready: &ExecutionReadyBundle<'_>,
+) -> ExecutionBoundaryRefinementPacketV1 {
+    ExecutionBoundaryRefinementPacketV1 {
+        execution_ready_packet_hash: execution_ready_packet_hash_v1(ready.packet()),
+        attestation_metadata_hash: crate::decision_log::attestation_metadata_hash_v1(
+            &ready.proof().attestation_metadata,
+        ),
+    }
+}
+
+/// Compute the deterministic refinement hash from the grouped refinement packet.
+pub fn execution_boundary_refinement_hash_from_packet_v1(
+    packet: &ExecutionBoundaryRefinementPacketV1,
+) -> Hash32 {
     let mut hasher = Sha256::new();
     hasher.update(EXECUTION_BOUNDARY_REFINEMENT_HASH_DOMAIN_V1);
-    hasher.update(execution_ready_packet_hash_v1(ready.packet()).0);
-    hasher.update(
-        crate::decision_log::attestation_metadata_hash_v1(&ready.proof().attestation_metadata).0,
-    );
+    hasher.update(packet.execution_ready_packet_hash().0);
+    hasher.update(packet.attestation_metadata_hash().0);
     Hash32(hasher.finalize().into())
+}
+
+pub fn execution_boundary_refinement_hash_v1(ready: &ExecutionReadyBundle<'_>) -> Hash32 {
+    execution_boundary_refinement_hash_from_packet_v1(
+        &execution_boundary_refinement_packet_from_ready_v1(ready),
+    )
 }
 
 /// Construct the grouped binding-vector packet from the concrete verified-decision tuple.
@@ -2694,6 +2733,76 @@ mod tests {
                 &decision
             )
             .expect("binding hash")
+        );
+    }
+
+    #[test]
+    fn execution_boundary_refinement_packet_matches_hash_surface() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(0xE1),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0xE2),
+                state_epoch: 9,
+                state_attestation_hash: dummy_hash(0xE3),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0xE4),
+            policy_ref: PolicyRef {
+                policy_epoch: 2,
+                registry_root: dummy_hash(0xE5),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0xE6),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let mut proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0xE7),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &token,
+            &state,
+            None,
+        );
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready");
+
+        let packet = execution_boundary_refinement_packet_from_ready_v1(&ready);
+
+        assert_eq!(
+            packet.execution_ready_packet_hash(),
+            &execution_ready_packet_hash_v1(ready.packet())
+        );
+        assert_eq!(
+            packet.attestation_metadata_hash(),
+            &crate::decision_log::attestation_metadata_hash_v1(&ready.proof().attestation_metadata)
+        );
+        assert_eq!(
+            execution_boundary_refinement_hash_from_packet_v1(&packet),
+            execution_boundary_refinement_hash_v1(&ready)
         );
     }
 
