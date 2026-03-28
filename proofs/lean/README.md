@@ -17,6 +17,7 @@ assumption.
 - `MPRD_ExecutionBindingVectorPacketBoundary.lean`: a lightweight local theorem for the grouped binding-vector packet: the grouped `ExecutionBindingVectorPacketV1` language is extensionally equal to a separate loose field-language carrying the same binding inputs used by `execution_binding_vector_hash_v1(...)`.
 - `MPRD_ExecutionBoundaryRefinementPacketBoundary.lean`: a lightweight local theorem for the grouped refinement packet: the grouped `ExecutionBoundaryRefinementPacketV1` language is extensionally equal to a separate loose two-field language carrying the same `execution_ready_packet_hash` and `attestation_metadata_hash` inputs used by `execution_boundary_refinement_hash_v1(...)`.
 - `MPRD_AttestationReadyExecutionAuthorizationBoundary.lean`: a lightweight local theorem for the attestation-ready refactor boundary: once `prepare_attestation_ready(...)` succeeds, the grouped execution-authorization packet carried by `AttestationReadyBundle` is extensionally equal to the old loose policy/state/governance tuple used for attestation stamping.
+- `MPRD_ExecutionAuthorizationMetadataPacketBoundary.lean`: a lightweight local theorem for the grouped execution-authorization metadata packet: the grouped `ExecutionAuthorizationMetadataPacketV1` language is extensionally equal to a separate loose two-field language carrying the exact authorization attestation packet plus the canonical `execution_authorization_hash_v1` value reconstructed from metadata.
 - `MPRD_ExecutionAuthorizationWitnessProjection.lean`: a lightweight local theorem for the live execute-path authorization refactor: projecting `ExecutionAuthorizationWitnessV1` into the grouped attestation packet is extensionally equal to the old loose policy/state/governance stamping language.
 - `MPRD_ExecutionRegistryBridgeWitnessProjection.lean`: a lightweight local theorem for the live signed-registry bridge refactor: projecting `ExecutionRegistryBridgeWitnessV1` into the grouped bridge attestation packet is extensionally equal to the old loose registry tuple plus optional checkpoint language.
 - `MPRD_SelectorContractBinding.lean`: a lightweight reachable-state proof that execution also requires the selector-specific chosen-index and chosen-action-preimage bindings, so runtime effects cannot drift to a different allowed action.
@@ -64,6 +65,7 @@ lake env lean MPRD_ExecutionReadyPacketRefinement.lean
 lake env lean MPRD_ExecutionBindingVectorPacketBoundary.lean
 lake env lean MPRD_ExecutionBoundaryRefinementPacketBoundary.lean
 lake env lean MPRD_AttestationReadyExecutionAuthorizationBoundary.lean
+lake env lean MPRD_ExecutionAuthorizationMetadataPacketBoundary.lean
 lake env lean MPRD_ExecutionAuthorizationWitnessProjection.lean
 lake env lean MPRD_ExecutionRegistryBridgeWitnessProjection.lean
 lake env lean MPRD_SelectorContractBinding.lean

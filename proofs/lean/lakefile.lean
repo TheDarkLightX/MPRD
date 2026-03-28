@@ -20,6 +20,7 @@ lean_lib MPRDLeanProofs where
     `MPRD_ExecutionBindingVectorPacketBoundary,
     `MPRD_ExecutionBoundaryRefinementPacketBoundary,
     `MPRD_AttestationReadyExecutionAuthorizationBoundary,
+    `MPRD_ExecutionAuthorizationMetadataPacketBoundary,
     `MPRD_ExecutionAuthorizationWitnessProjection,
     `MPRD_ExecutionRegistryBridgeWitnessProjection,
     `MPRD_SelectorContractBinding,
