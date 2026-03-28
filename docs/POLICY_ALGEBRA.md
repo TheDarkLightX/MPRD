@@ -201,7 +201,7 @@ The shipped menu family also has a tracked RC1 semantic-equivalence receipt:
 
 ```bash
 python3 tools/policy/replay_menu_tau_equivalence_rc1.py \
-  --output docs/receipts/rc1_policy_menu_tau_equivalence_20260326.json
+  --output docs/receipts/rc1_policy_menu_tau_equivalence_20260328.json
 ```
 
 That receipt proves the built-in curated menu entries round-trip through `algebra-menu-emit-tau`

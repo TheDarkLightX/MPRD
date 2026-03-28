@@ -840,7 +840,7 @@ impl IdempotentHttpExecutor {
 
     fn persist_barrier_payload<T: Serialize>(
         mut file: File,
-        path: &PathBuf,
+        path: &Path,
         payload: &T,
     ) -> Result<()> {
         let json = serde_json::to_vec(payload).map_err(|e| {
@@ -981,21 +981,17 @@ impl IdempotentHttpExecutor {
         payload: &ExecutePayload,
     ) -> Result<ExecutionResult> {
         match self.prepare_pending_barrier(token, payload)? {
-            EffectBarrierState::Committed(path) => {
-                return Ok(ExecutionResult {
-                    success: true,
-                    message: Some(format!(
-                        "Already committed remote effect barrier: {}",
-                        path.display()
-                    )),
-                });
-            }
-            EffectBarrierState::BlockedPending(path) => {
-                return Err(MprdError::ExecutionError(format!(
-                    "HTTP effect barrier pending at {}; manual resolution required before retry",
+            EffectBarrierState::Committed(path) => Ok(ExecutionResult {
+                success: true,
+                message: Some(format!(
+                    "Already committed remote effect barrier: {}",
                     path.display()
-                )));
-            }
+                )),
+            }),
+            EffectBarrierState::BlockedPending(path) => Err(MprdError::ExecutionError(format!(
+                "HTTP effect barrier pending at {}; manual resolution required before retry",
+                path.display()
+            ))),
             EffectBarrierState::Pending { pending, committed } => {
                 let result = self.inner.execute_payload(token, payload);
                 match result {
@@ -1818,6 +1814,12 @@ mod tests {
             state_hash: token.state_hash,
             state_ref: token.state_ref.clone(),
         };
+        mprd_core::insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            token,
+            &state,
+            Some(&governance),
+        );
         let authority =
             mprd_core::policy_authority_witness_v1(&token.policy_hash, &token.policy_ref)
                 .expect("policy authority");
@@ -1841,6 +1843,7 @@ mod tests {
             Some(Hash32([0xBB; 32])),
         );
         mprd_core::prepare_execution_ready_with_registry_bridge(&ready, bridge)
+            .expect("prepare_execution_ready_with_registry_bridge")
     }
 
     struct CountingExecutor {

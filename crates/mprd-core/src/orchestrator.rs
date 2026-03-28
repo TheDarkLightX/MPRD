@@ -1211,6 +1211,7 @@ mod tests {
     struct AuthorizationCapturingExecutor {
         saw_authorization: Arc<AtomicBool>,
         saw_governance: Arc<AtomicBool>,
+        saw_bridge: Arc<AtomicBool>,
     }
 
     impl ExecutorAdapter for AuthorizationCapturingExecutor {
@@ -1241,6 +1242,8 @@ mod tests {
                 authorization.state_binding().state_ref(),
                 &ready.token().state_ref
             );
+            self.saw_bridge
+                .store(ready.bridge().is_some(), Ordering::SeqCst);
             self.saw_authorization.store(true, Ordering::SeqCst);
             self.saw_governance
                 .store(authorization.governance().is_some(), Ordering::SeqCst);
@@ -1273,6 +1276,55 @@ mod tests {
                 &authority,
                 &state_binding,
                 governance,
+            )
+        }
+    }
+
+    struct RegistryAttachingReadyBridge {
+        called: Arc<AtomicBool>,
+    }
+
+    impl ExecutionReadyBridge for RegistryAttachingReadyBridge {
+        fn prepare_execution_ready<'a>(
+            &self,
+            verified: VerifiedBundle<'a>,
+            state: &'a StateSnapshot,
+            governance: Option<crate::GovernanceAdmissionWitnessV1>,
+        ) -> Result<crate::ExecutionReadyBundle<'a>> {
+            self.called.store(true, Ordering::SeqCst);
+            let authority = crate::policy_authority_witness_v1(
+                &verified.token().policy_hash,
+                &verified.token().policy_ref,
+            )?;
+            let state_binding = crate::state_provenance::state_binding_witness_v1(state);
+            let ready = crate::prepare_execution_ready_with_authorization(
+                verified,
+                &authority,
+                &state_binding,
+                governance,
+            )?;
+            let resolution_hash = crate::registry_authorization_attestation_hash_from_fields_v1(
+                authority.policy_hash(),
+                &crate::artifact_repo::Id32([0xCA; 32]),
+                &crate::artifact_repo::Id32([0xCB; 32]),
+                &crate::artifact_repo::Id32([0xCC; 32]),
+                None,
+                None,
+            )?;
+            crate::prepare_execution_ready_with_registry_bridge(
+                &ready,
+                crate::execution_registry_bridge_witness_v1(
+                    authority.policy_hash(),
+                    crate::registry_authorization_witness_v1(
+                        resolution_hash,
+                        crate::artifact_repo::Id32([0xCA; 32]),
+                        crate::artifact_repo::Id32([0xCB; 32]),
+                        crate::artifact_repo::Id32([0xCC; 32]),
+                        None,
+                        None,
+                    )?,
+                    Some(dummy_hash(0xAB)),
+                )?,
             )
         }
     }
@@ -1382,9 +1434,11 @@ mod tests {
         let verifier = DummyVerifier;
         let saw_authorization = Arc::new(AtomicBool::new(false));
         let saw_governance = Arc::new(AtomicBool::new(false));
+        let saw_bridge = Arc::new(AtomicBool::new(false));
         let executor = AuthorizationCapturingExecutor {
             saw_authorization: saw_authorization.clone(),
             saw_governance: saw_governance.clone(),
+            saw_bridge: saw_bridge.clone(),
         };
         let policy_hash = Hash32([9u8; 32]);
         let policy_ref = PolicyRef {
@@ -1412,6 +1466,7 @@ mod tests {
         assert!(result.success);
         assert!(saw_authorization.load(Ordering::SeqCst));
         assert!(!saw_governance.load(Ordering::SeqCst));
+        assert!(!saw_bridge.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -1425,10 +1480,12 @@ mod tests {
         let verifier = DummyVerifier;
         let saw_authorization = Arc::new(AtomicBool::new(false));
         let saw_governance = Arc::new(AtomicBool::new(false));
+        let saw_bridge = Arc::new(AtomicBool::new(false));
         let bridge_called = Arc::new(AtomicBool::new(false));
         let executor = AuthorizationCapturingExecutor {
             saw_authorization: saw_authorization.clone(),
             saw_governance: saw_governance.clone(),
+            saw_bridge: saw_bridge.clone(),
         };
         let bridge = RecordingReadyBridge {
             called: bridge_called.clone(),
@@ -1463,6 +1520,121 @@ mod tests {
         assert!(bridge_called.load(Ordering::SeqCst));
         assert!(saw_authorization.load(Ordering::SeqCst));
         assert!(!saw_governance.load(Ordering::SeqCst));
+        assert!(!saw_bridge.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn run_once_with_ready_bridge_threads_registry_bridge_to_executor() {
+        let state_provider = DummyStateProvider;
+        let proposer = ValidHttpCallProposer;
+        let policy_engine = AllowAllPolicyEngine;
+        let selector = DummySelector;
+        let token_factory = DummyTokenFactory;
+        let attestor = LoggedAttestor {
+            log: new_call_log(),
+        };
+        let verifier = DummyVerifier;
+        let saw_authorization = Arc::new(AtomicBool::new(false));
+        let saw_governance = Arc::new(AtomicBool::new(false));
+        let saw_bridge = Arc::new(AtomicBool::new(false));
+        let bridge_called = Arc::new(AtomicBool::new(false));
+        let executor = AuthorizationCapturingExecutor {
+            saw_authorization: saw_authorization.clone(),
+            saw_governance: saw_governance.clone(),
+            saw_bridge: saw_bridge.clone(),
+        };
+        let bridge = RegistryAttachingReadyBridge {
+            called: bridge_called.clone(),
+        };
+        let policy_hash = Hash32([9u8; 32]);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: Hash32([8u8; 32]),
+        };
+
+        let result = run_once_with_ready_bridge(
+            RunOnceInputs {
+                state_provider: &state_provider,
+                proposer: &proposer,
+                policy_engine: &policy_engine,
+                selector: &selector,
+                token_factory: &token_factory,
+                attestor: &attestor,
+                verifier: &verifier,
+                executor: &executor,
+                policy_hash: &policy_hash,
+                policy_ref,
+                nonce_or_tx_hash: None,
+                metrics: None,
+                audit_recorder: None,
+            },
+            &bridge,
+        )
+        .expect("run_once_with_ready_bridge should succeed");
+
+        assert!(result.success);
+        assert!(bridge_called.load(Ordering::SeqCst));
+        assert!(saw_authorization.load(Ordering::SeqCst));
+        assert!(!saw_governance.load(Ordering::SeqCst));
+        assert!(saw_bridge.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn run_once_with_ready_bridge_fails_closed_when_bridge_requires_execution_auth_metadata() {
+        let state_provider = DummyStateProvider;
+        let proposer = ValidHttpCallProposer;
+        let policy_engine = AllowAllPolicyEngine;
+        let selector = DummySelector;
+        let token_factory = DummyTokenFactory;
+        let attestor = DummyAttestor;
+        let verifier = DummyVerifier;
+        let saw_authorization = Arc::new(AtomicBool::new(false));
+        let saw_governance = Arc::new(AtomicBool::new(false));
+        let saw_bridge = Arc::new(AtomicBool::new(false));
+        let bridge_called = Arc::new(AtomicBool::new(false));
+        let executor = AuthorizationCapturingExecutor {
+            saw_authorization: saw_authorization.clone(),
+            saw_governance: saw_governance.clone(),
+            saw_bridge: saw_bridge.clone(),
+        };
+        let bridge = RegistryAttachingReadyBridge {
+            called: bridge_called.clone(),
+        };
+        let policy_hash = Hash32([9u8; 32]);
+        let policy_ref = PolicyRef {
+            policy_epoch: 1,
+            registry_root: Hash32([8u8; 32]),
+        };
+
+        let err = run_once_with_ready_bridge(
+            RunOnceInputs {
+                state_provider: &state_provider,
+                proposer: &proposer,
+                policy_engine: &policy_engine,
+                selector: &selector,
+                token_factory: &token_factory,
+                attestor: &attestor,
+                verifier: &verifier,
+                executor: &executor,
+                policy_hash: &policy_hash,
+                policy_ref,
+                nonce_or_tx_hash: None,
+                metrics: None,
+                audit_recorder: None,
+            },
+            &bridge,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            MprdError::InvalidInput(message)
+                if message == "missing execution_authorization_hash_v1 attestation metadata"
+        ));
+        assert!(bridge_called.load(Ordering::SeqCst));
+        assert!(!saw_authorization.load(Ordering::SeqCst));
+        assert!(!saw_governance.load(Ordering::SeqCst));
+        assert!(!saw_bridge.load(Ordering::SeqCst));
     }
 
     #[test]

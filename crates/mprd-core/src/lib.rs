@@ -226,6 +226,7 @@ impl<'a> VerifiedBundle<'a> {
 ///
 /// This is the first runtime step toward replacing free execution booleans with witness-carrying
 /// types on the RC1 path.
+#[must_use]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutionBoundaryWitnessV1 {
     chosen_action_preimage: Vec<u8>,
@@ -239,6 +240,83 @@ impl ExecutionBoundaryWitnessV1 {
 
     pub fn limits_binding(&self) -> &limits::LimitsBindingWitnessV1 {
         &self.limits_binding
+    }
+}
+
+/// Typed packet for the concrete binding half of the abstract execution-boundary witness.
+///
+/// This is the smallest grouped language for the verified-decision tuple that the orchestrator
+/// had in hand immediately before execution.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionBindingVectorPacketV1 {
+    decision_commitment: Hash32,
+    policy_hash: PolicyHash,
+    policy_ref: PolicyRef,
+    state_ref: StateRef,
+    state_hash: StateHash,
+    candidate_set_hash: Hash32,
+    chosen_action_hash: Hash32,
+    nonce_or_tx_hash: NonceHash,
+    limits_hash: Hash32,
+}
+
+impl ExecutionBindingVectorPacketV1 {
+    pub fn decision_commitment(&self) -> &Hash32 {
+        &self.decision_commitment
+    }
+
+    pub fn policy_hash(&self) -> &PolicyHash {
+        &self.policy_hash
+    }
+
+    pub fn policy_ref(&self) -> &PolicyRef {
+        &self.policy_ref
+    }
+
+    pub fn state_ref(&self) -> &StateRef {
+        &self.state_ref
+    }
+
+    pub fn state_hash(&self) -> &StateHash {
+        &self.state_hash
+    }
+
+    pub fn candidate_set_hash(&self) -> &Hash32 {
+        &self.candidate_set_hash
+    }
+
+    pub fn chosen_action_hash(&self) -> &Hash32 {
+        &self.chosen_action_hash
+    }
+
+    pub fn nonce_or_tx_hash(&self) -> &NonceHash {
+        &self.nonce_or_tx_hash
+    }
+
+    pub fn limits_hash(&self) -> &Hash32 {
+        &self.limits_hash
+    }
+}
+
+/// Typed packet for the concrete refinement artifact at the live execute boundary.
+///
+/// This groups the exact ready-packet hash with the verified proof attestation-metadata hash,
+/// instead of leaving the top-level refinement artifact as two adjacent hashes by convention.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionBoundaryRefinementPacketV1 {
+    execution_ready_packet_hash: Hash32,
+    attestation_metadata_hash: Hash32,
+}
+
+impl ExecutionBoundaryRefinementPacketV1 {
+    pub fn execution_ready_packet_hash(&self) -> &Hash32 {
+        &self.execution_ready_packet_hash
+    }
+
+    pub fn attestation_metadata_hash(&self) -> &Hash32 {
+        &self.attestation_metadata_hash
     }
 }
 
@@ -315,13 +393,67 @@ impl<'a> ExecutionReadyBundle<'a> {
     }
 }
 
+/// Constructor-gated runtime witness for the next execute-boundary refinement step.
+///
+/// This is the smallest exact runtime object that simultaneously carries:
+/// - the live execution-boundary witness,
+/// - the admitted execution authorization (with concrete governance),
+/// - the exact binding-vector packet for the verified-decision tuple, and
+/// - the executor-side signature / provenance / replay admissions.
+///
+/// It does not close the top-level refinement theorem by itself, but it removes one more
+/// "adjacent by convention" seam from the runtime side of that proof lane.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionReadyRefinementWitnessV1 {
+    boundary: ExecutionBoundaryWitnessV1,
+    authorization: ExecutionAuthorizationWitnessV1,
+    binding_vector: ExecutionBindingVectorPacketV1,
+    signature: crate::crypto::SignatureAdmissionWitnessV1,
+    state_provenance: crate::state_provenance::StateProvenanceWitnessV1,
+    replay_clearance: crate::anti_replay::ReplayClearanceWitnessV1,
+}
+
+impl ExecutionReadyRefinementWitnessV1 {
+    pub fn boundary(&self) -> &ExecutionBoundaryWitnessV1 {
+        &self.boundary
+    }
+
+    pub fn authorization(&self) -> &ExecutionAuthorizationWitnessV1 {
+        &self.authorization
+    }
+
+    pub fn governance(&self) -> &GovernanceAdmissionWitnessV1 {
+        self.authorization.governance().unwrap_or_else(|| {
+            unreachable!("execution ready refinement witness always carries governance")
+        })
+    }
+
+    pub fn binding_vector(&self) -> &ExecutionBindingVectorPacketV1 {
+        &self.binding_vector
+    }
+
+    pub fn signature(&self) -> &crate::crypto::SignatureAdmissionWitnessV1 {
+        &self.signature
+    }
+
+    pub fn state_provenance(&self) -> &crate::state_provenance::StateProvenanceWitnessV1 {
+        &self.state_provenance
+    }
+
+    pub fn replay_clearance(&self) -> &crate::anti_replay::ReplayClearanceWitnessV1 {
+        &self.replay_clearance
+    }
+}
+
 /// A token/decision/state packet admitted for attestation after fail-closed identity checks.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct AttestationReadyBundle<'a> {
     token: &'a DecisionToken,
     decision: &'a Decision,
     state: &'a StateSnapshot,
     governance: Option<GovernanceAdmissionWitnessV1>,
+    execution_authorization: ExecutionAuthorizationAttestationV1,
 }
 
 impl<'a> AttestationReadyBundle<'a> {
@@ -339,6 +471,10 @@ impl<'a> AttestationReadyBundle<'a> {
 
     pub fn governance(&self) -> Option<&GovernanceAdmissionWitnessV1> {
         self.governance.as_ref()
+    }
+
+    pub fn execution_authorization(&self) -> &ExecutionAuthorizationAttestationV1 {
+        &self.execution_authorization
     }
 }
 
@@ -371,6 +507,17 @@ impl GovernanceUpdateKindV1 {
             Self::PolicyTweak => "policy_tweak",
             Self::SafetyRuleChange => "safety_rule_change",
             Self::AgentCapabilityExpand => "agent_capability_expand",
+        }
+    }
+
+    pub fn from_str_v1(value: &str) -> Result<Self> {
+        match value {
+            "policy_tweak" => Ok(Self::PolicyTweak),
+            "safety_rule_change" => Ok(Self::SafetyRuleChange),
+            "agent_capability_expand" => Ok(Self::AgentCapabilityExpand),
+            _ => Err(MprdError::InvalidInput(
+                "invalid governance_update_kind attestation metadata".into(),
+            )),
         }
     }
 }
@@ -415,6 +562,8 @@ pub const GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1: &str = "governance_link_ok
 pub const EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1: &str = "execution_authorization_hash_v1";
 const EXECUTION_AUTH_ATTESTATION_METADATA_DOMAIN_V1: &[u8] =
     b"MPRD_EXECUTION_AUTH_METADATA_HASH_V1";
+const REGISTRY_AUTHORIZATION_ATTESTATION_DOMAIN_V1: &[u8] =
+    b"MPRD_REGISTRY_AUTHORIZATION_ATTESTATION_V1";
 const EXECUTION_READY_PACKET_HASH_DOMAIN_V1: &[u8] = b"MPRD_EXECUTION_READY_PACKET_HASH_V1";
 const EXECUTION_BOUNDARY_REFINEMENT_HASH_DOMAIN_V1: &[u8] =
     b"MPRD_EXECUTION_BOUNDARY_REFINEMENT_HASH_V1";
@@ -424,6 +573,7 @@ const EXECUTION_BINDING_VECTOR_HASH_DOMAIN_V1: &[u8] = b"MPRD_EXECUTION_BINDING_
 ///
 /// This binds the exact `(policy_hash, policy_ref)` pair the orchestrator was authorized to use
 /// and lets downstream stages fail closed on any selector/token drift.
+#[must_use]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PolicyAuthorityWitnessV1 {
     policy_hash: PolicyHash,
@@ -466,6 +616,65 @@ impl ExecutionAuthorizationWitnessV1 {
     }
 }
 
+/// Typed execution-authorization attestation packet reconstructed from proof metadata.
+///
+/// This is the smallest concrete audit packet for the attested policy/state/governance identity:
+/// it preserves the exact authorization fields that are hashed into
+/// `execution_authorization_hash_v1` without requiring consumers to reverse-engineer them from
+/// unrelated hashes or raw metadata.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionAuthorizationAttestationV1 {
+    policy_hash: PolicyHash,
+    policy_ref: PolicyRef,
+    state_hash: StateHash,
+    state_ref: StateRef,
+    governance: Option<GovernanceAdmissionWitnessV1>,
+}
+
+impl ExecutionAuthorizationAttestationV1 {
+    pub fn policy_hash(&self) -> &PolicyHash {
+        &self.policy_hash
+    }
+
+    pub fn policy_ref(&self) -> &PolicyRef {
+        &self.policy_ref
+    }
+
+    pub fn state_hash(&self) -> &StateHash {
+        &self.state_hash
+    }
+
+    pub fn state_ref(&self) -> &StateRef {
+        &self.state_ref
+    }
+
+    pub fn governance(&self) -> Option<&GovernanceAdmissionWitnessV1> {
+        self.governance.as_ref()
+    }
+}
+
+/// Typed execution-authorization metadata packet reconstructed from proof metadata.
+///
+/// This groups the exact authorization attestation packet with the canonical
+/// `execution_authorization_hash_v1` value that proves the metadata still commits to it.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionAuthorizationMetadataPacketV1 {
+    execution_authorization: ExecutionAuthorizationAttestationV1,
+    execution_authorization_hash: Hash32,
+}
+
+impl ExecutionAuthorizationMetadataPacketV1 {
+    pub fn execution_authorization(&self) -> &ExecutionAuthorizationAttestationV1 {
+        &self.execution_authorization
+    }
+
+    pub fn execution_authorization_hash(&self) -> &Hash32 {
+        &self.execution_authorization_hash
+    }
+}
+
 /// Concrete signed-registry bridge witness carried into the live execute path.
 ///
 /// This preserves the exact concrete registry authorization tuple and optional checkpoint binding
@@ -473,14 +682,114 @@ impl ExecutionAuthorizationWitnessV1 {
 /// only from generic proof metadata.
 #[must_use]
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegistryAuthorizationWitnessV1 {
+    resolution_hash: Hash32,
+    exec_kind_id: crate::artifact_repo::Id32,
+    exec_version_id: crate::artifact_repo::Id32,
+    image_id: crate::artifact_repo::Id32,
+    policy_source_kind_id: Option<crate::artifact_repo::Id32>,
+    policy_source_hash: Option<Hash32>,
+}
+
+impl RegistryAuthorizationWitnessV1 {
+    pub fn resolution_hash(&self) -> &Hash32 {
+        &self.resolution_hash
+    }
+
+    pub fn exec_kind_id(&self) -> &crate::artifact_repo::Id32 {
+        &self.exec_kind_id
+    }
+
+    pub fn exec_version_id(&self) -> &crate::artifact_repo::Id32 {
+        &self.exec_version_id
+    }
+
+    pub fn image_id(&self) -> &crate::artifact_repo::Id32 {
+        &self.image_id
+    }
+
+    pub fn policy_source_kind_id(&self) -> Option<&crate::artifact_repo::Id32> {
+        self.policy_source_kind_id.as_ref()
+    }
+
+    pub fn policy_source_hash(&self) -> Option<&Hash32> {
+        self.policy_source_hash.as_ref()
+    }
+}
+
+/// Typed registry-authorization attestation packet reconstructed from the bridge tuple.
+///
+/// This is the smallest concrete audit packet for the resolved registry authorization surface:
+/// exact resolution hash plus the exec/image/source tuple it commits to.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegistryAuthorizationAttestationV1 {
+    resolution_hash: Hash32,
+    exec_kind_id: crate::artifact_repo::Id32,
+    exec_version_id: crate::artifact_repo::Id32,
+    image_id: crate::artifact_repo::Id32,
+    policy_source_kind_id: Option<crate::artifact_repo::Id32>,
+    policy_source_hash: Option<Hash32>,
+}
+
+impl RegistryAuthorizationAttestationV1 {
+    pub fn resolution_hash(&self) -> &Hash32 {
+        &self.resolution_hash
+    }
+
+    pub fn exec_kind_id(&self) -> &crate::artifact_repo::Id32 {
+        &self.exec_kind_id
+    }
+
+    pub fn exec_version_id(&self) -> &crate::artifact_repo::Id32 {
+        &self.exec_version_id
+    }
+
+    pub fn image_id(&self) -> &crate::artifact_repo::Id32 {
+        &self.image_id
+    }
+
+    pub fn policy_source_kind_id(&self) -> Option<&crate::artifact_repo::Id32> {
+        self.policy_source_kind_id.as_ref()
+    }
+
+    pub fn policy_source_hash(&self) -> Option<&Hash32> {
+        self.policy_source_hash.as_ref()
+    }
+}
+
+/// Typed bridge attestation packet reconstructed from the live signed-registry bridge witness.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionRegistryBridgeAttestationV1 {
+    registry_authorization: RegistryAuthorizationAttestationV1,
+    registry_checkpoint_attestation_hash: Option<Hash32>,
+}
+
+impl ExecutionRegistryBridgeAttestationV1 {
+    pub fn registry_authorization(&self) -> &RegistryAuthorizationAttestationV1 {
+        &self.registry_authorization
+    }
+
+    pub fn registry_checkpoint_attestation_hash(&self) -> Option<&Hash32> {
+        self.registry_checkpoint_attestation_hash.as_ref()
+    }
+}
+
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutionRegistryBridgeWitnessV1 {
-    registry_authorization_hash: Hash32,
+    registry_authorization: RegistryAuthorizationWitnessV1,
     registry_checkpoint_attestation_hash: Option<Hash32>,
 }
 
 impl ExecutionRegistryBridgeWitnessV1 {
+    pub fn registry_authorization(&self) -> &RegistryAuthorizationWitnessV1 {
+        &self.registry_authorization
+    }
+
     pub fn registry_authorization_hash(&self) -> &Hash32 {
-        &self.registry_authorization_hash
+        self.registry_authorization.resolution_hash()
     }
 
     pub fn registry_checkpoint_attestation_hash(&self) -> Option<&Hash32> {
@@ -640,6 +949,16 @@ fn governance_attestation_bool_v1(value: bool) -> &'static str {
     }
 }
 
+fn governance_attestation_bool_from_str_v1(key: &'static str, value: &str) -> Result<bool> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(MprdError::InvalidInput(format!(
+            "invalid {key} attestation metadata bool"
+        ))),
+    }
+}
+
 /// Emit canonical governance attestation metadata for the admitted governance witness.
 pub fn insert_governance_attestation_metadata_v1(
     metadata: &mut HashMap<String, String>,
@@ -661,6 +980,55 @@ pub fn insert_governance_attestation_metadata_v1(
         GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1.into(),
         governance_attestation_bool_v1(governance.link_ok()).into(),
     );
+}
+
+/// Reconstruct the admitted governance witness from canonical proof metadata.
+///
+/// This is used by audit and export surfaces that must expose governance provenance as a typed
+/// object instead of burying it inside the raw metadata map.
+pub fn governance_admission_witness_from_attestation_metadata_v1(
+    metadata: &HashMap<String, String>,
+) -> Result<Option<GovernanceAdmissionWitnessV1>> {
+    let update_kind = metadata.get(GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1);
+    let profile_app_ok = metadata.get(GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1);
+    let profile_safety_ok = metadata.get(GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1);
+    let link_ok = metadata.get(GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1);
+
+    let present_count = usize::from(update_kind.is_some())
+        + usize::from(profile_app_ok.is_some())
+        + usize::from(profile_safety_ok.is_some())
+        + usize::from(link_ok.is_some());
+    if present_count == 0 {
+        return Ok(None);
+    }
+    if present_count != 4 {
+        return Err(MprdError::InvalidInput(
+            "partial governance attestation metadata cannot reconstruct admitted governance".into(),
+        ));
+    }
+
+    let update_kind =
+        GovernanceUpdateKindV1::from_str_v1(update_kind.expect("checked above").as_str())?;
+    let profile_app_ok = governance_attestation_bool_from_str_v1(
+        GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1,
+        profile_app_ok.expect("checked above").as_str(),
+    )?;
+    let profile_safety_ok = governance_attestation_bool_from_str_v1(
+        GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1,
+        profile_safety_ok.expect("checked above").as_str(),
+    )?;
+    let link_ok = governance_attestation_bool_from_str_v1(
+        GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1,
+        link_ok.expect("checked above").as_str(),
+    )?;
+
+    governance_admission_witness_from_fields_v1(
+        update_kind,
+        profile_app_ok,
+        profile_safety_ok,
+        link_ok,
+    )
+    .map(Some)
 }
 
 fn require_governance_attestation_metadata_value_v1<'a>(
@@ -728,7 +1096,7 @@ pub fn verify_governance_attestation_metadata_v1(
     Ok(())
 }
 
-fn execution_authorization_attestation_hash_v1(
+pub fn execution_authorization_attestation_hash_from_fields_v1(
     policy_hash: &PolicyHash,
     policy_ref: &PolicyRef,
     state_hash: &Hash32,
@@ -755,6 +1123,223 @@ fn execution_authorization_attestation_hash_v1(
         None => hasher.update([0u8]),
     }
     Hash32(hasher.finalize().into())
+}
+
+/// Construct the typed execution-authorization attestation packet from exact fields.
+pub fn execution_authorization_attestation_from_fields_v1(
+    policy_hash: &PolicyHash,
+    policy_ref: &PolicyRef,
+    state_hash: &StateHash,
+    state_ref: &StateRef,
+    governance: Option<GovernanceAdmissionWitnessV1>,
+) -> ExecutionAuthorizationAttestationV1 {
+    ExecutionAuthorizationAttestationV1 {
+        policy_hash: *policy_hash,
+        policy_ref: policy_ref.clone(),
+        state_hash: *state_hash,
+        state_ref: state_ref.clone(),
+        governance,
+    }
+}
+
+/// Project the live execution-authorization witness into the exact attestation packet language.
+pub fn execution_authorization_attestation_from_witness_v1(
+    authorization: &ExecutionAuthorizationWitnessV1,
+) -> ExecutionAuthorizationAttestationV1 {
+    execution_authorization_attestation_from_fields_v1(
+        authorization.policy_authority().policy_hash(),
+        authorization.policy_authority().policy_ref(),
+        authorization.state_binding().state_hash(),
+        authorization.state_binding().state_ref(),
+        authorization.governance().cloned(),
+    )
+}
+
+/// Compute the canonical attestation hash from the grouped execution-authorization packet.
+pub fn execution_authorization_attestation_hash_from_packet_v1(
+    execution_authorization: &ExecutionAuthorizationAttestationV1,
+) -> Hash32 {
+    execution_authorization_attestation_hash_from_fields_v1(
+        execution_authorization.policy_hash(),
+        execution_authorization.policy_ref(),
+        execution_authorization.state_hash(),
+        execution_authorization.state_ref(),
+        execution_authorization.governance(),
+    )
+}
+
+/// Construct the grouped execution-authorization metadata packet from the typed attestation packet.
+pub fn execution_authorization_metadata_packet_from_attestation_v1(
+    execution_authorization: &ExecutionAuthorizationAttestationV1,
+) -> ExecutionAuthorizationMetadataPacketV1 {
+    ExecutionAuthorizationMetadataPacketV1 {
+        execution_authorization: execution_authorization.clone(),
+        execution_authorization_hash: execution_authorization_attestation_hash_from_packet_v1(
+            execution_authorization,
+        ),
+    }
+}
+
+/// Project the live execution-authorization witness into the grouped metadata packet language.
+pub fn execution_authorization_metadata_packet_from_witness_v1(
+    authorization: &ExecutionAuthorizationWitnessV1,
+) -> ExecutionAuthorizationMetadataPacketV1 {
+    execution_authorization_metadata_packet_from_attestation_v1(
+        &execution_authorization_attestation_from_witness_v1(authorization),
+    )
+}
+
+/// Reconstruct and verify the typed execution-authorization attestation packet from proof metadata.
+pub fn execution_authorization_attestation_from_attestation_metadata_v1(
+    metadata: &HashMap<String, String>,
+    policy_hash: &PolicyHash,
+    policy_ref: &PolicyRef,
+    state_hash: &StateHash,
+    state_ref: &StateRef,
+) -> Result<Option<ExecutionAuthorizationAttestationV1>> {
+    Ok(
+        execution_authorization_metadata_packet_from_attestation_metadata_v1(
+            metadata,
+            policy_hash,
+            policy_ref,
+            state_hash,
+            state_ref,
+        )?
+        .map(|packet| packet.execution_authorization),
+    )
+}
+
+/// Reconstruct and verify the grouped execution-authorization metadata packet from proof metadata.
+pub fn execution_authorization_metadata_packet_from_attestation_metadata_v1(
+    metadata: &HashMap<String, String>,
+    policy_hash: &PolicyHash,
+    policy_ref: &PolicyRef,
+    state_hash: &StateHash,
+    state_ref: &StateRef,
+) -> Result<Option<ExecutionAuthorizationMetadataPacketV1>> {
+    let Some(actual) = metadata.get(EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1) else {
+        return Ok(None);
+    };
+    let governance = governance_admission_witness_from_attestation_metadata_v1(metadata)?;
+    let execution_authorization = execution_authorization_attestation_from_fields_v1(
+        policy_hash,
+        policy_ref,
+        state_hash,
+        state_ref,
+        governance,
+    );
+    let expected =
+        execution_authorization_attestation_hash_from_packet_v1(&execution_authorization);
+    if actual != &hex::encode(expected.0) {
+        return Err(MprdError::InvalidInput(
+            "execution_authorization_hash_v1 attestation metadata drifted from admitted execution authorization".into(),
+        ));
+    }
+    Ok(Some(ExecutionAuthorizationMetadataPacketV1 {
+        execution_authorization,
+        execution_authorization_hash: expected,
+    }))
+}
+
+pub fn registry_authorization_attestation_hash_from_fields_v1(
+    policy_hash: &PolicyHash,
+    exec_kind_id: &crate::artifact_repo::Id32,
+    exec_version_id: &crate::artifact_repo::Id32,
+    image_id: &crate::artifact_repo::Id32,
+    policy_source_kind_id: Option<&crate::artifact_repo::Id32>,
+    policy_source_hash: Option<&Hash32>,
+) -> Result<Hash32> {
+    match (policy_source_kind_id, policy_source_hash) {
+        (None, None) | (Some(_), Some(_)) => {}
+        _ => {
+            return Err(MprdError::InvalidInput(
+                "registry authorization hash requires policy_source_kind_id and policy_source_hash to be both set or both unset".into(),
+            ))
+        }
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(REGISTRY_AUTHORIZATION_ATTESTATION_DOMAIN_V1);
+    hasher.update(policy_hash.0);
+    hasher.update(exec_kind_id.as_bytes());
+    hasher.update(exec_version_id.as_bytes());
+    hasher.update(image_id.as_bytes());
+    match policy_source_kind_id {
+        Some(kind_id) => {
+            hasher.update([1u8]);
+            hasher.update(kind_id.as_bytes());
+        }
+        None => hasher.update([0u8]),
+    }
+    match policy_source_hash {
+        Some(source_hash) => {
+            hasher.update([1u8]);
+            hasher.update(source_hash.0);
+        }
+        None => hasher.update([0u8]),
+    }
+    Ok(Hash32(hasher.finalize().into()))
+}
+
+/// Construct the typed registry-authorization attestation packet from exact fields.
+pub fn registry_authorization_attestation_from_fields_v1(
+    resolution_hash: Hash32,
+    exec_kind_id: crate::artifact_repo::Id32,
+    exec_version_id: crate::artifact_repo::Id32,
+    image_id: crate::artifact_repo::Id32,
+    policy_source_kind_id: Option<crate::artifact_repo::Id32>,
+    policy_source_hash: Option<Hash32>,
+) -> RegistryAuthorizationAttestationV1 {
+    RegistryAuthorizationAttestationV1 {
+        resolution_hash,
+        exec_kind_id,
+        exec_version_id,
+        image_id,
+        policy_source_kind_id,
+        policy_source_hash,
+    }
+}
+
+/// Recompute the canonical registry-authorization resolution hash from the grouped packet.
+pub fn registry_authorization_attestation_hash_from_packet_v1(
+    policy_hash: &PolicyHash,
+    registry_authorization: &RegistryAuthorizationAttestationV1,
+) -> Result<Hash32> {
+    registry_authorization_attestation_hash_from_fields_v1(
+        policy_hash,
+        registry_authorization.exec_kind_id(),
+        registry_authorization.exec_version_id(),
+        registry_authorization.image_id(),
+        registry_authorization.policy_source_kind_id(),
+        registry_authorization.policy_source_hash(),
+    )
+}
+
+/// Project the live registry authorization witness into the grouped attestation packet language.
+pub fn registry_authorization_attestation_from_witness_v1(
+    registry_authorization: &RegistryAuthorizationWitnessV1,
+) -> RegistryAuthorizationAttestationV1 {
+    registry_authorization_attestation_from_fields_v1(
+        *registry_authorization.resolution_hash(),
+        *registry_authorization.exec_kind_id(),
+        *registry_authorization.exec_version_id(),
+        *registry_authorization.image_id(),
+        registry_authorization.policy_source_kind_id().copied(),
+        registry_authorization.policy_source_hash().copied(),
+    )
+}
+
+/// Project the live signed-registry bridge witness into one grouped bridge attestation packet.
+pub fn execution_registry_bridge_attestation_from_witness_v1(
+    bridge: &ExecutionRegistryBridgeWitnessV1,
+) -> ExecutionRegistryBridgeAttestationV1 {
+    ExecutionRegistryBridgeAttestationV1 {
+        registry_authorization: registry_authorization_attestation_from_witness_v1(
+            bridge.registry_authorization(),
+        ),
+        registry_checkpoint_attestation_hash: bridge
+            .registry_checkpoint_attestation_hash()
+            .copied(),
+    }
 }
 
 fn update_state_ref_hash_v1(hasher: &mut Sha256, state_ref: &StateRef) {
@@ -795,12 +1380,8 @@ pub fn execution_ready_packet_hash_v1(packet: &ExecutionReadyPacketV1) -> Hash32
         Some(authorization) => {
             hasher.update([1u8]);
             hasher.update(
-                execution_authorization_attestation_hash_v1(
-                    authorization.policy_authority().policy_hash(),
-                    authorization.policy_authority().policy_ref(),
-                    authorization.state_binding().state_hash(),
-                    authorization.state_binding().state_ref(),
-                    authorization.governance(),
+                execution_authorization_attestation_hash_from_packet_v1(
+                    &execution_authorization_attestation_from_witness_v1(authorization),
                 )
                 .0,
             );
@@ -810,9 +1391,10 @@ pub fn execution_ready_packet_hash_v1(packet: &ExecutionReadyPacketV1) -> Hash32
 
     match packet.bridge() {
         Some(bridge) => {
+            let bridge_packet = execution_registry_bridge_attestation_from_witness_v1(bridge);
             hasher.update([1u8]);
-            hasher.update(bridge.registry_authorization_hash().0);
-            match bridge.registry_checkpoint_attestation_hash() {
+            hasher.update(bridge_packet.registry_authorization().resolution_hash().0);
+            match bridge_packet.registry_checkpoint_attestation_hash() {
                 Some(checkpoint_hash) => {
                     hasher.update([1u8]);
                     hasher.update(checkpoint_hash.0);
@@ -864,31 +1446,43 @@ pub fn execution_ready_packet_hash_v1(packet: &ExecutionReadyPacketV1) -> Hash32
 /// This binds the grouped `ExecutionReadyPacketV1` to the verified proof metadata that reached the
 /// live `execute_ready(...)` boundary, so the operator surface can audit one concrete refinement
 /// artifact rather than only a local stack object plus separate metadata.
-pub fn execution_boundary_refinement_hash_v1(ready: &ExecutionReadyBundle<'_>) -> Hash32 {
+pub fn execution_boundary_refinement_packet_from_ready_v1(
+    ready: &ExecutionReadyBundle<'_>,
+) -> ExecutionBoundaryRefinementPacketV1 {
+    ExecutionBoundaryRefinementPacketV1 {
+        execution_ready_packet_hash: execution_ready_packet_hash_v1(ready.packet()),
+        attestation_metadata_hash: crate::decision_log::attestation_metadata_hash_v1(
+            &ready.proof().attestation_metadata,
+        ),
+    }
+}
+
+/// Compute the deterministic refinement hash from the grouped refinement packet.
+pub fn execution_boundary_refinement_hash_from_packet_v1(
+    packet: &ExecutionBoundaryRefinementPacketV1,
+) -> Hash32 {
     let mut hasher = Sha256::new();
     hasher.update(EXECUTION_BOUNDARY_REFINEMENT_HASH_DOMAIN_V1);
-    hasher.update(execution_ready_packet_hash_v1(ready.packet()).0);
-    hasher.update(
-        crate::decision_log::attestation_metadata_hash_v1(&ready.proof().attestation_metadata).0,
-    );
+    hasher.update(packet.execution_ready_packet_hash().0);
+    hasher.update(packet.attestation_metadata_hash().0);
     Hash32(hasher.finalize().into())
 }
 
-/// Emit a deterministic digest over the concrete verified-decision tuple corresponding to the
-/// binding half of the abstract execution-boundary witness.
-///
-/// This constructor-gated helper re-checks the concrete tuple the orchestrator had in hand right
-/// after verification and before execution:
-/// policy/state identity, state provenance, candidate-set membership, selected allowed verdict,
-/// chosen-action binding, canonical decision commitment, limits-byte binding, and the nonce.
-pub fn execution_binding_vector_hash_v1(
+pub fn execution_boundary_refinement_hash_v1(ready: &ExecutionReadyBundle<'_>) -> Hash32 {
+    execution_boundary_refinement_hash_from_packet_v1(
+        &execution_boundary_refinement_packet_from_ready_v1(ready),
+    )
+}
+
+/// Construct the grouped binding-vector packet from the concrete verified-decision tuple.
+pub fn execution_binding_vector_packet_from_verified_decision_v1(
     token: &DecisionToken,
     proof: &ProofBundle,
     state: &StateSnapshot,
     candidates: &[CandidateAction],
     verdicts: &[RuleVerdict],
     decision: &Decision,
-) -> Result<Hash32> {
+) -> Result<ExecutionBindingVectorPacketV1> {
     if token.policy_hash != proof.policy_hash || token.policy_hash != decision.policy_hash {
         return Err(MprdError::InvalidInput(
             "policy binding drifted before execution binding hash".into(),
@@ -944,21 +1538,126 @@ pub fn execution_binding_vector_hash_v1(
         ));
     }
 
+    Ok(ExecutionBindingVectorPacketV1 {
+        decision_commitment: decision.decision_commitment,
+        policy_hash: token.policy_hash,
+        policy_ref: token.policy_ref.clone(),
+        state_ref: token.state_ref.clone(),
+        state_hash: token.state_hash,
+        candidate_set_hash: proof.candidate_set_hash,
+        chosen_action_hash: token.chosen_action_hash,
+        nonce_or_tx_hash: token.nonce_or_tx_hash,
+        limits_hash: proof.limits_hash,
+    })
+}
+
+/// Compute the deterministic binding-vector hash from the grouped packet language.
+pub fn execution_binding_vector_hash_from_packet_v1(
+    packet: &ExecutionBindingVectorPacketV1,
+) -> Hash32 {
     let mut hasher = Sha256::new();
     hasher.update(EXECUTION_BINDING_VECTOR_HASH_DOMAIN_V1);
-    hasher.update(decision.decision_commitment.0);
-    hasher.update(token.policy_hash.0);
-    hasher.update(token.policy_ref.policy_epoch.to_le_bytes());
-    hasher.update(token.policy_ref.registry_root.0);
-    hasher.update(token.state_ref.state_source_id.0);
-    hasher.update(token.state_ref.state_epoch.to_le_bytes());
-    hasher.update(token.state_ref.state_attestation_hash.0);
-    hasher.update(token.state_hash.0);
-    hasher.update(proof.candidate_set_hash.0);
-    hasher.update(token.chosen_action_hash.0);
-    hasher.update(token.nonce_or_tx_hash.0);
-    hasher.update(proof.limits_hash.0);
-    Ok(Hash32(hasher.finalize().into()))
+    hasher.update(packet.decision_commitment().0);
+    hasher.update(packet.policy_hash().0);
+    hasher.update(packet.policy_ref().policy_epoch.to_le_bytes());
+    hasher.update(packet.policy_ref().registry_root.0);
+    hasher.update(packet.state_ref().state_source_id.0);
+    hasher.update(packet.state_ref().state_epoch.to_le_bytes());
+    hasher.update(packet.state_ref().state_attestation_hash.0);
+    hasher.update(packet.state_hash().0);
+    hasher.update(packet.candidate_set_hash().0);
+    hasher.update(packet.chosen_action_hash().0);
+    hasher.update(packet.nonce_or_tx_hash().0);
+    hasher.update(packet.limits_hash().0);
+    Hash32(hasher.finalize().into())
+}
+
+/// Emit a deterministic digest over the concrete verified-decision tuple corresponding to the
+/// binding half of the abstract execution-boundary witness.
+///
+/// This constructor-gated helper re-checks the concrete tuple the orchestrator had in hand right
+/// after verification and before execution:
+/// policy/state identity, state provenance, candidate-set membership, selected allowed verdict,
+/// chosen-action binding, canonical decision commitment, limits-byte binding, and the nonce.
+pub fn execution_binding_vector_hash_v1(
+    token: &DecisionToken,
+    proof: &ProofBundle,
+    state: &StateSnapshot,
+    candidates: &[CandidateAction],
+    verdicts: &[RuleVerdict],
+    decision: &Decision,
+) -> Result<Hash32> {
+    Ok(execution_binding_vector_hash_from_packet_v1(
+        &execution_binding_vector_packet_from_verified_decision_v1(
+            token, proof, state, candidates, verdicts, decision,
+        )?,
+    ))
+}
+
+/// Construct the runtime refinement witness from a fully admitted ready bundle and the exact
+/// verified-decision tuple that led to execution.
+///
+/// The constructor fails closed unless one concrete governance witness, one complete executor
+/// admission surface, and one exact binding-vector packet all agree on the same ready bundle.
+pub fn execution_ready_refinement_witness_v1(
+    ready: &ExecutionReadyBundle<'_>,
+    state: &StateSnapshot,
+    candidates: &[CandidateAction],
+    verdicts: &[RuleVerdict],
+    decision: &Decision,
+) -> Result<ExecutionReadyRefinementWitnessV1> {
+    let authorization = ready.authorization().ok_or_else(|| {
+        MprdError::InvalidInput(
+            "execution ready refinement witness requires execution authorization witness".into(),
+        )
+    })?;
+    if authorization.governance().is_none() {
+        return Err(MprdError::InvalidInput(
+            "execution ready refinement witness requires governance witness".into(),
+        ));
+    }
+    let executor_admission = ready.executor_admission().ok_or_else(|| {
+        MprdError::InvalidInput(
+            "execution ready refinement witness requires executor admission witness".into(),
+        )
+    })?;
+    let signature = executor_admission.signature().ok_or_else(|| {
+        MprdError::InvalidInput(
+            "execution ready refinement witness requires signature admission witness".into(),
+        )
+    })?;
+    let state_provenance = executor_admission.state_provenance().ok_or_else(|| {
+        MprdError::InvalidInput(
+            "execution ready refinement witness requires state provenance witness".into(),
+        )
+    })?;
+    let replay_clearance = executor_admission.replay_clearance().ok_or_else(|| {
+        MprdError::InvalidInput(
+            "execution ready refinement witness requires replay clearance witness".into(),
+        )
+    })?;
+    if state_provenance.state_ref() != authorization.state_binding().state_ref() {
+        return Err(MprdError::InvalidInput(
+            "execution ready refinement witness drifted between authorization and state provenance"
+                .into(),
+        ));
+    }
+    let binding_vector = execution_binding_vector_packet_from_verified_decision_v1(
+        ready.token(),
+        ready.proof(),
+        state,
+        candidates,
+        verdicts,
+        decision,
+    )?;
+    Ok(ExecutionReadyRefinementWitnessV1 {
+        boundary: ready.boundary().clone(),
+        authorization: authorization.clone(),
+        binding_vector,
+        signature: signature.clone(),
+        state_provenance: state_provenance.clone(),
+        replay_clearance: *replay_clearance,
+    })
 }
 
 /// Emit a deterministic authorization hash over the exact policy/state/governance packet that the
@@ -969,16 +1668,43 @@ pub fn insert_execution_authorization_attestation_metadata_v1(
     state: &StateSnapshot,
     governance: Option<&GovernanceAdmissionWitnessV1>,
 ) {
-    let digest = execution_authorization_attestation_hash_v1(
-        &token.policy_hash,
-        &token.policy_ref,
-        &state.state_hash,
-        &state.state_ref,
-        governance,
+    insert_execution_authorization_metadata_packet_v1(
+        metadata,
+        &execution_authorization_metadata_packet_from_attestation_v1(
+            &execution_authorization_attestation_from_fields_v1(
+                &token.policy_hash,
+                &token.policy_ref,
+                &state.state_hash,
+                &state.state_ref,
+                governance.cloned(),
+            ),
+        ),
     );
+}
+
+/// Emit canonical execution-authorization attestation metadata from the constructor-gated packet.
+pub fn insert_execution_authorization_attestation_from_packet_v1(
+    metadata: &mut HashMap<String, String>,
+    execution_authorization: &ExecutionAuthorizationAttestationV1,
+) {
+    insert_execution_authorization_metadata_packet_v1(
+        metadata,
+        &execution_authorization_metadata_packet_from_attestation_v1(execution_authorization),
+    );
+}
+
+/// Emit canonical execution-authorization attestation metadata from the grouped metadata packet.
+pub fn insert_execution_authorization_metadata_packet_v1(
+    metadata: &mut HashMap<String, String>,
+    execution_authorization_metadata: &ExecutionAuthorizationMetadataPacketV1,
+) {
     metadata.insert(
         EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1.into(),
-        hex::encode(digest.0),
+        hex::encode(
+            execution_authorization_metadata
+                .execution_authorization_hash()
+                .0,
+        ),
     );
 }
 
@@ -993,14 +1719,16 @@ pub fn verify_execution_authorization_attestation_metadata_v1(
         &proof.attestation_metadata,
         EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1,
     )?;
-    let expected = execution_authorization_attestation_hash_v1(
-        authority.policy_hash(),
-        authority.policy_ref(),
-        state_binding.state_hash(),
-        state_binding.state_ref(),
-        governance,
+    let expected = execution_authorization_metadata_packet_from_attestation_v1(
+        &execution_authorization_attestation_from_fields_v1(
+            authority.policy_hash(),
+            authority.policy_ref(),
+            state_binding.state_hash(),
+            state_binding.state_ref(),
+            governance.cloned(),
+        ),
     );
-    if actual != hex::encode(expected.0) {
+    if actual != hex::encode(expected.execution_authorization_hash().0) {
         return Err(MprdError::InvalidInput(
             "execution_authorization_hash_v1 attestation metadata drifted from admitted execution authorization".into(),
         ));
@@ -1016,11 +1744,9 @@ pub fn attach_governance_attestation_to_proof_v1(
     if let Some(governance) = ready.governance() {
         insert_governance_attestation_metadata_v1(&mut proof.attestation_metadata, governance);
     }
-    insert_execution_authorization_attestation_metadata_v1(
+    insert_execution_authorization_attestation_from_packet_v1(
         &mut proof.attestation_metadata,
-        ready.token(),
-        ready.state(),
-        ready.governance(),
+        ready.execution_authorization(),
     );
 }
 
@@ -1213,15 +1939,54 @@ pub fn execution_authorization_witness_v1(
     })
 }
 
+/// Construct the concrete registry-authorization witness carried on the RC1 bridge path.
+pub fn registry_authorization_witness_v1(
+    resolution_hash: Hash32,
+    exec_kind_id: crate::artifact_repo::Id32,
+    exec_version_id: crate::artifact_repo::Id32,
+    image_id: crate::artifact_repo::Id32,
+    policy_source_kind_id: Option<crate::artifact_repo::Id32>,
+    policy_source_hash: Option<Hash32>,
+) -> Result<RegistryAuthorizationWitnessV1> {
+    match (&policy_source_kind_id, &policy_source_hash) {
+        (None, None) | (Some(_), Some(_)) => {}
+        _ => {
+            return Err(MprdError::InvalidInput(
+                "registry authorization witness requires policy_source_kind_id and policy_source_hash to be both set or both unset".into(),
+            ))
+        }
+    }
+
+    Ok(RegistryAuthorizationWitnessV1 {
+        resolution_hash,
+        exec_kind_id,
+        exec_version_id,
+        image_id,
+        policy_source_kind_id,
+        policy_source_hash,
+    })
+}
+
 /// Construct the concrete registry-bridge witness for the live execute path.
 pub fn execution_registry_bridge_witness_v1(
-    registry_authorization_hash: Hash32,
+    policy_hash: &PolicyHash,
+    registry_authorization: RegistryAuthorizationWitnessV1,
     registry_checkpoint_attestation_hash: Option<Hash32>,
-) -> ExecutionRegistryBridgeWitnessV1 {
-    ExecutionRegistryBridgeWitnessV1 {
-        registry_authorization_hash,
-        registry_checkpoint_attestation_hash,
+) -> Result<ExecutionRegistryBridgeWitnessV1> {
+    let expected_registry_authorization_hash =
+        registry_authorization_attestation_hash_from_packet_v1(
+            policy_hash,
+            &registry_authorization_attestation_from_witness_v1(&registry_authorization),
+        )?;
+    if registry_authorization.resolution_hash() != &expected_registry_authorization_hash {
+        return Err(MprdError::InvalidInput(
+            "registry bridge witness drifted from admitted registry authorization tuple".into(),
+        ));
     }
+    Ok(ExecutionRegistryBridgeWitnessV1 {
+        registry_authorization,
+        registry_checkpoint_attestation_hash,
+    })
 }
 
 /// Upgrade a verified bundle into an execution-ready bundle carrying the concrete boundary witness.
@@ -1266,10 +2031,32 @@ pub fn prepare_execution_ready_with_authorization<'a>(
 pub fn prepare_execution_ready_with_registry_bridge<'a>(
     ready: &ExecutionReadyBundle<'a>,
     bridge: ExecutionRegistryBridgeWitnessV1,
-) -> ExecutionReadyBundle<'a> {
+) -> Result<ExecutionReadyBundle<'a>> {
+    let authorization = ready.authorization().ok_or_else(|| {
+        MprdError::InvalidInput("registry bridge requires execution authorization witness".into())
+    })?;
+    verify_execution_authorization_attestation_metadata_v1(
+        ready.proof(),
+        authorization.policy_authority(),
+        authorization.state_binding(),
+        authorization.governance(),
+    )?;
+    let bridge_packet = execution_registry_bridge_attestation_from_witness_v1(&bridge);
+    let expected_registry_authorization_hash =
+        registry_authorization_attestation_hash_from_packet_v1(
+            authorization.policy_authority().policy_hash(),
+            bridge_packet.registry_authorization(),
+        )?;
+    if bridge_packet.registry_authorization().resolution_hash()
+        != &expected_registry_authorization_hash
+    {
+        return Err(MprdError::InvalidInput(
+            "registry bridge witness drifted from admitted registry authorization tuple".into(),
+        ));
+    }
     let mut enriched = ready.clone();
     enriched.packet.bridge = Some(bridge);
-    enriched
+    Ok(enriched)
 }
 
 /// Enrich an execution-ready bundle with a constructor-gated signature-admission witness.
@@ -1357,12 +2144,20 @@ pub fn prepare_attestation_ready<'a>(
         ));
     }
     let governance = governance_admission_witness_v1(state)?;
+    let execution_authorization = execution_authorization_attestation_from_fields_v1(
+        &token.policy_hash,
+        &token.policy_ref,
+        &state.state_hash,
+        &state.state_ref,
+        governance,
+    );
 
     Ok(AttestationReadyBundle {
         token,
         decision,
         state,
         governance,
+        execution_authorization,
     })
 }
 
@@ -1892,14 +2687,24 @@ mod tests {
     #[test]
     fn prepare_execution_ready_with_registry_bridge_threads_bridge_witness() {
         let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(0x73),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0x78),
+                state_epoch: 2,
+                state_attestation_hash: dummy_hash(0x79),
+            },
+        };
         let token = DecisionToken {
             policy_hash: dummy_hash(0x71),
             policy_ref: PolicyRef {
                 policy_epoch: 1,
                 registry_root: dummy_hash(0x72),
             },
-            state_hash: dummy_hash(0x73),
-            state_ref: StateRef::unknown(),
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
             chosen_action_hash: candidate.candidate_hash,
             nonce_or_tx_hash: dummy_hash(0x74),
             timestamp_ms: 0,
@@ -1916,13 +2721,526 @@ mod tests {
             risc0_receipt: vec![],
             attestation_metadata: HashMap::new(),
         };
+        let mut proof = proof;
+        insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &token,
+            &state,
+            None,
+        );
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
 
-        let ready = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).expect("ready");
-        let bridge = execution_registry_bridge_witness_v1(dummy_hash(0x76), Some(dummy_hash(0x77)));
-        let ready = prepare_execution_ready_with_registry_bridge(&ready, bridge.clone());
+        let ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready");
+        let resolution_hash = registry_authorization_attestation_hash_from_fields_v1(
+            &token.policy_hash,
+            &crate::artifact_repo::Id32([0xA1; 32]),
+            &crate::artifact_repo::Id32([0xA2; 32]),
+            &crate::artifact_repo::Id32([0xA3; 32]),
+            Some(&crate::artifact_repo::Id32([0xA4; 32])),
+            Some(&dummy_hash(0xA5)),
+        )
+        .expect("resolution hash");
+        let registry_authorization = registry_authorization_witness_v1(
+            resolution_hash,
+            crate::artifact_repo::Id32([0xA1; 32]),
+            crate::artifact_repo::Id32([0xA2; 32]),
+            crate::artifact_repo::Id32([0xA3; 32]),
+            Some(crate::artifact_repo::Id32([0xA4; 32])),
+            Some(dummy_hash(0xA5)),
+        )
+        .expect("registry authorization");
+        let bridge = execution_registry_bridge_witness_v1(
+            &token.policy_hash,
+            registry_authorization.clone(),
+            Some(dummy_hash(0x77)),
+        )
+        .expect("bridge");
+        let ready = prepare_execution_ready_with_registry_bridge(&ready, bridge.clone())
+            .expect("ready with bridge");
 
         assert_eq!(ready.bridge(), Some(&bridge));
         assert_eq!(ready.packet().bridge(), Some(&bridge));
+        assert_eq!(
+            ready.bridge().expect("bridge").registry_authorization(),
+            &registry_authorization
+        );
+    }
+
+    #[test]
+    fn execution_registry_bridge_attestation_from_witness_matches_bridge_tuple() {
+        let policy_hash = dummy_hash(0xC1);
+        let resolution_hash = registry_authorization_attestation_hash_from_fields_v1(
+            &policy_hash,
+            &crate::artifact_repo::Id32([0xC2; 32]),
+            &crate::artifact_repo::Id32([0xC3; 32]),
+            &crate::artifact_repo::Id32([0xC4; 32]),
+            Some(&crate::artifact_repo::Id32([0xC5; 32])),
+            Some(&dummy_hash(0xC6)),
+        )
+        .expect("resolution hash");
+        let registry_authorization = registry_authorization_witness_v1(
+            resolution_hash,
+            crate::artifact_repo::Id32([0xC2; 32]),
+            crate::artifact_repo::Id32([0xC3; 32]),
+            crate::artifact_repo::Id32([0xC4; 32]),
+            Some(crate::artifact_repo::Id32([0xC5; 32])),
+            Some(dummy_hash(0xC6)),
+        )
+        .expect("registry authorization");
+        let bridge = execution_registry_bridge_witness_v1(
+            &policy_hash,
+            registry_authorization.clone(),
+            Some(dummy_hash(0xC7)),
+        )
+        .expect("bridge");
+
+        let bridge_packet = execution_registry_bridge_attestation_from_witness_v1(&bridge);
+
+        assert_eq!(
+            bridge_packet.registry_authorization().resolution_hash(),
+            &resolution_hash
+        );
+        assert_eq!(
+            bridge_packet.registry_authorization().exec_kind_id(),
+            &crate::artifact_repo::Id32([0xC2; 32])
+        );
+        assert_eq!(
+            bridge_packet.registry_authorization().exec_version_id(),
+            &crate::artifact_repo::Id32([0xC3; 32])
+        );
+        assert_eq!(
+            bridge_packet.registry_authorization().image_id(),
+            &crate::artifact_repo::Id32([0xC4; 32])
+        );
+        assert_eq!(
+            bridge_packet
+                .registry_authorization()
+                .policy_source_kind_id(),
+            Some(&crate::artifact_repo::Id32([0xC5; 32]))
+        );
+        assert_eq!(
+            bridge_packet.registry_authorization().policy_source_hash(),
+            Some(&dummy_hash(0xC6))
+        );
+        assert_eq!(
+            bridge_packet.registry_checkpoint_attestation_hash(),
+            Some(&dummy_hash(0xC7))
+        );
+        assert_eq!(
+            registry_authorization_attestation_hash_from_packet_v1(
+                &policy_hash,
+                bridge_packet.registry_authorization()
+            )
+            .expect("packet hash"),
+            resolution_hash
+        );
+    }
+
+    #[test]
+    fn execution_binding_vector_packet_matches_hash_surface() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(0xD1),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0xD2),
+                state_epoch: 4,
+                state_attestation_hash: dummy_hash(0xD3),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0xD4),
+            policy_ref: PolicyRef {
+                policy_epoch: 7,
+                registry_root: dummy_hash(0xD5),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0xD6),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: hash::hash_candidate_set(std::slice::from_ref(&candidate)),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash: token.policy_hash,
+            decision_commitment: dummy_hash(0),
+        };
+        let decision = Decision {
+            decision_commitment: hash::hash_decision(&decision),
+            ..decision
+        };
+        let verdicts = vec![RuleVerdict {
+            allowed: true,
+            reasons: vec![],
+            limits: HashMap::new(),
+        }];
+        let candidates = vec![candidate];
+
+        let packet = execution_binding_vector_packet_from_verified_decision_v1(
+            &token,
+            &proof,
+            &state,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .expect("binding packet");
+
+        assert_eq!(packet.decision_commitment(), &decision.decision_commitment);
+        assert_eq!(packet.policy_hash(), &token.policy_hash);
+        assert_eq!(packet.policy_ref(), &token.policy_ref);
+        assert_eq!(packet.state_ref(), &token.state_ref);
+        assert_eq!(packet.state_hash(), &token.state_hash);
+        assert_eq!(packet.candidate_set_hash(), &proof.candidate_set_hash);
+        assert_eq!(packet.chosen_action_hash(), &token.chosen_action_hash);
+        assert_eq!(packet.nonce_or_tx_hash(), &token.nonce_or_tx_hash);
+        assert_eq!(packet.limits_hash(), &proof.limits_hash);
+        assert_eq!(
+            execution_binding_vector_hash_from_packet_v1(&packet),
+            execution_binding_vector_hash_v1(
+                &token,
+                &proof,
+                &state,
+                &candidates,
+                &verdicts,
+                &decision
+            )
+            .expect("binding hash")
+        );
+    }
+
+    #[test]
+    fn execution_boundary_refinement_packet_matches_hash_surface() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(0xE1),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0xE2),
+                state_epoch: 9,
+                state_attestation_hash: dummy_hash(0xE3),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0xE4),
+            policy_ref: PolicyRef {
+                policy_epoch: 2,
+                registry_root: dummy_hash(0xE5),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0xE6),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let mut proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0xE7),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &token,
+            &state,
+            None,
+        );
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready");
+
+        let packet = execution_boundary_refinement_packet_from_ready_v1(&ready);
+
+        assert_eq!(
+            packet.execution_ready_packet_hash(),
+            &execution_ready_packet_hash_v1(ready.packet())
+        );
+        assert_eq!(
+            packet.attestation_metadata_hash(),
+            &crate::decision_log::attestation_metadata_hash_v1(&ready.proof().attestation_metadata)
+        );
+        assert_eq!(
+            execution_boundary_refinement_hash_from_packet_v1(&packet),
+            execution_boundary_refinement_hash_v1(&ready)
+        );
+    }
+
+    #[test]
+    fn prepare_execution_ready_with_registry_bridge_rejects_missing_execution_authorization_witness(
+    ) {
+        let candidate = valid_http_call_candidate();
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x7A),
+            policy_ref: PolicyRef {
+                policy_epoch: 3,
+                registry_root: dummy_hash(0x7B),
+            },
+            state_hash: dummy_hash(0x7C),
+            state_ref: StateRef::unknown(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x7D),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0x7E),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let ready = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).expect("ready");
+
+        let err = prepare_execution_ready_with_registry_bridge(
+            &ready,
+            execution_registry_bridge_witness_v1(
+                &token.policy_hash,
+                registry_authorization_witness_v1(
+                    registry_authorization_attestation_hash_from_fields_v1(
+                        &token.policy_hash,
+                        &crate::artifact_repo::Id32([0xA6; 32]),
+                        &crate::artifact_repo::Id32([0xA7; 32]),
+                        &crate::artifact_repo::Id32([0xA8; 32]),
+                        None,
+                        None,
+                    )
+                    .expect("resolution hash"),
+                    crate::artifact_repo::Id32([0xA6; 32]),
+                    crate::artifact_repo::Id32([0xA7; 32]),
+                    crate::artifact_repo::Id32([0xA8; 32]),
+                    None,
+                    None,
+                )
+                .expect("registry authorization"),
+                Some(dummy_hash(0x80)),
+            )
+            .expect("bridge"),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            MprdError::InvalidInput(msg)
+                if msg == "registry bridge requires execution authorization witness"
+        ));
+    }
+
+    #[test]
+    fn prepare_execution_ready_with_registry_bridge_rejects_missing_execution_authorization_attestation_metadata(
+    ) {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(0x81),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0x82),
+                state_epoch: 6,
+                state_attestation_hash: dummy_hash(0x83),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x84),
+            policy_ref: PolicyRef {
+                policy_epoch: 4,
+                registry_root: dummy_hash(0x85),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x86),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0x87),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready");
+
+        let err = prepare_execution_ready_with_registry_bridge(
+            &ready,
+            execution_registry_bridge_witness_v1(
+                &token.policy_hash,
+                registry_authorization_witness_v1(
+                    registry_authorization_attestation_hash_from_fields_v1(
+                        &token.policy_hash,
+                        &crate::artifact_repo::Id32([0xA9; 32]),
+                        &crate::artifact_repo::Id32([0xAA; 32]),
+                        &crate::artifact_repo::Id32([0xAB; 32]),
+                        None,
+                        None,
+                    )
+                    .expect("resolution hash"),
+                    crate::artifact_repo::Id32([0xA9; 32]),
+                    crate::artifact_repo::Id32([0xAA; 32]),
+                    crate::artifact_repo::Id32([0xAB; 32]),
+                    None,
+                    None,
+                )
+                .expect("registry authorization"),
+                Some(dummy_hash(0x89)),
+            )
+            .expect("bridge"),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            MprdError::InvalidInput(msg)
+                if msg == "missing execution_authorization_hash_v1 attestation metadata"
+        ));
+    }
+
+    #[test]
+    fn registry_authorization_witness_rejects_incomplete_source_mapping() {
+        let err = registry_authorization_witness_v1(
+            dummy_hash(0x8A),
+            crate::artifact_repo::Id32([0xB2; 32]),
+            crate::artifact_repo::Id32([0xB3; 32]),
+            crate::artifact_repo::Id32([0xB4; 32]),
+            Some(crate::artifact_repo::Id32([0xB5; 32])),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            MprdError::InvalidInput(msg)
+                if msg
+                    == "registry authorization witness requires policy_source_kind_id and policy_source_hash to be both set or both unset"
+        ));
+    }
+
+    #[test]
+    fn execution_registry_bridge_witness_rejects_registry_authorization_tuple_drift() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(0x8B),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0x8C),
+                state_epoch: 7,
+                state_attestation_hash: dummy_hash(0x8D),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x8E),
+            policy_ref: PolicyRef {
+                policy_epoch: 5,
+                registry_root: dummy_hash(0x8F),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x90),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let mut proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0x91),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &token,
+            &state,
+            None,
+        );
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let _ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready");
+        let err = execution_registry_bridge_witness_v1(
+            &token.policy_hash,
+            registry_authorization_witness_v1(
+                dummy_hash(0x92),
+                crate::artifact_repo::Id32([0xB6; 32]),
+                crate::artifact_repo::Id32([0xB7; 32]),
+                crate::artifact_repo::Id32([0xB8; 32]),
+                None,
+                None,
+            )
+            .expect("registry authorization"),
+            Some(dummy_hash(0x93)),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            MprdError::InvalidInput(msg)
+                if msg == "registry bridge witness drifted from admitted registry authorization tuple"
+        ));
     }
 
     #[test]
@@ -1987,6 +3305,86 @@ mod tests {
             Some(&governance),
         )
         .expect("aligned authorization hash");
+    }
+
+    #[test]
+    fn execution_authorization_attestation_from_witness_matches_attestation_ready_packet() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: governance_policy_inputs(
+                GovernanceUpdateKindV1::PolicyTweak,
+                true,
+                false,
+                true,
+            ),
+            state_hash: dummy_hash(0xAA),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0xAB),
+                state_epoch: 21,
+                state_attestation_hash: dummy_hash(0xAC),
+            },
+        };
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash: dummy_hash(0xAD),
+            decision_commitment: dummy_hash(0xAE),
+        };
+        let token = DecisionToken {
+            policy_hash: decision.policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 11,
+                registry_root: dummy_hash(0xAF),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0xB0),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0xB1),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let governance = governance_admission_witness_v1(&state)
+            .expect("governance")
+            .expect("governance witness");
+        let mut proof = proof;
+        insert_governance_attestation_metadata_v1(&mut proof.attestation_metadata, &governance);
+
+        let attestation_ready =
+            prepare_attestation_ready(&token, &decision, &state).expect("attestation ready");
+        let execution_ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            Some(governance),
+        )
+        .expect("execution ready");
+
+        let projected = execution_authorization_attestation_from_witness_v1(
+            execution_ready.authorization().expect("authorization"),
+        );
+
+        assert_eq!(projected, *attestation_ready.execution_authorization());
+        assert_eq!(
+            execution_authorization_attestation_hash_from_packet_v1(&projected),
+            execution_authorization_attestation_hash_from_packet_v1(
+                attestation_ready.execution_authorization()
+            )
+        );
     }
 
     #[test]
@@ -2058,6 +3456,198 @@ mod tests {
         assert!(
             matches!(err, MprdError::InvalidInput(message) if message == "execution_authorization_hash_v1 attestation metadata drifted from admitted execution authorization")
         );
+    }
+
+    #[test]
+    fn execution_authorization_attestation_from_metadata_accepts_aligned_metadata() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: governance_policy_inputs(
+                GovernanceUpdateKindV1::PolicyTweak,
+                true,
+                false,
+                true,
+            ),
+            state_hash: dummy_hash(0x7C),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0x7D),
+                state_epoch: 13,
+                state_attestation_hash: dummy_hash(0x7E),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x7F),
+            policy_ref: PolicyRef {
+                policy_epoch: 6,
+                registry_root: dummy_hash(0x80),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x81),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let governance = governance_admission_witness_v1(&state)
+            .expect("governance")
+            .expect("governance witness");
+        let mut metadata = HashMap::new();
+        insert_governance_attestation_metadata_v1(&mut metadata, &governance);
+        insert_execution_authorization_attestation_metadata_v1(
+            &mut metadata,
+            &token,
+            &state,
+            Some(&governance),
+        );
+
+        let attestation = execution_authorization_attestation_from_attestation_metadata_v1(
+            &metadata,
+            &token.policy_hash,
+            &token.policy_ref,
+            &token.state_hash,
+            &token.state_ref,
+        )
+        .expect("attestation")
+        .expect("execution auth");
+
+        assert_eq!(attestation.policy_hash(), &token.policy_hash);
+        assert_eq!(attestation.policy_ref(), &token.policy_ref);
+        assert_eq!(attestation.state_hash(), &token.state_hash);
+        assert_eq!(attestation.state_ref(), &token.state_ref);
+        assert_eq!(attestation.governance(), Some(&governance));
+    }
+
+    #[test]
+    fn execution_authorization_attestation_from_metadata_returns_none_when_absent() {
+        let attestation = execution_authorization_attestation_from_attestation_metadata_v1(
+            &HashMap::new(),
+            &dummy_hash(0x82),
+            &PolicyRef {
+                policy_epoch: 1,
+                registry_root: dummy_hash(0x83),
+            },
+            &dummy_hash(0x84),
+            &StateRef {
+                state_source_id: dummy_hash(0x85),
+                state_epoch: 1,
+                state_attestation_hash: dummy_hash(0x86),
+            },
+        )
+        .expect("no attestation");
+
+        assert!(attestation.is_none());
+    }
+
+    #[test]
+    fn execution_authorization_metadata_packet_matches_attestation_hash_surface() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: governance_policy_inputs(
+                GovernanceUpdateKindV1::PolicyTweak,
+                true,
+                false,
+                true,
+            ),
+            state_hash: dummy_hash(0x87),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0x88),
+                state_epoch: 14,
+                state_attestation_hash: dummy_hash(0x89),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x8A),
+            policy_ref: PolicyRef {
+                policy_epoch: 7,
+                registry_root: dummy_hash(0x8B),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x8C),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let governance = governance_admission_witness_v1(&state)
+            .expect("governance")
+            .expect("governance witness");
+        let attestation = execution_authorization_attestation_from_fields_v1(
+            &token.policy_hash,
+            &token.policy_ref,
+            &token.state_hash,
+            &token.state_ref,
+            Some(governance),
+        );
+
+        let packet = execution_authorization_metadata_packet_from_attestation_v1(&attestation);
+
+        assert_eq!(packet.execution_authorization(), &attestation);
+        assert_eq!(
+            packet.execution_authorization_hash(),
+            &execution_authorization_attestation_hash_from_packet_v1(&attestation)
+        );
+    }
+
+    #[test]
+    fn execution_authorization_metadata_packet_from_metadata_matches_attestation_packet() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: governance_policy_inputs(
+                GovernanceUpdateKindV1::PolicyTweak,
+                true,
+                false,
+                true,
+            ),
+            state_hash: dummy_hash(0x8D),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0x8E),
+                state_epoch: 15,
+                state_attestation_hash: dummy_hash(0x8F),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x90),
+            policy_ref: PolicyRef {
+                policy_epoch: 8,
+                registry_root: dummy_hash(0x91),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x92),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let governance = governance_admission_witness_v1(&state)
+            .expect("governance")
+            .expect("governance witness");
+        let mut metadata = HashMap::new();
+        insert_governance_attestation_metadata_v1(&mut metadata, &governance);
+        let attestation = execution_authorization_attestation_from_fields_v1(
+            &token.policy_hash,
+            &token.policy_ref,
+            &token.state_hash,
+            &token.state_ref,
+            Some(governance),
+        );
+        let expected_packet =
+            execution_authorization_metadata_packet_from_attestation_v1(&attestation);
+        insert_execution_authorization_metadata_packet_v1(&mut metadata, &expected_packet);
+
+        let packet = execution_authorization_metadata_packet_from_attestation_metadata_v1(
+            &metadata,
+            &token.policy_hash,
+            &token.policy_ref,
+            &token.state_hash,
+            &token.state_ref,
+        )
+        .expect("packet")
+        .expect("execution auth metadata packet");
+
+        assert_eq!(packet, expected_packet);
     }
 
     #[test]
@@ -2525,6 +4115,247 @@ mod tests {
         );
     }
 
+    type ExecutionReadyRefinementFixture = (
+        DecisionToken,
+        ProofBundle,
+        StateSnapshot,
+        Vec<CandidateAction>,
+        Vec<RuleVerdict>,
+        Decision,
+        ExecutionReadyBundle<'static>,
+        crate::crypto::TokenVerifyingKey,
+    );
+
+    fn execution_ready_refinement_fixture(
+        include_governance: bool,
+    ) -> ExecutionReadyRefinementFixture {
+        #[derive(Clone, Copy)]
+        struct AcceptingNonceValidator;
+
+        impl crate::anti_replay::NonceValidator for AcceptingNonceValidator {
+            fn validate(&self, _token: &DecisionToken) -> Result<()> {
+                Ok(())
+            }
+
+            fn validate_and_claim(
+                &self,
+                _token: &DecisionToken,
+            ) -> Result<crate::anti_replay::NonceClaim> {
+                Ok(crate::anti_replay::NonceClaim::NotClaimed)
+            }
+
+            fn mark_used(&self, _token: &DecisionToken) -> Result<()> {
+                Ok(())
+            }
+
+            fn cleanup(&self) {}
+        }
+
+        let signing_key = crate::crypto::TokenSigningKey::generate();
+        let verifying_key = signing_key.verifying_key();
+        let state_source_id = dummy_hash(0x71);
+        let candidate = valid_http_call_candidate();
+        let candidates = vec![candidate.clone()];
+        let verdicts = vec![RuleVerdict {
+            allowed: true,
+            reasons: vec![],
+            limits: HashMap::new(),
+        }];
+        let mut decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash: dummy_hash(0x72),
+            decision_commitment: Hash32([0u8; 32]),
+        };
+        decision.decision_commitment = hash::hash_decision(&decision);
+
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(0x73),
+            state_ref: StateRef {
+                state_source_id,
+                state_epoch: 5,
+                state_attestation_hash: dummy_hash(0x74),
+            },
+        };
+        let governance = include_governance.then(|| {
+            governance_admission_witness_from_fields_v1(
+                GovernanceUpdateKindV1::PolicyTweak,
+                true,
+                false,
+                true,
+            )
+            .expect("governance")
+        });
+        let token = DecisionToken {
+            policy_hash: decision.policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 3,
+                registry_root: dummy_hash(0x75),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x76),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let mut token = token;
+        token.signature = signing_key.sign_token(&token).to_vec();
+
+        let mut proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: hash::hash_candidate_set(&candidates),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        if let Some(governance) = governance.as_ref() {
+            insert_governance_attestation_metadata_v1(&mut proof.attestation_metadata, governance);
+        }
+        insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &token,
+            &state,
+            governance.as_ref(),
+        );
+
+        let leaked_token = Box::leak(Box::new(token));
+        let leaked_proof = Box::leak(Box::new(proof));
+        let leaked_state = Box::leak(Box::new(state));
+        let leaked_candidates = candidates.clone();
+        let leaked_verdicts = verdicts.clone();
+        let leaked_decision = decision.clone();
+
+        let authority =
+            policy_authority_witness_v1(&leaked_token.policy_hash, &leaked_token.policy_ref)
+                .expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(leaked_state);
+        let ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(leaked_token, leaked_proof),
+            &authority,
+            &state_binding,
+            governance,
+        )
+        .expect("ready");
+        let ready = prepare_execution_ready_with_signature(&ready, &verifying_key)
+            .expect("signature witness");
+        let ready = prepare_execution_ready_with_state_provenance(&ready, &[state_source_id])
+            .expect("state provenance witness");
+        let (ready, _replay) =
+            prepare_execution_ready_with_replay_clearance(&ready, &AcceptingNonceValidator)
+                .expect("replay witness");
+
+        (
+            leaked_token.clone(),
+            leaked_proof.clone(),
+            leaked_state.clone(),
+            leaked_candidates,
+            leaked_verdicts,
+            leaked_decision,
+            ready,
+            verifying_key,
+        )
+    }
+
+    #[test]
+    fn execution_ready_refinement_witness_accepts_fully_admitted_ready_bundle() {
+        let (_token, _proof, state, candidates, verdicts, decision, ready, verifying_key) =
+            execution_ready_refinement_fixture(true);
+
+        let witness = execution_ready_refinement_witness_v1(
+            &ready,
+            &state,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .expect("execution_ready_refinement_witness_v1");
+
+        assert_eq!(witness.boundary(), ready.boundary());
+        assert_eq!(
+            witness.authorization().policy_authority().policy_hash(),
+            &ready.token().policy_hash
+        );
+        assert_eq!(
+            witness.governance().update_kind(),
+            GovernanceUpdateKindV1::PolicyTweak
+        );
+        assert_eq!(
+            witness.signature().signer_pubkey(),
+            &verifying_key.to_bytes()
+        );
+        assert_eq!(witness.state_provenance().state_ref(), &state.state_ref);
+        assert_eq!(
+            witness.replay_clearance().claim(),
+            crate::anti_replay::NonceClaim::NotClaimed
+        );
+        assert_eq!(
+            witness.binding_vector(),
+            &execution_binding_vector_packet_from_verified_decision_v1(
+                ready.token(),
+                ready.proof(),
+                &state,
+                &candidates,
+                &verdicts,
+                &decision,
+            )
+            .expect("binding vector packet")
+        );
+    }
+
+    #[test]
+    fn execution_ready_refinement_witness_rejects_missing_governance() {
+        let (_token, _proof, state, candidates, verdicts, decision, ready, _vk) =
+            execution_ready_refinement_fixture(false);
+
+        let err = execution_ready_refinement_witness_v1(
+            &ready,
+            &state,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("execution ready refinement witness requires governance witness"));
+    }
+
+    #[test]
+    fn execution_ready_refinement_witness_rejects_binding_drift() {
+        let (_token, _proof, state, candidates, verdicts, mut decision, ready, _vk) =
+            execution_ready_refinement_fixture(true);
+        decision.chosen_action = CandidateAction {
+            action_type: "http_call".into(),
+            params: HashMap::from([
+                ("url".into(), Value::String("https://drift.example".into())),
+                ("method".into(), Value::String("POST".into())),
+            ]),
+            score: Score(0),
+            candidate_hash: dummy_hash(0x77),
+        };
+
+        let err = execution_ready_refinement_witness_v1(
+            &ready,
+            &state,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("selected candidate drifted before execution binding hash"));
+    }
+
     #[test]
     fn execution_ready_packet_hash_changes_when_packet_membership_changes() {
         let candidate = valid_http_call_candidate();
@@ -2553,14 +4384,66 @@ mod tests {
             attestation_metadata: HashMap::new(),
         };
 
-        let ready = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).expect("ready");
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: token.state_hash,
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0xB7),
+                state_epoch: 4,
+                state_attestation_hash: dummy_hash(0xB8),
+            },
+        };
+        let token = DecisionToken {
+            state_ref: state.state_ref.clone(),
+            ..token
+        };
+        let mut proof = proof;
+        insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &token,
+            &state,
+            None,
+        );
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready");
         let base_hash = execution_ready_packet_hash_v1(ready.packet());
         assert_eq!(base_hash, execution_ready_packet_hash_v1(ready.packet()));
 
         let bridged = prepare_execution_ready_with_registry_bridge(
             &ready,
-            execution_registry_bridge_witness_v1(dummy_hash(0xB5), Some(dummy_hash(0xB6))),
-        );
+            execution_registry_bridge_witness_v1(
+                &token.policy_hash,
+                registry_authorization_witness_v1(
+                    registry_authorization_attestation_hash_from_fields_v1(
+                        &token.policy_hash,
+                        &crate::artifact_repo::Id32([0xBC; 32]),
+                        &crate::artifact_repo::Id32([0xBD; 32]),
+                        &crate::artifact_repo::Id32([0xBE; 32]),
+                        None,
+                        None,
+                    )
+                    .expect("resolution hash"),
+                    crate::artifact_repo::Id32([0xBC; 32]),
+                    crate::artifact_repo::Id32([0xBD; 32]),
+                    crate::artifact_repo::Id32([0xBE; 32]),
+                    None,
+                    None,
+                )
+                .expect("registry authorization"),
+                Some(dummy_hash(0xB6)),
+            )
+            .expect("bridge"),
+        )
+        .expect("bridged");
 
         assert_ne!(base_hash, execution_ready_packet_hash_v1(bridged.packet()));
     }
@@ -2596,23 +4479,78 @@ mod tests {
             .attestation_metadata
             .insert("custom".into(), "base".into());
 
-        let ready = prepare_execution_ready(VerifiedBundle::new(&token, &proof)).expect("ready");
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: token.state_hash,
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0xC7),
+                state_epoch: 5,
+                state_attestation_hash: dummy_hash(0xC8),
+            },
+        };
+        let token = DecisionToken {
+            state_ref: state.state_ref.clone(),
+            ..token
+        };
+        insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &token,
+            &state,
+            None,
+        );
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready");
         let base_hash = execution_boundary_refinement_hash_v1(&ready);
         assert_eq!(base_hash, execution_boundary_refinement_hash_v1(&ready));
 
         let bridged = prepare_execution_ready_with_registry_bridge(
             &ready,
-            execution_registry_bridge_witness_v1(dummy_hash(0xC5), Some(dummy_hash(0xC6))),
-        );
+            execution_registry_bridge_witness_v1(
+                &token.policy_hash,
+                registry_authorization_witness_v1(
+                    registry_authorization_attestation_hash_from_fields_v1(
+                        &token.policy_hash,
+                        &crate::artifact_repo::Id32([0xBF; 32]),
+                        &crate::artifact_repo::Id32([0xC0; 32]),
+                        &crate::artifact_repo::Id32([0xC1; 32]),
+                        None,
+                        None,
+                    )
+                    .expect("resolution hash"),
+                    crate::artifact_repo::Id32([0xBF; 32]),
+                    crate::artifact_repo::Id32([0xC0; 32]),
+                    crate::artifact_repo::Id32([0xC1; 32]),
+                    None,
+                    None,
+                )
+                .expect("registry authorization"),
+                Some(dummy_hash(0xC6)),
+            )
+            .expect("bridge"),
+        )
+        .expect("bridged");
         assert_ne!(base_hash, execution_boundary_refinement_hash_v1(&bridged));
 
         let mut proof_with_metadata_drift = proof.clone();
         proof_with_metadata_drift
             .attestation_metadata
             .insert("custom".into(), "drifted".into());
-        let ready_with_metadata_drift =
-            prepare_execution_ready(VerifiedBundle::new(&token, &proof_with_metadata_drift))
-                .expect("ready with metadata drift");
+        let ready_with_metadata_drift = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof_with_metadata_drift),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready with metadata drift");
         assert_ne!(
             base_hash,
             execution_boundary_refinement_hash_v1(&ready_with_metadata_drift)
@@ -2743,6 +4681,12 @@ mod tests {
         assert_eq!(ready.decision(), &decision);
         assert_eq!(ready.state(), &state);
         assert!(ready.governance().is_none());
+        let execution_authorization = ready.execution_authorization();
+        assert_eq!(execution_authorization.policy_hash(), &token.policy_hash);
+        assert_eq!(execution_authorization.policy_ref(), &token.policy_ref);
+        assert_eq!(execution_authorization.state_hash(), &token.state_hash);
+        assert_eq!(execution_authorization.state_ref(), &token.state_ref);
+        assert!(execution_authorization.governance().is_none());
     }
 
     #[test]
@@ -2792,6 +4736,12 @@ mod tests {
         assert!(governance.profile_app_ok());
         assert!(governance.profile_safety_ok());
         assert!(governance.link_ok());
+        let execution_authorization = ready.execution_authorization();
+        assert_eq!(execution_authorization.policy_hash(), &token.policy_hash);
+        assert_eq!(execution_authorization.policy_ref(), &token.policy_ref);
+        assert_eq!(execution_authorization.state_hash(), &token.state_hash);
+        assert_eq!(execution_authorization.state_ref(), &token.state_ref);
+        assert_eq!(execution_authorization.governance(), Some(governance));
     }
 
     #[test]
@@ -2980,6 +4930,91 @@ mod tests {
         .unwrap_err();
         assert!(
             matches!(err, MprdError::InvalidInput(message) if message == "governance admission requires link_ok")
+        );
+    }
+
+    #[test]
+    fn governance_admission_witness_from_attestation_metadata_accepts_full_metadata() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1.into(),
+            GovernanceUpdateKindV1::SafetyRuleChange.as_str().into(),
+        );
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1.into(),
+            "true".into(),
+        );
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1.into(),
+            "true".into(),
+        );
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1.into(),
+            "true".into(),
+        );
+
+        let witness = governance_admission_witness_from_attestation_metadata_v1(&metadata)
+            .expect("witness")
+            .expect("governance");
+
+        assert_eq!(
+            witness.update_kind(),
+            GovernanceUpdateKindV1::SafetyRuleChange
+        );
+        assert!(witness.profile_app_ok());
+        assert!(witness.profile_safety_ok());
+        assert!(witness.link_ok());
+    }
+
+    #[test]
+    fn governance_admission_witness_from_attestation_metadata_returns_none_when_absent() {
+        let witness = governance_admission_witness_from_attestation_metadata_v1(&HashMap::new())
+            .expect("no metadata should be accepted");
+        assert!(witness.is_none());
+    }
+
+    #[test]
+    fn governance_admission_witness_from_attestation_metadata_accepts_false_bool_when_admitted() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1.into(),
+            GovernanceUpdateKindV1::PolicyTweak.as_str().into(),
+        );
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1.into(),
+            "true".into(),
+        );
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1.into(),
+            "false".into(),
+        );
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1.into(),
+            "true".into(),
+        );
+
+        let witness = governance_admission_witness_from_attestation_metadata_v1(&metadata)
+            .expect("witness")
+            .expect("governance");
+
+        assert_eq!(witness.update_kind(), GovernanceUpdateKindV1::PolicyTweak);
+        assert!(witness.profile_app_ok());
+        assert!(!witness.profile_safety_ok());
+        assert!(witness.link_ok());
+    }
+
+    #[test]
+    fn governance_admission_witness_from_attestation_metadata_rejects_partial_metadata() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1.into(),
+            GovernanceUpdateKindV1::PolicyTweak.as_str().into(),
+        );
+
+        let err = governance_admission_witness_from_attestation_metadata_v1(&metadata).unwrap_err();
+
+        assert!(
+            matches!(err, MprdError::InvalidInput(message) if message == "partial governance attestation metadata cannot reconstruct admitted governance")
         );
     }
 

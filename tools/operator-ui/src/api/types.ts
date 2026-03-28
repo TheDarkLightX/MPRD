@@ -115,6 +115,9 @@ export interface DecisionToken {
     policyEpoch: number;
     registryRoot: string;
     stateHash: string;
+    stateSourceId: string;
+    stateEpoch: number;
+    stateAttestationHash: string;
     chosenActionHash: string;
     nonceOrTxHash: string;
     timestampMs: number;
@@ -129,11 +132,46 @@ export interface ProofBundle {
     attestationMetadataHash: string;
     registryAuthorizationHash?: string;
     registryCheckpointAttestationHash?: string;
+    registryAuthorization?: RegistryAuthorizationAttestation;
     executionAuthorizationHash?: string;
+    executionAuthorization?: ExecutionAuthorizationAttestation;
     executionReadyPacketHash?: string;
     executionBindingVectorHash?: string;
     executionBoundaryRefinementHash?: string;
+    governance?: GovernanceAttestation;
     chosenActionPreimageStorage?: ChosenActionPreimageStorage;
+}
+
+export interface RegistryAuthorizationAttestation {
+    resolutionHash: string;
+    execKindId: string;
+    execVersionId: string;
+    imageId: string;
+    policySourceKindId?: string;
+    policySourceHash?: string;
+}
+
+export interface ExecutionAuthorizationAttestation {
+    policyHash: string;
+    policyEpoch: number;
+    registryRoot: string;
+    stateHash: string;
+    stateSourceId: string;
+    stateEpoch: number;
+    stateAttestationHash: string;
+    governance?: GovernanceAttestation;
+}
+
+export type GovernanceUpdateKind =
+    | 'policy_tweak'
+    | 'safety_rule_change'
+    | 'agent_capability_expand';
+
+export interface GovernanceAttestation {
+    updateKind: GovernanceUpdateKind;
+    profileAppOk: boolean;
+    profileSafetyOk: boolean;
+    linkOk: boolean;
 }
 
 export interface StateSnapshot {

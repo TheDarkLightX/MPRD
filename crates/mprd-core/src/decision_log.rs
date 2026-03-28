@@ -22,8 +22,45 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const DECISION_LOG_RECORD_DOMAIN_V1: &[u8] = b"MPRD_DECISION_LOG_RECORD_V1";
 pub const DECISION_LOG_RECORD_DOMAIN_V2: &[u8] = b"MPRD_DECISION_LOG_RECORD_V2";
 pub const DECISION_LOG_RECORD_DOMAIN_V3: &[u8] = b"MPRD_DECISION_LOG_RECORD_V3";
+pub const DECISION_LOG_RECORD_DOMAIN_V4: &[u8] = b"MPRD_DECISION_LOG_RECORD_V4";
 pub const DECISION_LOG_ATTESTATION_METADATA_HASH_DOMAIN_V1: &[u8] =
     b"MPRD_DECISION_LOG_ATTESTATION_METADATA_HASH_V1";
+
+#[derive(Clone, Debug, Default)]
+struct GovernanceMetadataFields {
+    update_kind: Option<String>,
+    profile_app_ok: Option<bool>,
+    profile_safety_ok: Option<bool>,
+    link_ok: Option<bool>,
+}
+
+struct RecordHashV3Inputs<'a> {
+    limits_hash: &'a Hash32,
+    limits_bytes_hash: &'a Hash32,
+    chosen_action_preimage_hash: &'a Hash32,
+    risc0_receipt_hash: &'a Hash32,
+    attestation_metadata_hash: &'a Hash32,
+    governance: &'a GovernanceMetadataFields,
+}
+
+struct RecordHashV4Inputs<'a> {
+    limits_hash: &'a Hash32,
+    limits_bytes_hash: &'a Hash32,
+    chosen_action_preimage_hash: &'a Hash32,
+    risc0_receipt_hash: &'a Hash32,
+    attestation_metadata_hash: &'a Hash32,
+    execution_authorization_hash: Option<&'a Hash32>,
+    governance: &'a GovernanceMetadataFields,
+}
+
+struct PreparedDecisionLogRecordV4Inputs {
+    limits_bytes_hash: Hash32,
+    chosen_action_preimage_hash: Hash32,
+    risc0_receipt_hash: Hash32,
+    attestation_metadata_hash: Hash32,
+    execution_authorization_hash: Option<Hash32>,
+    governance: GovernanceMetadataFields,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DecisionLogRecordV1 {
@@ -110,6 +147,43 @@ pub struct DecisionLogRecordV3 {
     pub governance_link_ok: Option<bool>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DecisionLogRecordV4 {
+    pub record_version: u32,
+    pub published_at_ms: i64,
+    pub prev_record_hash: Hash32,
+    pub record_hash: Hash32,
+
+    pub policy_hash: Hash32,
+    pub policy_epoch: u64,
+    pub registry_root: Hash32,
+
+    pub state_hash: Hash32,
+    pub state_source_id: Hash32,
+    pub state_epoch: u64,
+    pub state_attestation_hash: Hash32,
+
+    pub chosen_action_hash: Hash32,
+    pub nonce_or_tx_hash: Hash32,
+
+    pub limits_hash: Hash32,
+    pub limits_bytes_hash: Hash32,
+    pub chosen_action_preimage_hash: Hash32,
+    pub risc0_receipt_hash: Hash32,
+    pub attestation_metadata_hash: Hash32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_authorization_hash: Option<Hash32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub governance_update_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub governance_profile_app_ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub governance_profile_safety_ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub governance_link_ok: Option<bool>,
+}
+
 fn now_ms() -> Result<i64> {
     let ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -136,59 +210,61 @@ pub fn attestation_metadata_hash_v1(
     sha256(&bytes)
 }
 
-fn governance_metadata_fields_from_proof(
-    proof: &ProofBundle,
-) -> Result<(Option<String>, Option<bool>, Option<bool>, Option<bool>)> {
-    let metadata = &proof.attestation_metadata;
-    let update_kind = metadata.get(crate::GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1);
-    let profile_app_ok = metadata.get(crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1);
-    let profile_safety_ok =
-        metadata.get(crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1);
-    let link_ok = metadata.get(crate::GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1);
+fn governance_metadata_fields_from_proof(proof: &ProofBundle) -> Result<GovernanceMetadataFields> {
+    let governance = crate::governance_admission_witness_from_attestation_metadata_v1(
+        &proof.attestation_metadata,
+    )
+    .map_err(|e| MprdError::ExecutionError(e.to_string()))?;
 
-    let present_count = usize::from(update_kind.is_some())
-        + usize::from(profile_app_ok.is_some())
-        + usize::from(profile_safety_ok.is_some())
-        + usize::from(link_ok.is_some());
-    if present_count == 0 {
-        return Ok((None, None, None, None));
-    }
-    if present_count != 4 {
-        return Err(MprdError::ExecutionError(
-            "partial governance attestation metadata cannot be recorded in decision log".into(),
-        ));
-    }
+    Ok(match governance {
+        None => GovernanceMetadataFields::default(),
+        Some(governance) => GovernanceMetadataFields {
+            update_kind: Some(governance.update_kind().as_str().into()),
+            profile_app_ok: Some(governance.profile_app_ok()),
+            profile_safety_ok: Some(governance.profile_safety_ok()),
+            link_ok: Some(governance.link_ok()),
+        },
+    })
+}
 
-    let parse_bool = |key: &'static str, raw: &str| -> Result<bool> {
-        match raw {
-            "true" => Ok(true),
-            "false" => Ok(false),
-            _ => Err(MprdError::ExecutionError(format!(
-                "invalid {key} attestation metadata bool in decision log"
-            ))),
-        }
+fn attestation_metadata_hash32_v1(
+    metadata: &std::collections::HashMap<String, String>,
+    key: &'static str,
+) -> Result<Option<Hash32>> {
+    let Some(value) = metadata.get(key) else {
+        return Ok(None);
     };
+    let bytes = hex::decode(value).map_err(|_| {
+        MprdError::ExecutionError(format!("invalid {key} attestation metadata hash hex"))
+    })?;
+    if bytes.len() != 32 {
+        return Err(MprdError::ExecutionError(format!(
+            "invalid {key} attestation metadata hash length"
+        )));
+    }
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&bytes);
+    Ok(Some(Hash32(hash)))
+}
 
-    let update_kind = update_kind.expect("checked above").clone();
-    let profile_app_ok = parse_bool(
-        crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1,
-        profile_app_ok.expect("checked above"),
-    )?;
-    let profile_safety_ok = parse_bool(
-        crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1,
-        profile_safety_ok.expect("checked above"),
-    )?;
-    let link_ok = parse_bool(
-        crate::GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1,
-        link_ok.expect("checked above"),
-    )?;
+fn execution_authorization_hash_from_proof(proof: &ProofBundle) -> Result<Option<Hash32>> {
+    attestation_metadata_hash32_v1(
+        &proof.attestation_metadata,
+        crate::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1,
+    )
+}
 
-    Ok((
-        Some(update_kind),
-        Some(profile_app_ok),
-        Some(profile_safety_ok),
-        Some(link_ok),
-    ))
+fn prepare_decision_log_record_v4_inputs(
+    proof: &ProofBundle,
+) -> Result<PreparedDecisionLogRecordV4Inputs> {
+    Ok(PreparedDecisionLogRecordV4Inputs {
+        limits_bytes_hash: sha256(&proof.limits_bytes),
+        chosen_action_preimage_hash: sha256(&proof.chosen_action_preimage),
+        risc0_receipt_hash: sha256(&proof.risc0_receipt),
+        attestation_metadata_hash: attestation_metadata_hash_v1(&proof.attestation_metadata),
+        execution_authorization_hash: execution_authorization_hash_from_proof(proof)?,
+        governance: governance_metadata_fields_from_proof(proof)?,
+    })
 }
 
 pub fn record_hash_v1(
@@ -283,15 +359,7 @@ fn record_hash_v3_fields(
     prev_record_hash: &Hash32,
     published_at_ms: i64,
     token: &DecisionToken,
-    limits_hash: &Hash32,
-    limits_bytes_hash: &Hash32,
-    chosen_action_preimage_hash: &Hash32,
-    risc0_receipt_hash: &Hash32,
-    attestation_metadata_hash: &Hash32,
-    governance_update_kind: Option<&str>,
-    governance_profile_app_ok: Option<bool>,
-    governance_profile_safety_ok: Option<bool>,
-    governance_link_ok: Option<bool>,
+    inputs: RecordHashV3Inputs<'_>,
 ) -> Hash32 {
     let mut bytes = Vec::with_capacity(640);
     bytes.extend_from_slice(DECISION_LOG_RECORD_DOMAIN_V3);
@@ -309,13 +377,13 @@ fn record_hash_v3_fields(
     bytes.extend_from_slice(&token.chosen_action_hash.0);
     bytes.extend_from_slice(&token.nonce_or_tx_hash.0);
 
-    bytes.extend_from_slice(&limits_hash.0);
-    bytes.extend_from_slice(&limits_bytes_hash.0);
-    bytes.extend_from_slice(&chosen_action_preimage_hash.0);
-    bytes.extend_from_slice(&risc0_receipt_hash.0);
-    bytes.extend_from_slice(&attestation_metadata_hash.0);
+    bytes.extend_from_slice(&inputs.limits_hash.0);
+    bytes.extend_from_slice(&inputs.limits_bytes_hash.0);
+    bytes.extend_from_slice(&inputs.chosen_action_preimage_hash.0);
+    bytes.extend_from_slice(&inputs.risc0_receipt_hash.0);
+    bytes.extend_from_slice(&inputs.attestation_metadata_hash.0);
 
-    match governance_update_kind {
+    match inputs.governance.update_kind.as_deref() {
         Some(kind) => {
             bytes.push(1);
             bytes.extend_from_slice(&(kind.len() as u32).to_le_bytes());
@@ -323,21 +391,90 @@ fn record_hash_v3_fields(
         }
         None => bytes.push(0),
     }
-    match governance_profile_app_ok {
+    match inputs.governance.profile_app_ok {
         Some(value) => {
             bytes.push(1);
             bytes.push(u8::from(value));
         }
         None => bytes.push(0),
     }
-    match governance_profile_safety_ok {
+    match inputs.governance.profile_safety_ok {
         Some(value) => {
             bytes.push(1);
             bytes.push(u8::from(value));
         }
         None => bytes.push(0),
     }
-    match governance_link_ok {
+    match inputs.governance.link_ok {
+        Some(value) => {
+            bytes.push(1);
+            bytes.push(u8::from(value));
+        }
+        None => bytes.push(0),
+    }
+
+    sha256(&bytes)
+}
+
+fn record_hash_v4_fields(
+    prev_record_hash: &Hash32,
+    published_at_ms: i64,
+    token: &DecisionToken,
+    inputs: RecordHashV4Inputs<'_>,
+) -> Hash32 {
+    let mut bytes = Vec::with_capacity(704);
+    bytes.extend_from_slice(DECISION_LOG_RECORD_DOMAIN_V4);
+    bytes.extend_from_slice(&4u32.to_le_bytes());
+    bytes.extend_from_slice(&published_at_ms.to_le_bytes());
+    bytes.extend_from_slice(&prev_record_hash.0);
+
+    bytes.extend_from_slice(&token.policy_hash.0);
+    bytes.extend_from_slice(&token.policy_ref.policy_epoch.to_le_bytes());
+    bytes.extend_from_slice(&token.policy_ref.registry_root.0);
+    bytes.extend_from_slice(&token.state_hash.0);
+    bytes.extend_from_slice(&token.state_ref.state_source_id.0);
+    bytes.extend_from_slice(&token.state_ref.state_epoch.to_le_bytes());
+    bytes.extend_from_slice(&token.state_ref.state_attestation_hash.0);
+    bytes.extend_from_slice(&token.chosen_action_hash.0);
+    bytes.extend_from_slice(&token.nonce_or_tx_hash.0);
+
+    bytes.extend_from_slice(&inputs.limits_hash.0);
+    bytes.extend_from_slice(&inputs.limits_bytes_hash.0);
+    bytes.extend_from_slice(&inputs.chosen_action_preimage_hash.0);
+    bytes.extend_from_slice(&inputs.risc0_receipt_hash.0);
+    bytes.extend_from_slice(&inputs.attestation_metadata_hash.0);
+
+    match inputs.execution_authorization_hash {
+        Some(hash) => {
+            bytes.push(1);
+            bytes.extend_from_slice(&hash.0);
+        }
+        None => bytes.push(0),
+    }
+
+    match inputs.governance.update_kind.as_deref() {
+        Some(kind) => {
+            bytes.push(1);
+            bytes.extend_from_slice(&(kind.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(kind.as_bytes());
+        }
+        None => bytes.push(0),
+    }
+    match inputs.governance.profile_app_ok {
+        Some(value) => {
+            bytes.push(1);
+            bytes.push(u8::from(value));
+        }
+        None => bytes.push(0),
+    }
+    match inputs.governance.profile_safety_ok {
+        Some(value) => {
+            bytes.push(1);
+            bytes.push(u8::from(value));
+        }
+        None => bytes.push(0),
+    }
+    match inputs.governance.link_ok {
         Some(value) => {
             bytes.push(1);
             bytes.push(u8::from(value));
@@ -358,26 +495,44 @@ pub fn record_hash_v3(
     let chosen_action_preimage_hash = sha256(&proof.chosen_action_preimage);
     let risc0_receipt_hash = sha256(&proof.risc0_receipt);
     let attestation_metadata_hash = attestation_metadata_hash_v1(&proof.attestation_metadata);
-    let (
-        governance_update_kind,
-        governance_profile_app_ok,
-        governance_profile_safety_ok,
-        governance_link_ok,
-    ) = governance_metadata_fields_from_proof(proof)?;
+    let governance = governance_metadata_fields_from_proof(proof)?;
 
     Ok(record_hash_v3_fields(
         prev_record_hash,
         published_at_ms,
         token,
-        &proof.limits_hash,
-        &limits_bytes_hash,
-        &chosen_action_preimage_hash,
-        &risc0_receipt_hash,
-        &attestation_metadata_hash,
-        governance_update_kind.as_deref(),
-        governance_profile_app_ok,
-        governance_profile_safety_ok,
-        governance_link_ok,
+        RecordHashV3Inputs {
+            limits_hash: &proof.limits_hash,
+            limits_bytes_hash: &limits_bytes_hash,
+            chosen_action_preimage_hash: &chosen_action_preimage_hash,
+            risc0_receipt_hash: &risc0_receipt_hash,
+            attestation_metadata_hash: &attestation_metadata_hash,
+            governance: &governance,
+        },
+    ))
+}
+
+pub fn record_hash_v4(
+    prev_record_hash: &Hash32,
+    published_at_ms: i64,
+    token: &DecisionToken,
+    proof: &ProofBundle,
+) -> Result<Hash32> {
+    let prepared = prepare_decision_log_record_v4_inputs(proof)?;
+
+    Ok(record_hash_v4_fields(
+        prev_record_hash,
+        published_at_ms,
+        token,
+        RecordHashV4Inputs {
+            limits_hash: &proof.limits_hash,
+            limits_bytes_hash: &prepared.limits_bytes_hash,
+            chosen_action_preimage_hash: &prepared.chosen_action_preimage_hash,
+            risc0_receipt_hash: &prepared.risc0_receipt_hash,
+            attestation_metadata_hash: &prepared.attestation_metadata_hash,
+            execution_authorization_hash: prepared.execution_authorization_hash.as_ref(),
+            governance: &prepared.governance,
+        },
     ))
 }
 
@@ -434,21 +589,65 @@ pub fn record_hash_v3_from_record(record: &DecisionLogRecordV3) -> Hash32 {
         &record.prev_record_hash,
         record.published_at_ms,
         &token,
-        &record.limits_hash,
-        &record.limits_bytes_hash,
-        &record.chosen_action_preimage_hash,
-        &record.risc0_receipt_hash,
-        &record.attestation_metadata_hash,
-        record.governance_update_kind.as_deref(),
-        record.governance_profile_app_ok,
-        record.governance_profile_safety_ok,
-        record.governance_link_ok,
+        RecordHashV3Inputs {
+            limits_hash: &record.limits_hash,
+            limits_bytes_hash: &record.limits_bytes_hash,
+            chosen_action_preimage_hash: &record.chosen_action_preimage_hash,
+            risc0_receipt_hash: &record.risc0_receipt_hash,
+            attestation_metadata_hash: &record.attestation_metadata_hash,
+            governance: &GovernanceMetadataFields {
+                update_kind: record.governance_update_kind.clone(),
+                profile_app_ok: record.governance_profile_app_ok,
+                profile_safety_ok: record.governance_profile_safety_ok,
+                link_ok: record.governance_link_ok,
+            },
+        },
+    )
+}
+
+pub fn record_hash_v4_from_record(record: &DecisionLogRecordV4) -> Hash32 {
+    let token = DecisionToken {
+        policy_hash: record.policy_hash,
+        policy_ref: crate::PolicyRef {
+            policy_epoch: record.policy_epoch,
+            registry_root: record.registry_root,
+        },
+        state_hash: record.state_hash,
+        state_ref: crate::StateRef {
+            state_source_id: record.state_source_id,
+            state_epoch: record.state_epoch,
+            state_attestation_hash: record.state_attestation_hash,
+        },
+        chosen_action_hash: record.chosen_action_hash,
+        nonce_or_tx_hash: record.nonce_or_tx_hash,
+        timestamp_ms: 0,
+        signature: Vec::new(),
+    };
+
+    record_hash_v4_fields(
+        &record.prev_record_hash,
+        record.published_at_ms,
+        &token,
+        RecordHashV4Inputs {
+            limits_hash: &record.limits_hash,
+            limits_bytes_hash: &record.limits_bytes_hash,
+            chosen_action_preimage_hash: &record.chosen_action_preimage_hash,
+            risc0_receipt_hash: &record.risc0_receipt_hash,
+            attestation_metadata_hash: &record.attestation_metadata_hash,
+            execution_authorization_hash: record.execution_authorization_hash.as_ref(),
+            governance: &GovernanceMetadataFields {
+                update_kind: record.governance_update_kind.clone(),
+                profile_app_ok: record.governance_profile_app_ok,
+                profile_safety_ok: record.governance_profile_safety_ok,
+                link_ok: record.governance_link_ok,
+            },
+        },
     )
 }
 
 /// Append-only file recorder for decision publication.
 ///
-/// Each line is one JSON-encoded decision-log record. New writes use V3.
+/// Each line is one JSON-encoded decision-log record. New writes use V4.
 pub struct FileDecisionRecorder {
     path: PathBuf,
     /// Best-effort per-process serialization of writes.
@@ -480,7 +679,7 @@ impl DecisionRecorder for FileDecisionRecorder {
         let _guard = self.lock.lock().expect("lock poisoned");
         let published_at_ms = now_ms()?;
         let prev_hash = *self.last_hash.lock().expect("lock poisoned");
-        let record = decision_log_record_v3(prev_hash, published_at_ms, token, proof)?;
+        let record = decision_log_record_v4(prev_hash, published_at_ms, token, proof)?;
 
         let mut file = OpenOptions::new()
             .create(true)
@@ -510,6 +709,7 @@ pub enum DecisionLogRecord {
     V1(DecisionLogRecordV1),
     V2(DecisionLogRecordV2),
     V3(DecisionLogRecordV3),
+    V4(DecisionLogRecordV4),
 }
 
 impl DecisionLogRecord {
@@ -518,6 +718,7 @@ impl DecisionLogRecord {
             DecisionLogRecord::V1(r) => r.prev_record_hash,
             DecisionLogRecord::V2(r) => r.prev_record_hash,
             DecisionLogRecord::V3(r) => r.prev_record_hash,
+            DecisionLogRecord::V4(r) => r.prev_record_hash,
         }
     }
 
@@ -526,6 +727,7 @@ impl DecisionLogRecord {
             DecisionLogRecord::V1(r) => r.record_hash,
             DecisionLogRecord::V2(r) => r.record_hash,
             DecisionLogRecord::V3(r) => r.record_hash,
+            DecisionLogRecord::V4(r) => r.record_hash,
         }
     }
 }
@@ -570,7 +772,7 @@ impl DecisionRecorder for VerifiedDecisionLog {
         let _guard = self.lock.lock().expect("lock poisoned");
         let published_at_ms = now_ms()?;
         let prev_hash = *self.last_hash.lock().expect("lock poisoned");
-        let record = decision_log_record_v3(prev_hash, published_at_ms, token, proof)?;
+        let record = decision_log_record_v4(prev_hash, published_at_ms, token, proof)?;
 
         let mut file = OpenOptions::new()
             .create(true)
@@ -595,6 +797,7 @@ impl DecisionRecorder for VerifiedDecisionLog {
     }
 }
 
+#[cfg(test)]
 fn decision_log_record_v3(
     prev_hash: Hash32,
     published_at_ms: i64,
@@ -602,12 +805,7 @@ fn decision_log_record_v3(
     proof: &ProofBundle,
 ) -> Result<DecisionLogRecordV3> {
     let record_hash = record_hash_v3(&prev_hash, published_at_ms, token, proof)?;
-    let (
-        governance_update_kind,
-        governance_profile_app_ok,
-        governance_profile_safety_ok,
-        governance_link_ok,
-    ) = governance_metadata_fields_from_proof(proof)?;
+    let governance = governance_metadata_fields_from_proof(proof)?;
 
     Ok(DecisionLogRecordV3 {
         record_version: 3,
@@ -632,10 +830,63 @@ fn decision_log_record_v3(
         chosen_action_preimage_hash: sha256(&proof.chosen_action_preimage),
         risc0_receipt_hash: sha256(&proof.risc0_receipt),
         attestation_metadata_hash: attestation_metadata_hash_v1(&proof.attestation_metadata),
-        governance_update_kind,
-        governance_profile_app_ok,
-        governance_profile_safety_ok,
-        governance_link_ok,
+        governance_update_kind: governance.update_kind,
+        governance_profile_app_ok: governance.profile_app_ok,
+        governance_profile_safety_ok: governance.profile_safety_ok,
+        governance_link_ok: governance.link_ok,
+    })
+}
+
+fn decision_log_record_v4(
+    prev_hash: Hash32,
+    published_at_ms: i64,
+    token: &DecisionToken,
+    proof: &ProofBundle,
+) -> Result<DecisionLogRecordV4> {
+    let prepared = prepare_decision_log_record_v4_inputs(proof)?;
+    let record_hash = record_hash_v4_fields(
+        &prev_hash,
+        published_at_ms,
+        token,
+        RecordHashV4Inputs {
+            limits_hash: &proof.limits_hash,
+            limits_bytes_hash: &prepared.limits_bytes_hash,
+            chosen_action_preimage_hash: &prepared.chosen_action_preimage_hash,
+            risc0_receipt_hash: &prepared.risc0_receipt_hash,
+            attestation_metadata_hash: &prepared.attestation_metadata_hash,
+            execution_authorization_hash: prepared.execution_authorization_hash.as_ref(),
+            governance: &prepared.governance,
+        },
+    );
+
+    Ok(DecisionLogRecordV4 {
+        record_version: 4,
+        published_at_ms,
+        prev_record_hash: prev_hash,
+        record_hash,
+
+        policy_hash: token.policy_hash,
+        policy_epoch: token.policy_ref.policy_epoch,
+        registry_root: token.policy_ref.registry_root,
+
+        state_hash: token.state_hash,
+        state_source_id: token.state_ref.state_source_id,
+        state_epoch: token.state_ref.state_epoch,
+        state_attestation_hash: token.state_ref.state_attestation_hash,
+
+        chosen_action_hash: token.chosen_action_hash,
+        nonce_or_tx_hash: token.nonce_or_tx_hash,
+
+        limits_hash: proof.limits_hash,
+        limits_bytes_hash: prepared.limits_bytes_hash,
+        chosen_action_preimage_hash: prepared.chosen_action_preimage_hash,
+        risc0_receipt_hash: prepared.risc0_receipt_hash,
+        attestation_metadata_hash: prepared.attestation_metadata_hash,
+        execution_authorization_hash: prepared.execution_authorization_hash,
+        governance_update_kind: prepared.governance.update_kind,
+        governance_profile_app_ok: prepared.governance.profile_app_ok,
+        governance_profile_safety_ok: prepared.governance.profile_safety_ok,
+        governance_link_ok: prepared.governance.link_ok,
     })
 }
 
@@ -667,6 +918,12 @@ fn parse_decision_log_record(line: &str) -> Result<DecisionLogRecord> {
                 MprdError::ExecutionError(format!("failed to decode v3 decision log record: {e}"))
             })?;
             Ok(DecisionLogRecord::V3(record))
+        }
+        4 => {
+            let record: DecisionLogRecordV4 = serde_json::from_value(value).map_err(|e| {
+                MprdError::ExecutionError(format!("failed to decode v4 decision log record: {e}"))
+            })?;
+            Ok(DecisionLogRecord::V4(record))
         }
         _ => Err(MprdError::ExecutionError(format!(
             "unsupported decision log record_version={version}"
@@ -716,6 +973,15 @@ fn verify_chain(path: &Path) -> Result<(Hash32, bool)> {
             }
             DecisionLogRecord::V3(r) => {
                 let expected = record_hash_v3_from_record(r);
+                if expected != r.record_hash {
+                    return Err(MprdError::ExecutionError(format!(
+                        "decision log hash mismatch at line {}",
+                        idx + 1
+                    )));
+                }
+            }
+            DecisionLogRecord::V4(r) => {
+                let expected = record_hash_v4_from_record(r);
                 if expected != r.record_hash {
                     return Err(MprdError::ExecutionError(format!(
                         "decision log hash mismatch at line {}",
@@ -800,14 +1066,15 @@ mod tests {
         let lines: Vec<_> = contents.lines().collect();
         assert_eq!(lines.len(), 2);
 
-        let r1: DecisionLogRecordV3 = serde_json::from_str(lines[0]).unwrap();
-        let r2: DecisionLogRecordV3 = serde_json::from_str(lines[1]).unwrap();
+        let r1: DecisionLogRecordV4 = serde_json::from_str(lines[0]).unwrap();
+        let r2: DecisionLogRecordV4 = serde_json::from_str(lines[1]).unwrap();
         assert_eq!(r1.record_hash, r2.prev_record_hash);
-        assert_eq!(r1.record_version, 3);
+        assert_eq!(r1.record_version, 4);
         assert_eq!(
             r1.attestation_metadata_hash,
             attestation_metadata_hash_v1(&proof.attestation_metadata)
         );
+        assert_eq!(r1.execution_authorization_hash, None);
     }
 
     #[test]
@@ -849,7 +1116,7 @@ mod tests {
 
         let contents = fs::read_to_string(&path).unwrap();
         let mut lines: Vec<_> = contents.lines().map(|l| l.to_string()).collect();
-        let mut record: DecisionLogRecordV3 = serde_json::from_str(&lines[0]).unwrap();
+        let mut record: DecisionLogRecordV4 = serde_json::from_str(&lines[0]).unwrap();
         record.record_hash = Hash32([9u8; 32]);
         lines[0] = serde_json::to_string(&record).unwrap();
         let mut file = fs::File::create(&path).unwrap();
@@ -879,7 +1146,7 @@ mod tests {
 
         let contents = fs::read_to_string(&path).unwrap();
         let mut lines: Vec<_> = contents.lines().map(|l| l.to_string()).collect();
-        let mut record: DecisionLogRecordV3 = serde_json::from_str(&lines[1]).unwrap();
+        let mut record: DecisionLogRecordV4 = serde_json::from_str(&lines[1]).unwrap();
         record.prev_record_hash = Hash32([1u8; 32]);
         lines[1] = serde_json::to_string(&record).unwrap();
         let mut file = fs::File::create(&path).unwrap();
@@ -934,7 +1201,7 @@ mod tests {
                 vec![
                     (
                         crate::GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1,
-                        "SafetyRuleChange",
+                        "safety_rule_change",
                     ),
                     (
                         crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1,
@@ -942,7 +1209,7 @@ mod tests {
                     ),
                     (
                         crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1,
-                        "false",
+                        "true",
                     ),
                     (crate::GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1, "true"),
                 ],
@@ -962,7 +1229,49 @@ mod tests {
     }
 
     #[test]
-    fn verified_decision_log_accepts_legacy_v2_chain_and_appends_v3() {
+    fn record_hash_v4_execution_authorization_metadata_boundary_cases() {
+        let (token, proof) = sample_token_and_proof();
+        let prev_hash = Hash32([0u8; 32]);
+        let published_at_ms = 23;
+
+        let cases = [
+            (
+                "no execution authorization metadata stays valid",
+                None,
+                true,
+            ),
+            (
+                "valid execution authorization hash stays valid",
+                Some(hex::encode([0xabu8; 32])),
+                true,
+            ),
+            (
+                "invalid execution authorization hex is rejected",
+                Some("zz".into()),
+                false,
+            ),
+            (
+                "short execution authorization hash is rejected",
+                Some(hex::encode([0xabu8; 31])),
+                false,
+            ),
+        ];
+
+        for (reason, value, expect_ok) in cases {
+            let mut case_proof = proof.clone();
+            if let Some(value) = value {
+                case_proof.attestation_metadata.insert(
+                    crate::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1.into(),
+                    value,
+                );
+            }
+            let result = record_hash_v4(&prev_hash, published_at_ms, &token, &case_proof);
+            assert_eq!(result.is_ok(), expect_ok, "{reason}");
+        }
+    }
+
+    #[test]
+    fn verified_decision_log_accepts_legacy_v2_chain_and_appends_v4() {
         let dir = std::env::temp_dir().join(format!(
             "mprd_decision_log_legacy_v2_{}",
             SystemTime::now()
@@ -1000,14 +1309,64 @@ mod tests {
         writeln!(file, "{}", serde_json::to_string(&legacy).unwrap()).unwrap();
 
         let log = VerifiedDecisionLog::open(&path).expect("open");
-        log.record(&token, &proof).expect("append v3");
+        log.record(&token, &proof).expect("append v4");
 
         let contents = fs::read_to_string(&path).unwrap();
         let lines: Vec<_> = contents.lines().collect();
         assert_eq!(lines.len(), 2);
         let legacy_record: DecisionLogRecordV2 = serde_json::from_str(lines[0]).unwrap();
-        let v3_record: DecisionLogRecordV3 = serde_json::from_str(lines[1]).unwrap();
-        assert_eq!(legacy_record.record_hash, v3_record.prev_record_hash);
-        assert_eq!(v3_record.record_version, 3);
+        let v4_record: DecisionLogRecordV4 = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(legacy_record.record_hash, v4_record.prev_record_hash);
+        assert_eq!(v4_record.record_version, 4);
+    }
+
+    #[test]
+    fn verified_decision_log_accepts_legacy_v3_chain_and_appends_v4() {
+        let dir = std::env::temp_dir().join(format!(
+            "mprd_decision_log_legacy_v3_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("decisions.jsonl");
+
+        let (token, mut proof) = sample_token_and_proof();
+        proof.attestation_metadata.insert(
+            crate::GOVERNANCE_ATTESTATION_METADATA_UPDATE_KIND_V1.into(),
+            crate::GovernanceUpdateKindV1::PolicyTweak.as_str().into(),
+        );
+        proof.attestation_metadata.insert(
+            crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_APP_OK_V1.into(),
+            "true".into(),
+        );
+        proof.attestation_metadata.insert(
+            crate::GOVERNANCE_ATTESTATION_METADATA_PROFILE_SAFETY_OK_V1.into(),
+            "false".into(),
+        );
+        proof.attestation_metadata.insert(
+            crate::GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1.into(),
+            "true".into(),
+        );
+
+        let published_at_ms = 42;
+        let prev_hash = Hash32([0u8; 32]);
+        let legacy =
+            decision_log_record_v3(prev_hash, published_at_ms, &token, &proof).expect("v3 record");
+        let mut file = fs::File::create(&path).unwrap();
+        writeln!(file, "{}", serde_json::to_string(&legacy).unwrap()).unwrap();
+
+        let log = VerifiedDecisionLog::open(&path).expect("open");
+        log.record(&token, &proof).expect("append v4");
+
+        let contents = fs::read_to_string(&path).unwrap();
+        let lines: Vec<_> = contents.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let legacy_record: DecisionLogRecordV3 = serde_json::from_str(lines[0]).unwrap();
+        let v4_record: DecisionLogRecordV4 = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(legacy_record.record_hash, v4_record.prev_record_hash);
+        assert_eq!(legacy_record.record_version, 3);
+        assert_eq!(v4_record.record_version, 4);
     }
 }

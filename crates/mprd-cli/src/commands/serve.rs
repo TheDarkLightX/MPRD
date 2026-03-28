@@ -68,6 +68,112 @@ fn map_chosen_action_preimage_storage(
     }
 }
 
+fn map_governance_update_kind(
+    kind: mprd_core::GovernanceUpdateKindV1,
+) -> op_api::GovernanceUpdateKind {
+    match kind {
+        mprd_core::GovernanceUpdateKindV1::PolicyTweak => op_api::GovernanceUpdateKind::PolicyTweak,
+        mprd_core::GovernanceUpdateKindV1::SafetyRuleChange => {
+            op_api::GovernanceUpdateKind::SafetyRuleChange
+        }
+        mprd_core::GovernanceUpdateKindV1::AgentCapabilityExpand => {
+            op_api::GovernanceUpdateKind::AgentCapabilityExpand
+        }
+    }
+}
+
+fn map_governance_attestation(
+    governance: mprd_core::GovernanceAdmissionWitnessV1,
+) -> op_api::GovernanceAttestation {
+    op_api::GovernanceAttestation {
+        update_kind: map_governance_update_kind(governance.update_kind()),
+        profile_app_ok: governance.profile_app_ok(),
+        profile_safety_ok: governance.profile_safety_ok(),
+        link_ok: governance.link_ok(),
+    }
+}
+
+fn governance_attestation_from_metadata(
+    metadata: &HashMap<String, String>,
+) -> CoreResult<Option<op_api::GovernanceAttestation>> {
+    Ok(
+        mprd_core::governance_admission_witness_from_attestation_metadata_v1(metadata)?
+            .map(map_governance_attestation),
+    )
+}
+
+fn registry_authorization_from_metadata(
+    metadata: &HashMap<String, String>,
+) -> CoreResult<Option<op_api::RegistryAuthorizationAttestation>> {
+    Ok(
+        mprd_zk::registry_state::registry_authorization_attestation_metadata_from_metadata_v1(
+            metadata,
+        )?
+        .map(|registry| op_api::RegistryAuthorizationAttestation {
+            resolution_hash: hex::encode(registry.resolution_hash.0),
+            exec_kind_id: hex::encode(registry.exec_kind_id),
+            exec_version_id: hex::encode(registry.exec_version_id),
+            image_id: hex::encode(registry.image_id),
+            policy_source_kind_id: registry.policy_source_kind_id.map(hex::encode),
+            policy_source_hash: registry.policy_source_hash.map(|hash| hex::encode(hash.0)),
+        }),
+    )
+}
+
+fn execution_authorization_from_record(
+    token: &op_store::OperatorTokenV1,
+    metadata: &HashMap<String, String>,
+) -> CoreResult<Option<op_api::ExecutionAuthorizationAttestation>> {
+    let policy_hash = parse_hash32(&token.policy_hash).map_err(|e| {
+        mprd_core::MprdError::InvalidInput(format!("invalid operator token policy_hash: {e}"))
+    })?;
+    let registry_root = parse_hash32(&token.registry_root).map_err(|e| {
+        mprd_core::MprdError::InvalidInput(format!("invalid operator token registry_root: {e}"))
+    })?;
+    let state_hash = parse_hash32(&token.state_hash).map_err(|e| {
+        mprd_core::MprdError::InvalidInput(format!("invalid operator token state_hash: {e}"))
+    })?;
+    let state_source_id = parse_hash32(&token.state_source_id).map_err(|e| {
+        mprd_core::MprdError::InvalidInput(format!("invalid operator token state_source_id: {e}"))
+    })?;
+    let state_attestation_hash = parse_hash32(&token.state_attestation_hash).map_err(|e| {
+        mprd_core::MprdError::InvalidInput(format!(
+            "invalid operator token state_attestation_hash: {e}"
+        ))
+    })?;
+
+    let attestation = mprd_core::execution_authorization_attestation_from_attestation_metadata_v1(
+        metadata,
+        &policy_hash,
+        &mprd_core::PolicyRef {
+            policy_epoch: token.policy_epoch,
+            registry_root,
+        },
+        &state_hash,
+        &mprd_core::StateRef {
+            state_source_id,
+            state_epoch: token.state_epoch,
+            state_attestation_hash,
+        },
+    )?;
+
+    Ok(
+        attestation.map(|execution| op_api::ExecutionAuthorizationAttestation {
+            policy_hash: hex::encode(execution.policy_hash().0),
+            policy_epoch: execution.policy_ref().policy_epoch,
+            registry_root: hex::encode(execution.policy_ref().registry_root.0),
+            state_hash: hex::encode(execution.state_hash().0),
+            state_source_id: hex::encode(execution.state_ref().state_source_id.0),
+            state_epoch: execution.state_ref().state_epoch,
+            state_attestation_hash: hex::encode(execution.state_ref().state_attestation_hash.0),
+            governance: execution
+                .governance()
+                .copied()
+                .map(map_governance_attestation),
+        }),
+    )
+}
+
 struct CliAllowAllPolicyEngine;
 
 impl PolicyEngine for CliAllowAllPolicyEngine {
@@ -1751,17 +1857,19 @@ fn compute_system_status(
     let mode = config.mode.trim().to_ascii_lowercase();
     let trustless = mode == "trustless" || mode == "private";
 
-    let overall = if !anchors_ok {
-        op_api::OverallStatus::Critical
-    } else if trustless && matches!(components.risc0.status, op_api::HealthLevel::Unavailable) {
-        op_api::OverallStatus::Critical
-    } else if matches!(components.executor.status, op_api::HealthLevel::Unavailable) {
-        op_api::OverallStatus::Degraded
-    } else if trustless && matches!(components.executor.status, op_api::HealthLevel::Degraded) {
-        op_api::OverallStatus::Degraded
-    } else if matches!(components.tau.status, op_api::HealthLevel::Unavailable)
-        && config.tau_binary.is_some()
+    let executor_unavailable =
+        matches!(components.executor.status, op_api::HealthLevel::Unavailable);
+    let executor_effectively_degraded = executor_unavailable
+        || (trustless && matches!(components.executor.status, op_api::HealthLevel::Degraded));
+    let tau_required_unavailable =
+        matches!(components.tau.status, op_api::HealthLevel::Unavailable)
+            && config.tau_binary.is_some();
+
+    let overall = if !anchors_ok
+        || (trustless && matches!(components.risc0.status, op_api::HealthLevel::Unavailable))
     {
+        op_api::OverallStatus::Critical
+    } else if executor_effectively_degraded || tau_required_unavailable {
         op_api::OverallStatus::Degraded
     } else {
         op_api::OverallStatus::Operational
@@ -1812,9 +1920,9 @@ fn is_hex64_path_id(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn pending_http_effect_journal_root<'a>(
-    config: &'a super::MprdConfigFile,
-) -> Result<&'a std::path::Path, StatusCode> {
+fn pending_http_effect_journal_root(
+    config: &super::MprdConfigFile,
+) -> Result<&std::path::Path, StatusCode> {
     if !config
         .execution
         .executor_type
@@ -2470,6 +2578,19 @@ async fn api_decision_detail(
         .store
         .read_record(&id)
         .map_err(|_| StatusCode::NOT_FOUND)?;
+    let governance = governance_attestation_from_metadata(&record.proof.attestation_metadata)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let registry_authorization =
+        registry_authorization_from_metadata(&record.proof.attestation_metadata)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let execution_authorization =
+        execution_authorization_from_record(&record.token, &record.proof.attestation_metadata)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let chosen_action_preimage_storage = record
+        .proof
+        .chosen_action_preimage_storage_mode
+        .clone()
+        .map(map_chosen_action_preimage_storage);
 
     let summary = op_api::DecisionSummary {
         id: id.clone(),
@@ -2485,7 +2606,7 @@ async fn api_decision_detail(
         proof_status: record.summary.proof_status.clone(),
         execution_status: record.summary.execution_status.clone(),
         latency_ms: record.summary.latency_ms,
-        chosen_action_preimage_storage: None,
+        chosen_action_preimage_storage: chosen_action_preimage_storage.clone(),
     };
 
     Ok(Json(op_api::DecisionDetail {
@@ -2495,6 +2616,9 @@ async fn api_decision_detail(
             policy_epoch: record.token.policy_epoch,
             registry_root: record.token.registry_root,
             state_hash: record.token.state_hash,
+            state_source_id: record.token.state_source_id,
+            state_epoch: record.token.state_epoch,
+            state_attestation_hash: record.token.state_attestation_hash,
             chosen_action_hash: record.token.chosen_action_hash,
             nonce_or_tx_hash: record.token.nonce_or_tx_hash,
             timestamp_ms: record.token.timestamp_ms,
@@ -2521,21 +2645,21 @@ async fn api_decision_detail(
                 .attestation_metadata
                 .get(mprd_zk::registry_state::REGISTRY_AUTH_METADATA_CHECKPOINT_ATTESTATION_HASH_V1)
                 .cloned(),
+            registry_authorization,
             execution_authorization_hash: record
                 .proof
                 .attestation_metadata
                 .get(mprd_core::EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1)
                 .cloned(),
+            execution_authorization,
             execution_ready_packet_hash: record.proof.execution_ready_packet_hash.clone(),
             execution_binding_vector_hash: record.proof.execution_binding_vector_hash.clone(),
             execution_boundary_refinement_hash: record
                 .proof
                 .execution_boundary_refinement_hash
                 .clone(),
-            chosen_action_preimage_storage: record
-                .proof
-                .chosen_action_preimage_storage_mode
-                .map(map_chosen_action_preimage_storage),
+            governance,
+            chosen_action_preimage_storage,
         },
         state: op_api::StateSnapshot {
             fields: record.state.fields_json,

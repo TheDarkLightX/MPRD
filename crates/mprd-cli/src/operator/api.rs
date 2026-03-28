@@ -186,6 +186,9 @@ pub struct DecisionToken {
     pub policy_epoch: u64,
     pub registry_root: HashHex,
     pub state_hash: HashHex,
+    pub state_source_id: HashHex,
+    pub state_epoch: u64,
+    pub state_attestation_hash: HashHex,
     pub chosen_action_hash: HashHex,
     pub nonce_or_tx_hash: HashHex,
     pub timestamp_ms: i64,
@@ -205,7 +208,11 @@ pub struct ProofBundle {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registry_checkpoint_attestation_hash: Option<HashHex>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub registry_authorization: Option<RegistryAuthorizationAttestation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_authorization_hash: Option<HashHex>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_authorization: Option<ExecutionAuthorizationAttestation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_ready_packet_hash: Option<HashHex>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -213,7 +220,53 @@ pub struct ProofBundle {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_boundary_refinement_hash: Option<HashHex>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub governance: Option<GovernanceAttestation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub chosen_action_preimage_storage: Option<ChosenActionPreimageStorage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GovernanceUpdateKind {
+    PolicyTweak,
+    SafetyRuleChange,
+    AgentCapabilityExpand,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GovernanceAttestation {
+    pub update_kind: GovernanceUpdateKind,
+    pub profile_app_ok: bool,
+    pub profile_safety_ok: bool,
+    pub link_ok: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryAuthorizationAttestation {
+    pub resolution_hash: HashHex,
+    pub exec_kind_id: HashHex,
+    pub exec_version_id: HashHex,
+    pub image_id: HashHex,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_source_kind_id: Option<HashHex>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_source_hash: Option<HashHex>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionAuthorizationAttestation {
+    pub policy_hash: HashHex,
+    pub policy_epoch: u64,
+    pub registry_root: HashHex,
+    pub state_hash: HashHex,
+    pub state_source_id: HashHex,
+    pub state_epoch: u64,
+    pub state_attestation_hash: HashHex,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub governance: Option<GovernanceAttestation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

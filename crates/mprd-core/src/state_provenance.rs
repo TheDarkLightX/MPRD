@@ -23,6 +23,7 @@ pub const STATE_ATTESTATION_DOMAIN_V1: &[u8] = b"MPRD_STATE_ATTESTATION_V1";
 /// This is an RC1 witness step: instead of leaving provenance admission as open-coded boolean
 /// checks in the executor wrapper, the wrapper now constructs this witness first and only then
 /// proceeds to side effects.
+#[must_use]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StateProvenanceWitnessV1 {
     state_ref: StateRef,

@@ -157,6 +157,7 @@ pub enum NonceClaim {
 }
 
 /// Concrete replay-clearance witness carried after the nonce validator accepts the token.
+#[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReplayClearanceWitnessV1 {
     claim: NonceClaim,

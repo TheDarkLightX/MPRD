@@ -1,0 +1,234 @@
+{
+  "entries": [
+    {
+      "atoms": [
+        "governance_update_kind_invalid",
+        "is_cap_expand",
+        "is_policy_tweak",
+        "is_safety_change",
+        "link_ok",
+        "profile_app_ok",
+        "profile_safety_ok"
+      ],
+      "category": "governance",
+      "certified_equivalent": true,
+      "deny_if_atoms": [
+        "governance_update_kind_invalid"
+      ],
+      "id": "governance_gate_onehot_suggested",
+      "policy_bytes_sha256": "193dcfc53199d9b4814dd34d08d2c7fd1f004872344f436e8067016ebd7c8130",
+      "policy_hash_v1": "365b98b9ef004a8e70396a251c0433aa99e2785774632aee3249955cb20fab81",
+      "robdd_sem_hash_v1": "75a41a53bbc2eb48a4178c26608ee04eeea041908d84fdc35ee6ee7a5ecf9557",
+      "suggested_output_name": "accept",
+      "tau_sha256": "1c9d50d7c51d1d722908a8853dcb310eee87310e20a3caf2f23267dbf9c54f18"
+    },
+    {
+      "atoms": [
+        "action_one_hot_ok",
+        "action_preconds_ok",
+        "actor_is_target_ok",
+        "control_auth_ok",
+        "credit_agrs_replay_ok",
+        "epoch_phase_ok",
+        "is_accrue_bcr_drip",
+        "is_admit_operator",
+        "is_advance_epoch",
+        "is_apply_service_tx",
+        "is_auction_reveal",
+        "is_credit_agrs",
+        "is_finalize_epoch",
+        "is_set_bounds",
+        "is_set_opi",
+        "is_settle_auction",
+        "is_settle_ops_payroll",
+        "is_stake_end",
+        "is_stake_start",
+        "link_ok",
+        "service_tx_auth_ok"
+      ],
+      "category": "tokenomics",
+      "certified_equivalent": true,
+      "deny_if_atoms": [],
+      "id": "tokenomics_v6_action_gate_fast",
+      "policy_bytes_sha256": "ddc9162afccb14dd07e1e83377df6ee9476f0c910d8779c2857708dbb81add8f",
+      "policy_hash_v1": "cc0328fb17e99f4fe0ca82bfc85f0a5f594fd3bb66e431ab39fd8f065b31fb43",
+      "robdd_sem_hash_v1": "532a18d505232eee5b91470093e42de5970192ddf9e2efdbb5b5b670a1fa13be",
+      "suggested_output_name": "allow",
+      "tau_sha256": "a5b6c225c9ce4d2471b1307d4f4246296362738ddceae25994ac34efcfb6a962"
+    },
+    {
+      "atoms": [
+        "auction_in_range_ok",
+        "auction_step_ok",
+        "burn_in_range_ok",
+        "burn_step_ok",
+        "control_auth_ok",
+        "drip_in_range_ok",
+        "drip_step_ok",
+        "link_ok",
+        "params_version_ok",
+        "split_ok",
+        "update_window_ok"
+      ],
+      "category": "tokenomics",
+      "certified_equivalent": true,
+      "deny_if_atoms": [],
+      "id": "tokenomics_v6_pid_update_gate",
+      "policy_bytes_sha256": "46b406dee423a19007f72838c8c510a97b5f1c0382d54d29e9f490a3daf83fa1",
+      "policy_hash_v1": "70230bd89aa435202ea7836251e1e7732d17b2d54a297dcdb1d46472560000be",
+      "robdd_sem_hash_v1": "e0c4e2e3cfb9253018a9603f05672133c7f354b1b09c24afa152cc0584afff2b",
+      "suggested_output_name": "accept",
+      "tau_sha256": "edb35b2f6d64ed5cd6737de71a0c7e94607f0088c54d3a2408ad1c282dfce775"
+    },
+    {
+      "atoms": [
+        "vote_0",
+        "vote_1",
+        "vote_2"
+      ],
+      "category": "governance",
+      "certified_equivalent": true,
+      "deny_if_atoms": [],
+      "id": "governance_committee_quorum_1of3",
+      "policy_bytes_sha256": "e8f03a06d867870c820ec12663ac05fa7ba0d0b8943e50bbaf80b99af0eb022b",
+      "policy_hash_v1": "562bdf96efe248ddc34df5e07e0af3ff647a95ea78f89190c06df2226f437a28",
+      "robdd_sem_hash_v1": "97fcd3a1d5ce2636a010300dff651cf7889fec332c0501d866fb4a045bcea5fd",
+      "suggested_output_name": "passed",
+      "tau_sha256": "da6a4559d518062069dd2159c09fd5d977770993861e9ff5557feeff4a59e400"
+    },
+    {
+      "atoms": [
+        "vote_0",
+        "vote_1",
+        "vote_2"
+      ],
+      "category": "governance",
+      "certified_equivalent": true,
+      "deny_if_atoms": [],
+      "id": "governance_committee_quorum_2of3",
+      "policy_bytes_sha256": "a6371e6b33b837e06f7d87330c6aff2a4662b95341e83016661c987e3ecb695d",
+      "policy_hash_v1": "c111dbdb1b2d91c6ff5ff946e30565c8c224e67323cfe7a6d9810015de014a43",
+      "robdd_sem_hash_v1": "f839833e245ecea86275ac1da79fa195e163d603b23256ddd98328d605fcc1df",
+      "suggested_output_name": "passed",
+      "tau_sha256": "b8c49df6ff92bb8ba47fb664ad0676de771c2d8fee93ec0009c41bec1ac43352"
+    },
+    {
+      "atoms": [
+        "vote_0",
+        "vote_1",
+        "vote_2"
+      ],
+      "category": "governance",
+      "certified_equivalent": true,
+      "deny_if_atoms": [],
+      "id": "governance_committee_quorum_3of3",
+      "policy_bytes_sha256": "6a538674aea14061740889f7585ca6beac5d9d6a79cddcd510fe5fa89c92f89d",
+      "policy_hash_v1": "cfca247262c971467f12fa778f992afef5902a09ffefc7e1e367dd3622b6b641",
+      "robdd_sem_hash_v1": "18558d915dceb51787c75534eb15a04b14d56b37dd183853a3c83a4b40e7e9c5",
+      "suggested_output_name": "passed",
+      "tau_sha256": "003c568518eb1b163f76ca9cefd2d32698330ad93e0ff4129add7c7660b00b7e"
+    },
+    {
+      "atoms": [
+        "vote_0",
+        "vote_1",
+        "vote_2",
+        "vote_3",
+        "vote_4"
+      ],
+      "category": "governance",
+      "certified_equivalent": true,
+      "deny_if_atoms": [],
+      "id": "governance_committee_quorum_2of5",
+      "policy_bytes_sha256": "54901938c7df3f965022bfa495eac9f4edb28bb5d7e0f3c5c56e06e970d704e5",
+      "policy_hash_v1": "0ee32394d1d9280da33119c122898b5079acec7cc1b47f85baf72df334d9841f",
+      "robdd_sem_hash_v1": "141ae9d22761ed501ec7e057a8473174a7eecb207a3634aa1f50fa9f499cae57",
+      "suggested_output_name": "passed",
+      "tau_sha256": "b3064e51c56f2ce237fd6d2b4d80077be00cea69b12efe258336bca7f31b1d6a"
+    },
+    {
+      "atoms": [
+        "vote_0",
+        "vote_1",
+        "vote_2",
+        "vote_3",
+        "vote_4"
+      ],
+      "category": "governance",
+      "certified_equivalent": true,
+      "deny_if_atoms": [],
+      "id": "governance_committee_quorum_3of5",
+      "policy_bytes_sha256": "4b955bf301ee3c9da6077b7a8ef2e6f8e347126b7559e358fa1f59e770303dee",
+      "policy_hash_v1": "da15c01b2d2b3ad259d1f6add438dd6f287e75976af2f8c21966fb754598342d",
+      "robdd_sem_hash_v1": "b6bea58cd734dff434dfc4ecee3247b9611d3b4892275d6cb42184360aacc830",
+      "suggested_output_name": "passed",
+      "tau_sha256": "d456b2b8b2dcc9b928e47d515b0832f94fdbc4ee89bd8bde483272dba31719c0"
+    },
+    {
+      "atoms": [
+        "is_tier_1",
+        "is_tier_2",
+        "is_tier_3",
+        "link_ok",
+        "tier_invalid",
+        "timelock_ok",
+        "vote_0",
+        "vote_1",
+        "vote_2"
+      ],
+      "category": "governance",
+      "certified_equivalent": true,
+      "deny_if_atoms": [
+        "tier_invalid"
+      ],
+      "id": "governance_escalation_ladder_suggested",
+      "policy_bytes_sha256": "9b0863f35747e4d0cb796cfdc6cadc0ec77bfb084d00ba6ef04304a25fa8c931",
+      "policy_hash_v1": "308ce2a6bbab23958b7e531315f591a792e2fce277535a09b0b835e4d234b4e7",
+      "robdd_sem_hash_v1": "92fc33c8344d5d31af03e8ae123bb3ce084b6ed081b44d21aefda3873fbef835",
+      "suggested_output_name": "accepted",
+      "tau_sha256": "d531c5f348b04cae7acd1b2b716225c7eb9259e98f7b08115d033a5c653266a1"
+    },
+    {
+      "atoms": [
+        "cooldown_elapsed_ok",
+        "emergency_freeze",
+        "link_ok",
+        "opi_healthy_ok",
+        "reserve_runway_ok"
+      ],
+      "category": "ceo",
+      "certified_equivalent": true,
+      "deny_if_atoms": [
+        "emergency_freeze"
+      ],
+      "id": "ceo_setpoint_change_gate_suggested",
+      "policy_bytes_sha256": "c1b9a896688bb09cd4568a98350227927a1ed1d4ce4121e20153ff3e7bd298c7",
+      "policy_hash_v1": "6ce33bf226ffc827a9727dcf16e2908f518a74738e792c2715f5374dcfce8086",
+      "robdd_sem_hash_v1": "0bcea3f16ab508e175f393d1d969cef33749eb7a68e3beee1fdf0c7519e2849b",
+      "suggested_output_name": "allow",
+      "tau_sha256": "e45f264e99e05fb69325c2b036df7ad37e2e68a67cba798f06edba461fd44ccf"
+    },
+    {
+      "atoms": [
+        "artifact_bundle_ok",
+        "emergency_freeze",
+        "policy_hash_authorized_ok",
+        "receipt_verified_ok",
+        "registry_checkpoint_ok"
+      ],
+      "category": "infra",
+      "certified_equivalent": true,
+      "deny_if_atoms": [
+        "emergency_freeze"
+      ],
+      "id": "deploy_registry_receipt_gate_suggested",
+      "policy_bytes_sha256": "598fd08d0c55ce2597ab8f86d099b3a3b619dd1676eb72994396592a29d9646f",
+      "policy_hash_v1": "aa37c6cdff77c7b66e21296025c9b7a274b944ebce90976399411e93c4216ee1",
+      "robdd_sem_hash_v1": "3926b75d965a2ba0e093ed1faa21527d36eb20f07bd9e91ff908e2561811e2aa",
+      "suggested_output_name": "allow",
+      "tau_sha256": "d156c2b001caf0722c5937cd0104f09511685c2019dd6718f80719e708326fa2"
+    }
+  ],
+  "menu_count": 11,
+  "schema": "mprd/rc1-policy-menu-tau-equivalence-receipt/v1"
+}
