@@ -427,6 +427,8 @@ pub const GOVERNANCE_ATTESTATION_METADATA_LINK_OK_V1: &str = "governance_link_ok
 pub const EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1: &str = "execution_authorization_hash_v1";
 const EXECUTION_AUTH_ATTESTATION_METADATA_DOMAIN_V1: &[u8] =
     b"MPRD_EXECUTION_AUTH_METADATA_HASH_V1";
+const REGISTRY_AUTHORIZATION_ATTESTATION_DOMAIN_V1: &[u8] =
+    b"MPRD_REGISTRY_AUTHORIZATION_ATTESTATION_V1";
 const EXECUTION_READY_PACKET_HASH_DOMAIN_V1: &[u8] = b"MPRD_EXECUTION_READY_PACKET_HASH_V1";
 const EXECUTION_BOUNDARY_REFINEMENT_HASH_DOMAIN_V1: &[u8] =
     b"MPRD_EXECUTION_BOUNDARY_REFINEMENT_HASH_V1";
@@ -486,14 +488,55 @@ impl ExecutionAuthorizationWitnessV1 {
 /// only from generic proof metadata.
 #[must_use]
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegistryAuthorizationWitnessV1 {
+    resolution_hash: Hash32,
+    exec_kind_id: crate::artifact_repo::Id32,
+    exec_version_id: crate::artifact_repo::Id32,
+    image_id: crate::artifact_repo::Id32,
+    policy_source_kind_id: Option<crate::artifact_repo::Id32>,
+    policy_source_hash: Option<Hash32>,
+}
+
+impl RegistryAuthorizationWitnessV1 {
+    pub fn resolution_hash(&self) -> &Hash32 {
+        &self.resolution_hash
+    }
+
+    pub fn exec_kind_id(&self) -> &crate::artifact_repo::Id32 {
+        &self.exec_kind_id
+    }
+
+    pub fn exec_version_id(&self) -> &crate::artifact_repo::Id32 {
+        &self.exec_version_id
+    }
+
+    pub fn image_id(&self) -> &crate::artifact_repo::Id32 {
+        &self.image_id
+    }
+
+    pub fn policy_source_kind_id(&self) -> Option<&crate::artifact_repo::Id32> {
+        self.policy_source_kind_id.as_ref()
+    }
+
+    pub fn policy_source_hash(&self) -> Option<&Hash32> {
+        self.policy_source_hash.as_ref()
+    }
+}
+
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutionRegistryBridgeWitnessV1 {
-    registry_authorization_hash: Hash32,
+    registry_authorization: RegistryAuthorizationWitnessV1,
     registry_checkpoint_attestation_hash: Option<Hash32>,
 }
 
 impl ExecutionRegistryBridgeWitnessV1 {
+    pub fn registry_authorization(&self) -> &RegistryAuthorizationWitnessV1 {
+        &self.registry_authorization
+    }
+
     pub fn registry_authorization_hash(&self) -> &Hash32 {
-        &self.registry_authorization_hash
+        self.registry_authorization.resolution_hash()
     }
 
     pub fn registry_checkpoint_attestation_hash(&self) -> Option<&Hash32> {
@@ -827,6 +870,45 @@ fn execution_authorization_attestation_hash_v1(
         None => hasher.update([0u8]),
     }
     Hash32(hasher.finalize().into())
+}
+
+pub fn registry_authorization_attestation_hash_from_fields_v1(
+    policy_hash: &PolicyHash,
+    exec_kind_id: &crate::artifact_repo::Id32,
+    exec_version_id: &crate::artifact_repo::Id32,
+    image_id: &crate::artifact_repo::Id32,
+    policy_source_kind_id: Option<&crate::artifact_repo::Id32>,
+    policy_source_hash: Option<&Hash32>,
+) -> Result<Hash32> {
+    match (policy_source_kind_id, policy_source_hash) {
+        (None, None) | (Some(_), Some(_)) => {}
+        _ => {
+            return Err(MprdError::InvalidInput(
+                "registry authorization hash requires policy_source_kind_id and policy_source_hash to be both set or both unset".into(),
+            ))
+        }
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(REGISTRY_AUTHORIZATION_ATTESTATION_DOMAIN_V1);
+    hasher.update(policy_hash.0);
+    hasher.update(exec_kind_id.as_bytes());
+    hasher.update(exec_version_id.as_bytes());
+    hasher.update(image_id.as_bytes());
+    match policy_source_kind_id {
+        Some(kind_id) => {
+            hasher.update([1u8]);
+            hasher.update(kind_id.as_bytes());
+        }
+        None => hasher.update([0u8]),
+    }
+    match policy_source_hash {
+        Some(source_hash) => {
+            hasher.update([1u8]);
+            hasher.update(source_hash.0);
+        }
+        None => hasher.update([0u8]),
+    }
+    Ok(Hash32(hasher.finalize().into()))
 }
 
 fn update_state_ref_hash_v1(hasher: &mut Sha256, state_ref: &StateRef) {
@@ -1285,15 +1367,58 @@ pub fn execution_authorization_witness_v1(
     })
 }
 
+/// Construct the concrete registry-authorization witness carried on the RC1 bridge path.
+pub fn registry_authorization_witness_v1(
+    resolution_hash: Hash32,
+    exec_kind_id: crate::artifact_repo::Id32,
+    exec_version_id: crate::artifact_repo::Id32,
+    image_id: crate::artifact_repo::Id32,
+    policy_source_kind_id: Option<crate::artifact_repo::Id32>,
+    policy_source_hash: Option<Hash32>,
+) -> Result<RegistryAuthorizationWitnessV1> {
+    match (&policy_source_kind_id, &policy_source_hash) {
+        (None, None) | (Some(_), Some(_)) => {}
+        _ => {
+            return Err(MprdError::InvalidInput(
+                "registry authorization witness requires policy_source_kind_id and policy_source_hash to be both set or both unset".into(),
+            ))
+        }
+    }
+
+    Ok(RegistryAuthorizationWitnessV1 {
+        resolution_hash,
+        exec_kind_id,
+        exec_version_id,
+        image_id,
+        policy_source_kind_id,
+        policy_source_hash,
+    })
+}
+
 /// Construct the concrete registry-bridge witness for the live execute path.
 pub fn execution_registry_bridge_witness_v1(
-    registry_authorization_hash: Hash32,
+    policy_hash: &PolicyHash,
+    registry_authorization: RegistryAuthorizationWitnessV1,
     registry_checkpoint_attestation_hash: Option<Hash32>,
-) -> ExecutionRegistryBridgeWitnessV1 {
-    ExecutionRegistryBridgeWitnessV1 {
-        registry_authorization_hash,
-        registry_checkpoint_attestation_hash,
+) -> Result<ExecutionRegistryBridgeWitnessV1> {
+    let expected_registry_authorization_hash =
+        registry_authorization_attestation_hash_from_fields_v1(
+            policy_hash,
+            registry_authorization.exec_kind_id(),
+            registry_authorization.exec_version_id(),
+            registry_authorization.image_id(),
+            registry_authorization.policy_source_kind_id(),
+            registry_authorization.policy_source_hash(),
+        )?;
+    if registry_authorization.resolution_hash() != &expected_registry_authorization_hash {
+        return Err(MprdError::InvalidInput(
+            "registry bridge witness drifted from admitted registry authorization tuple".into(),
+        ));
     }
+    Ok(ExecutionRegistryBridgeWitnessV1 {
+        registry_authorization,
+        registry_checkpoint_attestation_hash,
+    })
 }
 
 /// Upgrade a verified bundle into an execution-ready bundle carrying the concrete boundary witness.
@@ -1348,6 +1473,20 @@ pub fn prepare_execution_ready_with_registry_bridge<'a>(
         authorization.state_binding(),
         authorization.governance(),
     )?;
+    let expected_registry_authorization_hash =
+        registry_authorization_attestation_hash_from_fields_v1(
+            authorization.policy_authority().policy_hash(),
+            bridge.registry_authorization().exec_kind_id(),
+            bridge.registry_authorization().exec_version_id(),
+            bridge.registry_authorization().image_id(),
+            bridge.registry_authorization().policy_source_kind_id(),
+            bridge.registry_authorization().policy_source_hash(),
+        )?;
+    if bridge.registry_authorization_hash() != &expected_registry_authorization_hash {
+        return Err(MprdError::InvalidInput(
+            "registry bridge witness drifted from admitted registry authorization tuple".into(),
+        ));
+    }
     let mut enriched = ready.clone();
     enriched.packet.bridge = Some(bridge);
     Ok(enriched)
@@ -2025,12 +2164,39 @@ mod tests {
             None,
         )
         .expect("ready");
-        let bridge = execution_registry_bridge_witness_v1(dummy_hash(0x76), Some(dummy_hash(0x77)));
+        let resolution_hash = registry_authorization_attestation_hash_from_fields_v1(
+            &token.policy_hash,
+            &crate::artifact_repo::Id32([0xA1; 32]),
+            &crate::artifact_repo::Id32([0xA2; 32]),
+            &crate::artifact_repo::Id32([0xA3; 32]),
+            Some(&crate::artifact_repo::Id32([0xA4; 32])),
+            Some(&dummy_hash(0xA5)),
+        )
+        .expect("resolution hash");
+        let registry_authorization = registry_authorization_witness_v1(
+            resolution_hash,
+            crate::artifact_repo::Id32([0xA1; 32]),
+            crate::artifact_repo::Id32([0xA2; 32]),
+            crate::artifact_repo::Id32([0xA3; 32]),
+            Some(crate::artifact_repo::Id32([0xA4; 32])),
+            Some(dummy_hash(0xA5)),
+        )
+        .expect("registry authorization");
+        let bridge = execution_registry_bridge_witness_v1(
+            &token.policy_hash,
+            registry_authorization.clone(),
+            Some(dummy_hash(0x77)),
+        )
+        .expect("bridge");
         let ready = prepare_execution_ready_with_registry_bridge(&ready, bridge.clone())
             .expect("ready with bridge");
 
         assert_eq!(ready.bridge(), Some(&bridge));
         assert_eq!(ready.packet().bridge(), Some(&bridge));
+        assert_eq!(
+            ready.bridge().expect("bridge").registry_authorization(),
+            &registry_authorization
+        );
     }
 
     #[test]
@@ -2065,7 +2231,28 @@ mod tests {
 
         let err = prepare_execution_ready_with_registry_bridge(
             &ready,
-            execution_registry_bridge_witness_v1(dummy_hash(0x7F), Some(dummy_hash(0x80))),
+            execution_registry_bridge_witness_v1(
+                &token.policy_hash,
+                registry_authorization_witness_v1(
+                    registry_authorization_attestation_hash_from_fields_v1(
+                        &token.policy_hash,
+                        &crate::artifact_repo::Id32([0xA6; 32]),
+                        &crate::artifact_repo::Id32([0xA7; 32]),
+                        &crate::artifact_repo::Id32([0xA8; 32]),
+                        None,
+                        None,
+                    )
+                    .expect("resolution hash"),
+                    crate::artifact_repo::Id32([0xA6; 32]),
+                    crate::artifact_repo::Id32([0xA7; 32]),
+                    crate::artifact_repo::Id32([0xA8; 32]),
+                    None,
+                    None,
+                )
+                .expect("registry authorization"),
+                Some(dummy_hash(0x80)),
+            )
+            .expect("bridge"),
         )
         .unwrap_err();
 
@@ -2127,7 +2314,28 @@ mod tests {
 
         let err = prepare_execution_ready_with_registry_bridge(
             &ready,
-            execution_registry_bridge_witness_v1(dummy_hash(0x88), Some(dummy_hash(0x89))),
+            execution_registry_bridge_witness_v1(
+                &token.policy_hash,
+                registry_authorization_witness_v1(
+                    registry_authorization_attestation_hash_from_fields_v1(
+                        &token.policy_hash,
+                        &crate::artifact_repo::Id32([0xA9; 32]),
+                        &crate::artifact_repo::Id32([0xAA; 32]),
+                        &crate::artifact_repo::Id32([0xAB; 32]),
+                        None,
+                        None,
+                    )
+                    .expect("resolution hash"),
+                    crate::artifact_repo::Id32([0xA9; 32]),
+                    crate::artifact_repo::Id32([0xAA; 32]),
+                    crate::artifact_repo::Id32([0xAB; 32]),
+                    None,
+                    None,
+                )
+                .expect("registry authorization"),
+                Some(dummy_hash(0x89)),
+            )
+            .expect("bridge"),
         )
         .unwrap_err();
 
@@ -2135,6 +2343,101 @@ mod tests {
             err,
             MprdError::InvalidInput(msg)
                 if msg == "missing execution_authorization_hash_v1 attestation metadata"
+        ));
+    }
+
+    #[test]
+    fn registry_authorization_witness_rejects_incomplete_source_mapping() {
+        let err = registry_authorization_witness_v1(
+            dummy_hash(0x8A),
+            crate::artifact_repo::Id32([0xB2; 32]),
+            crate::artifact_repo::Id32([0xB3; 32]),
+            crate::artifact_repo::Id32([0xB4; 32]),
+            Some(crate::artifact_repo::Id32([0xB5; 32])),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            MprdError::InvalidInput(msg)
+                if msg
+                    == "registry authorization witness requires policy_source_kind_id and policy_source_hash to be both set or both unset"
+        ));
+    }
+
+    #[test]
+    fn execution_registry_bridge_witness_rejects_registry_authorization_tuple_drift() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(0x8B),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0x8C),
+                state_epoch: 7,
+                state_attestation_hash: dummy_hash(0x8D),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0x8E),
+            policy_ref: PolicyRef {
+                policy_epoch: 5,
+                registry_root: dummy_hash(0x8F),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0x90),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let mut proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0x91),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        insert_execution_authorization_attestation_metadata_v1(
+            &mut proof.attestation_metadata,
+            &token,
+            &state,
+            None,
+        );
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let _ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            None,
+        )
+        .expect("ready");
+        let err = execution_registry_bridge_witness_v1(
+            &token.policy_hash,
+            registry_authorization_witness_v1(
+                dummy_hash(0x92),
+                crate::artifact_repo::Id32([0xB6; 32]),
+                crate::artifact_repo::Id32([0xB7; 32]),
+                crate::artifact_repo::Id32([0xB8; 32]),
+                None,
+                None,
+            )
+            .expect("registry authorization"),
+            Some(dummy_hash(0x93)),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            MprdError::InvalidInput(msg)
+                if msg == "registry bridge witness drifted from admitted registry authorization tuple"
         ));
     }
 
@@ -2802,7 +3105,28 @@ mod tests {
 
         let bridged = prepare_execution_ready_with_registry_bridge(
             &ready,
-            execution_registry_bridge_witness_v1(dummy_hash(0xB5), Some(dummy_hash(0xB6))),
+            execution_registry_bridge_witness_v1(
+                &token.policy_hash,
+                registry_authorization_witness_v1(
+                    registry_authorization_attestation_hash_from_fields_v1(
+                        &token.policy_hash,
+                        &crate::artifact_repo::Id32([0xBC; 32]),
+                        &crate::artifact_repo::Id32([0xBD; 32]),
+                        &crate::artifact_repo::Id32([0xBE; 32]),
+                        None,
+                        None,
+                    )
+                    .expect("resolution hash"),
+                    crate::artifact_repo::Id32([0xBC; 32]),
+                    crate::artifact_repo::Id32([0xBD; 32]),
+                    crate::artifact_repo::Id32([0xBE; 32]),
+                    None,
+                    None,
+                )
+                .expect("registry authorization"),
+                Some(dummy_hash(0xB6)),
+            )
+            .expect("bridge"),
         )
         .expect("bridged");
 
@@ -2875,7 +3199,28 @@ mod tests {
 
         let bridged = prepare_execution_ready_with_registry_bridge(
             &ready,
-            execution_registry_bridge_witness_v1(dummy_hash(0xC5), Some(dummy_hash(0xC6))),
+            execution_registry_bridge_witness_v1(
+                &token.policy_hash,
+                registry_authorization_witness_v1(
+                    registry_authorization_attestation_hash_from_fields_v1(
+                        &token.policy_hash,
+                        &crate::artifact_repo::Id32([0xBF; 32]),
+                        &crate::artifact_repo::Id32([0xC0; 32]),
+                        &crate::artifact_repo::Id32([0xC1; 32]),
+                        None,
+                        None,
+                    )
+                    .expect("resolution hash"),
+                    crate::artifact_repo::Id32([0xBF; 32]),
+                    crate::artifact_repo::Id32([0xC0; 32]),
+                    crate::artifact_repo::Id32([0xC1; 32]),
+                    None,
+                    None,
+                )
+                .expect("registry authorization"),
+                Some(dummy_hash(0xC6)),
+            )
+            .expect("bridge"),
         )
         .expect("bridged");
         assert_ne!(base_hash, execution_boundary_refinement_hash_v1(&bridged));

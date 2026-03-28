@@ -415,10 +415,22 @@ fn prepare_execution_ready_from_registry_and_governance_inner_v1<'a>(
         &state_binding,
         governance,
     )?;
-    let bridge = mprd_core::execution_registry_bridge_witness_v1(
+    let registry_authorization = mprd_core::registry_authorization_witness_v1(
         crate::registry_state::registry_authorization_attestation_hash_v1(&resolution),
+        mprd_core::artifact_repo::Id32(resolution.authorized_policy.policy_exec_kind_id),
+        mprd_core::artifact_repo::Id32(resolution.authorized_policy.policy_exec_version_id),
+        mprd_core::artifact_repo::Id32(resolution.image_id),
+        resolution
+            .authorized_policy
+            .policy_source_kind_id
+            .map(mprd_core::artifact_repo::Id32),
+        resolution.authorized_policy.policy_source_hash,
+    )?;
+    let bridge = mprd_core::execution_registry_bridge_witness_v1(
+        &verified.token().policy_hash,
+        registry_authorization,
         registry_checkpoint_attestation_hash,
-    );
+    )?;
     mprd_core::prepare_execution_ready_with_registry_bridge(&ready, bridge)
 }
 
@@ -1755,6 +1767,32 @@ mod tests {
         assert_eq!(
             bridge.registry_authorization_hash(),
             &crate::registry_state::registry_authorization_attestation_hash_v1(&resolution)
+        );
+        assert_eq!(
+            bridge.registry_authorization().exec_kind_id(),
+            &mprd_core::artifact_repo::Id32(resolution.authorized_policy.policy_exec_kind_id)
+        );
+        assert_eq!(
+            bridge.registry_authorization().exec_version_id(),
+            &mprd_core::artifact_repo::Id32(resolution.authorized_policy.policy_exec_version_id)
+        );
+        assert_eq!(
+            bridge.registry_authorization().image_id(),
+            &mprd_core::artifact_repo::Id32(resolution.image_id)
+        );
+        assert_eq!(
+            bridge
+                .registry_authorization()
+                .policy_source_kind_id()
+                .copied(),
+            resolution
+                .authorized_policy
+                .policy_source_kind_id
+                .map(mprd_core::artifact_repo::Id32)
+        );
+        assert_eq!(
+            bridge.registry_authorization().policy_source_hash(),
+            resolution.authorized_policy.policy_source_hash.as_ref()
         );
         assert_eq!(
             bridge.registry_checkpoint_attestation_hash(),

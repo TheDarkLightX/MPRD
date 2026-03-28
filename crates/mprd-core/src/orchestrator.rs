@@ -1303,12 +1303,28 @@ mod tests {
                 &state_binding,
                 governance,
             )?;
+            let resolution_hash = crate::registry_authorization_attestation_hash_from_fields_v1(
+                authority.policy_hash(),
+                &crate::artifact_repo::Id32([0xCA; 32]),
+                &crate::artifact_repo::Id32([0xCB; 32]),
+                &crate::artifact_repo::Id32([0xCC; 32]),
+                None,
+                None,
+            )?;
             crate::prepare_execution_ready_with_registry_bridge(
                 &ready,
                 crate::execution_registry_bridge_witness_v1(
-                    dummy_hash(0xAA),
+                    authority.policy_hash(),
+                    crate::registry_authorization_witness_v1(
+                        resolution_hash,
+                        crate::artifact_repo::Id32([0xCA; 32]),
+                        crate::artifact_repo::Id32([0xCB; 32]),
+                        crate::artifact_repo::Id32([0xCC; 32]),
+                        None,
+                        None,
+                    )?,
                     Some(dummy_hash(0xAB)),
-                ),
+                )?,
             )
         }
     }
