@@ -1587,7 +1587,7 @@ mod tests {
     }
 
     struct CaptureReadyExecutor {
-        called: Arc<std::sync::atomic::AtomicBool>,
+        saw_ready: Arc<std::sync::atomic::AtomicBool>,
         saw_authorization: Arc<std::sync::atomic::AtomicBool>,
         saw_governance: Arc<std::sync::atomic::AtomicBool>,
         saw_bridge: Arc<std::sync::atomic::AtomicBool>,
@@ -1600,18 +1600,17 @@ mod tests {
             &self,
             _verified: &mprd_core::VerifiedBundle<'_>,
         ) -> mprd_core::Result<mprd_core::ExecutionResult> {
-            self.called.store(true, std::sync::atomic::Ordering::SeqCst);
-            Ok(mprd_core::ExecutionResult {
-                success: true,
-                message: Some("raw".into()),
-            })
+            Err(mprd_core::MprdError::ExecutionError(
+                "raw execute path should not be used".into(),
+            ))
         }
 
         fn execute_ready(
             &self,
             ready: &mprd_core::ExecutionReadyBundle<'_>,
         ) -> mprd_core::Result<mprd_core::ExecutionResult> {
-            self.called.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.saw_ready
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             self.saw_authorization.store(
                 ready.authorization().is_some(),
                 std::sync::atomic::Ordering::SeqCst,
@@ -1903,12 +1902,12 @@ mod tests {
         let expected_checkpoint_hash =
             crate::registry_state::signed_registry_checkpoint_attestation_hash_v1(&signed);
         let verified = verify_bundle(&token, &proof);
-        let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let saw_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let saw_authorization = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let saw_governance = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let saw_bridge = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let executor = CaptureReadyExecutor {
-            called: Arc::clone(&called),
+            saw_ready: Arc::clone(&saw_ready),
             saw_authorization: Arc::clone(&saw_authorization),
             saw_governance: Arc::clone(&saw_governance),
             saw_bridge: Arc::clone(&saw_bridge),
@@ -1930,7 +1929,7 @@ mod tests {
         .expect("execute_verified_from_signed_registry_and_governance_v1");
 
         assert!(result.success);
-        assert!(called.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(saw_ready.load(std::sync::atomic::Ordering::SeqCst));
         assert!(saw_authorization.load(std::sync::atomic::Ordering::SeqCst));
         assert!(saw_governance.load(std::sync::atomic::Ordering::SeqCst));
         assert!(saw_bridge.load(std::sync::atomic::Ordering::SeqCst));
@@ -1946,12 +1945,12 @@ mod tests {
             hex::encode([0xCE; 32]),
         );
         let verified = verify_bundle(&token, &proof);
-        let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let saw_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let saw_authorization = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let saw_governance = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let saw_bridge = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let executor = CaptureReadyExecutor {
-            called: Arc::clone(&called),
+            saw_ready: Arc::clone(&saw_ready),
             saw_authorization: Arc::clone(&saw_authorization),
             saw_governance: Arc::clone(&saw_governance),
             saw_bridge: Arc::clone(&saw_bridge),
@@ -1973,7 +1972,7 @@ mod tests {
         assert!(err.to_string().contains(
             "execution_authorization_hash_v1 attestation metadata drifted from admitted execution authorization"
         ));
-        assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(!saw_ready.load(std::sync::atomic::Ordering::SeqCst));
         assert!(!saw_authorization.load(std::sync::atomic::Ordering::SeqCst));
         assert!(!saw_governance.load(std::sync::atomic::Ordering::SeqCst));
         assert!(!saw_bridge.load(std::sync::atomic::Ordering::SeqCst));
