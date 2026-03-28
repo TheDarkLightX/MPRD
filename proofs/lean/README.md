@@ -14,6 +14,7 @@ assumption.
 - `MPRD_ExecutionBoundary.lean`: a composed reachable-state proof that joins the journal/request commitment vector with the executor preimage/schema gate, so execution requires both verifier-side and executor-side bindings.
 - `MPRD_ExecutionReadyPacketBoundary.lean`: a lightweight local theorem for the grouped `ExecutionReadyPacketV1` runtime boundary: executed states require the concrete execution-boundary witness, execution authorization, signed-registry bridge facts, and executor-side signature/state-provenance/replay admission to be grouped into one constructor-gated packet before execution can occur.
 - `MPRD_ExecutionReadyPacketRefinement.lean`: a lightweight witness-gated refinement bridge from the grouped local `ExecutionReadyPacketV1` runtime boundary into the abstract `MPRD_ExecutionBoundary` theorem: once the abstract verdict/governance/binding/executor witness materializes, executed grouped-packet states refine into a reachable abstract execution-boundary state.
+- `MPRD_ExecutionBindingVectorPacketBoundary.lean`: a lightweight local theorem for the grouped binding-vector packet: the grouped `ExecutionBindingVectorPacketV1` language is extensionally equal to a separate loose field-language carrying the same binding inputs used by `execution_binding_vector_hash_v1(...)`.
 - `MPRD_AttestationReadyExecutionAuthorizationBoundary.lean`: a lightweight local theorem for the attestation-ready refactor boundary: once `prepare_attestation_ready(...)` succeeds, the grouped execution-authorization packet carried by `AttestationReadyBundle` is extensionally equal to the old loose policy/state/governance tuple used for attestation stamping.
 - `MPRD_ExecutionAuthorizationWitnessProjection.lean`: a lightweight local theorem for the live execute-path authorization refactor: projecting `ExecutionAuthorizationWitnessV1` into the grouped attestation packet is extensionally equal to the old loose policy/state/governance stamping language.
 - `MPRD_ExecutionRegistryBridgeWitnessProjection.lean`: a lightweight local theorem for the live signed-registry bridge refactor: projecting `ExecutionRegistryBridgeWitnessV1` into the grouped bridge attestation packet is extensionally equal to the old loose registry tuple plus optional checkpoint language.
@@ -59,6 +60,7 @@ lake env lean MPRD_ExecutionCommitmentBindings.lean
 lake env lean MPRD_ExecutionBoundary.lean
 lake env lean MPRD_ExecutionReadyPacketBoundary.lean
 lake env lean MPRD_ExecutionReadyPacketRefinement.lean
+lake env lean MPRD_ExecutionBindingVectorPacketBoundary.lean
 lake env lean MPRD_AttestationReadyExecutionAuthorizationBoundary.lean
 lake env lean MPRD_ExecutionAuthorizationWitnessProjection.lean
 lake env lean MPRD_ExecutionRegistryBridgeWitnessProjection.lean

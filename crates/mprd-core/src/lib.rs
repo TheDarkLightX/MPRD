@@ -243,6 +243,62 @@ impl ExecutionBoundaryWitnessV1 {
     }
 }
 
+/// Typed packet for the concrete binding half of the abstract execution-boundary witness.
+///
+/// This is the smallest grouped language for the verified-decision tuple that the orchestrator
+/// had in hand immediately before execution.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionBindingVectorPacketV1 {
+    decision_commitment: Hash32,
+    policy_hash: PolicyHash,
+    policy_ref: PolicyRef,
+    state_ref: StateRef,
+    state_hash: StateHash,
+    candidate_set_hash: Hash32,
+    chosen_action_hash: Hash32,
+    nonce_or_tx_hash: NonceHash,
+    limits_hash: Hash32,
+}
+
+impl ExecutionBindingVectorPacketV1 {
+    pub fn decision_commitment(&self) -> &Hash32 {
+        &self.decision_commitment
+    }
+
+    pub fn policy_hash(&self) -> &PolicyHash {
+        &self.policy_hash
+    }
+
+    pub fn policy_ref(&self) -> &PolicyRef {
+        &self.policy_ref
+    }
+
+    pub fn state_ref(&self) -> &StateRef {
+        &self.state_ref
+    }
+
+    pub fn state_hash(&self) -> &StateHash {
+        &self.state_hash
+    }
+
+    pub fn candidate_set_hash(&self) -> &Hash32 {
+        &self.candidate_set_hash
+    }
+
+    pub fn chosen_action_hash(&self) -> &Hash32 {
+        &self.chosen_action_hash
+    }
+
+    pub fn nonce_or_tx_hash(&self) -> &NonceHash {
+        &self.nonce_or_tx_hash
+    }
+
+    pub fn limits_hash(&self) -> &Hash32 {
+        &self.limits_hash
+    }
+}
+
 /// Constructor-gated runtime packet carried into the live execute boundary on the RC1 path.
 ///
 /// This groups the concrete execution boundary witness with the optional orchestrator
@@ -1265,21 +1321,15 @@ pub fn execution_boundary_refinement_hash_v1(ready: &ExecutionReadyBundle<'_>) -
     Hash32(hasher.finalize().into())
 }
 
-/// Emit a deterministic digest over the concrete verified-decision tuple corresponding to the
-/// binding half of the abstract execution-boundary witness.
-///
-/// This constructor-gated helper re-checks the concrete tuple the orchestrator had in hand right
-/// after verification and before execution:
-/// policy/state identity, state provenance, candidate-set membership, selected allowed verdict,
-/// chosen-action binding, canonical decision commitment, limits-byte binding, and the nonce.
-pub fn execution_binding_vector_hash_v1(
+/// Construct the grouped binding-vector packet from the concrete verified-decision tuple.
+pub fn execution_binding_vector_packet_from_verified_decision_v1(
     token: &DecisionToken,
     proof: &ProofBundle,
     state: &StateSnapshot,
     candidates: &[CandidateAction],
     verdicts: &[RuleVerdict],
     decision: &Decision,
-) -> Result<Hash32> {
+) -> Result<ExecutionBindingVectorPacketV1> {
     if token.policy_hash != proof.policy_hash || token.policy_hash != decision.policy_hash {
         return Err(MprdError::InvalidInput(
             "policy binding drifted before execution binding hash".into(),
@@ -1335,21 +1385,60 @@ pub fn execution_binding_vector_hash_v1(
         ));
     }
 
+    Ok(ExecutionBindingVectorPacketV1 {
+        decision_commitment: decision.decision_commitment,
+        policy_hash: token.policy_hash,
+        policy_ref: token.policy_ref.clone(),
+        state_ref: token.state_ref.clone(),
+        state_hash: token.state_hash,
+        candidate_set_hash: proof.candidate_set_hash,
+        chosen_action_hash: token.chosen_action_hash,
+        nonce_or_tx_hash: token.nonce_or_tx_hash,
+        limits_hash: proof.limits_hash,
+    })
+}
+
+/// Compute the deterministic binding-vector hash from the grouped packet language.
+pub fn execution_binding_vector_hash_from_packet_v1(
+    packet: &ExecutionBindingVectorPacketV1,
+) -> Hash32 {
     let mut hasher = Sha256::new();
     hasher.update(EXECUTION_BINDING_VECTOR_HASH_DOMAIN_V1);
-    hasher.update(decision.decision_commitment.0);
-    hasher.update(token.policy_hash.0);
-    hasher.update(token.policy_ref.policy_epoch.to_le_bytes());
-    hasher.update(token.policy_ref.registry_root.0);
-    hasher.update(token.state_ref.state_source_id.0);
-    hasher.update(token.state_ref.state_epoch.to_le_bytes());
-    hasher.update(token.state_ref.state_attestation_hash.0);
-    hasher.update(token.state_hash.0);
-    hasher.update(proof.candidate_set_hash.0);
-    hasher.update(token.chosen_action_hash.0);
-    hasher.update(token.nonce_or_tx_hash.0);
-    hasher.update(proof.limits_hash.0);
-    Ok(Hash32(hasher.finalize().into()))
+    hasher.update(packet.decision_commitment().0);
+    hasher.update(packet.policy_hash().0);
+    hasher.update(packet.policy_ref().policy_epoch.to_le_bytes());
+    hasher.update(packet.policy_ref().registry_root.0);
+    hasher.update(packet.state_ref().state_source_id.0);
+    hasher.update(packet.state_ref().state_epoch.to_le_bytes());
+    hasher.update(packet.state_ref().state_attestation_hash.0);
+    hasher.update(packet.state_hash().0);
+    hasher.update(packet.candidate_set_hash().0);
+    hasher.update(packet.chosen_action_hash().0);
+    hasher.update(packet.nonce_or_tx_hash().0);
+    hasher.update(packet.limits_hash().0);
+    Hash32(hasher.finalize().into())
+}
+
+/// Emit a deterministic digest over the concrete verified-decision tuple corresponding to the
+/// binding half of the abstract execution-boundary witness.
+///
+/// This constructor-gated helper re-checks the concrete tuple the orchestrator had in hand right
+/// after verification and before execution:
+/// policy/state identity, state provenance, candidate-set membership, selected allowed verdict,
+/// chosen-action binding, canonical decision commitment, limits-byte binding, and the nonce.
+pub fn execution_binding_vector_hash_v1(
+    token: &DecisionToken,
+    proof: &ProofBundle,
+    state: &StateSnapshot,
+    candidates: &[CandidateAction],
+    verdicts: &[RuleVerdict],
+    decision: &Decision,
+) -> Result<Hash32> {
+    Ok(execution_binding_vector_hash_from_packet_v1(
+        &execution_binding_vector_packet_from_verified_decision_v1(
+            token, proof, state, candidates, verdicts, decision,
+        )?,
+    ))
 }
 
 /// Emit a deterministic authorization hash over the exact policy/state/governance packet that the
@@ -2518,6 +2607,93 @@ mod tests {
             )
             .expect("packet hash"),
             resolution_hash
+        );
+    }
+
+    #[test]
+    fn execution_binding_vector_packet_matches_hash_surface() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::new(),
+            state_hash: dummy_hash(0xD1),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0xD2),
+                state_epoch: 4,
+                state_attestation_hash: dummy_hash(0xD3),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: dummy_hash(0xD4),
+            policy_ref: PolicyRef {
+                policy_epoch: 7,
+                registry_root: dummy_hash(0xD5),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0xD6),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: hash::hash_candidate_set(std::slice::from_ref(&candidate)),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash: token.policy_hash,
+            decision_commitment: dummy_hash(0),
+        };
+        let decision = Decision {
+            decision_commitment: hash::hash_decision(&decision),
+            ..decision
+        };
+        let verdicts = vec![RuleVerdict {
+            allowed: true,
+            reasons: vec![],
+            limits: HashMap::new(),
+        }];
+        let candidates = vec![candidate];
+
+        let packet = execution_binding_vector_packet_from_verified_decision_v1(
+            &token,
+            &proof,
+            &state,
+            &candidates,
+            &verdicts,
+            &decision,
+        )
+        .expect("binding packet");
+
+        assert_eq!(packet.decision_commitment(), &decision.decision_commitment);
+        assert_eq!(packet.policy_hash(), &token.policy_hash);
+        assert_eq!(packet.policy_ref(), &token.policy_ref);
+        assert_eq!(packet.state_ref(), &token.state_ref);
+        assert_eq!(packet.state_hash(), &token.state_hash);
+        assert_eq!(packet.candidate_set_hash(), &proof.candidate_set_hash);
+        assert_eq!(packet.chosen_action_hash(), &token.chosen_action_hash);
+        assert_eq!(packet.nonce_or_tx_hash(), &token.nonce_or_tx_hash);
+        assert_eq!(packet.limits_hash(), &proof.limits_hash);
+        assert_eq!(
+            execution_binding_vector_hash_from_packet_v1(&packet),
+            execution_binding_vector_hash_v1(
+                &token,
+                &proof,
+                &state,
+                &candidates,
+                &verdicts,
+                &decision
+            )
+            .expect("binding hash")
         );
     }
 
