@@ -932,6 +932,32 @@ pub fn execution_authorization_attestation_from_fields_v1(
     }
 }
 
+/// Project the live execution-authorization witness into the exact attestation packet language.
+pub fn execution_authorization_attestation_from_witness_v1(
+    authorization: &ExecutionAuthorizationWitnessV1,
+) -> ExecutionAuthorizationAttestationV1 {
+    execution_authorization_attestation_from_fields_v1(
+        authorization.policy_authority().policy_hash(),
+        authorization.policy_authority().policy_ref(),
+        authorization.state_binding().state_hash(),
+        authorization.state_binding().state_ref(),
+        authorization.governance().cloned(),
+    )
+}
+
+/// Compute the canonical attestation hash from the grouped execution-authorization packet.
+pub fn execution_authorization_attestation_hash_from_packet_v1(
+    execution_authorization: &ExecutionAuthorizationAttestationV1,
+) -> Hash32 {
+    execution_authorization_attestation_hash_from_fields_v1(
+        execution_authorization.policy_hash(),
+        execution_authorization.policy_ref(),
+        execution_authorization.state_hash(),
+        execution_authorization.state_ref(),
+        execution_authorization.governance(),
+    )
+}
+
 /// Reconstruct and verify the typed execution-authorization attestation packet from proof metadata.
 pub fn execution_authorization_attestation_from_attestation_metadata_v1(
     metadata: &HashMap<String, String>,
@@ -1042,12 +1068,8 @@ pub fn execution_ready_packet_hash_v1(packet: &ExecutionReadyPacketV1) -> Hash32
         Some(authorization) => {
             hasher.update([1u8]);
             hasher.update(
-                execution_authorization_attestation_hash_from_fields_v1(
-                    authorization.policy_authority().policy_hash(),
-                    authorization.policy_authority().policy_ref(),
-                    authorization.state_binding().state_hash(),
-                    authorization.state_binding().state_ref(),
-                    authorization.governance(),
+                execution_authorization_attestation_hash_from_packet_v1(
+                    &execution_authorization_attestation_from_witness_v1(authorization),
                 )
                 .0,
             );
@@ -1234,13 +1256,7 @@ pub fn insert_execution_authorization_attestation_from_packet_v1(
     metadata: &mut HashMap<String, String>,
     execution_authorization: &ExecutionAuthorizationAttestationV1,
 ) {
-    let digest = execution_authorization_attestation_hash_from_fields_v1(
-        execution_authorization.policy_hash(),
-        execution_authorization.policy_ref(),
-        execution_authorization.state_hash(),
-        execution_authorization.state_ref(),
-        execution_authorization.governance(),
-    );
+    let digest = execution_authorization_attestation_hash_from_packet_v1(execution_authorization);
     metadata.insert(
         EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1.into(),
         hex::encode(digest.0),
@@ -1258,12 +1274,14 @@ pub fn verify_execution_authorization_attestation_metadata_v1(
         &proof.attestation_metadata,
         EXECUTION_AUTH_ATTESTATION_METADATA_HASH_V1,
     )?;
-    let expected = execution_authorization_attestation_hash_from_fields_v1(
-        authority.policy_hash(),
-        authority.policy_ref(),
-        state_binding.state_hash(),
-        state_binding.state_ref(),
-        governance,
+    let expected = execution_authorization_attestation_hash_from_packet_v1(
+        &execution_authorization_attestation_from_fields_v1(
+            authority.policy_hash(),
+            authority.policy_ref(),
+            state_binding.state_hash(),
+            state_binding.state_ref(),
+            governance.cloned(),
+        ),
     );
     if actual != hex::encode(expected.0) {
         return Err(MprdError::InvalidInput(
@@ -2620,6 +2638,86 @@ mod tests {
             Some(&governance),
         )
         .expect("aligned authorization hash");
+    }
+
+    #[test]
+    fn execution_authorization_attestation_from_witness_matches_attestation_ready_packet() {
+        let candidate = valid_http_call_candidate();
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: governance_policy_inputs(
+                GovernanceUpdateKindV1::PolicyTweak,
+                true,
+                false,
+                true,
+            ),
+            state_hash: dummy_hash(0xAA),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(0xAB),
+                state_epoch: 21,
+                state_attestation_hash: dummy_hash(0xAC),
+            },
+        };
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash: dummy_hash(0xAD),
+            decision_commitment: dummy_hash(0xAE),
+        };
+        let token = DecisionToken {
+            policy_hash: decision.policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 11,
+                registry_root: dummy_hash(0xAF),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: candidate.candidate_hash,
+            nonce_or_tx_hash: dummy_hash(0xB0),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+        let proof = ProofBundle {
+            policy_hash: token.policy_hash,
+            state_hash: token.state_hash,
+            candidate_set_hash: dummy_hash(0xB1),
+            chosen_action_hash: candidate.candidate_hash,
+            limits_hash: limits::limits_hash_v1(&[]),
+            limits_bytes: vec![],
+            chosen_action_preimage: hash::candidate_hash_preimage(&candidate),
+            risc0_receipt: vec![],
+            attestation_metadata: HashMap::new(),
+        };
+        let authority =
+            policy_authority_witness_v1(&token.policy_hash, &token.policy_ref).expect("authority");
+        let state_binding = crate::state_provenance::state_binding_witness_v1(&state);
+        let governance = governance_admission_witness_v1(&state)
+            .expect("governance")
+            .expect("governance witness");
+        let mut proof = proof;
+        insert_governance_attestation_metadata_v1(&mut proof.attestation_metadata, &governance);
+
+        let attestation_ready =
+            prepare_attestation_ready(&token, &decision, &state).expect("attestation ready");
+        let execution_ready = prepare_execution_ready_with_authorization(
+            VerifiedBundle::new(&token, &proof),
+            &authority,
+            &state_binding,
+            Some(governance),
+        )
+        .expect("execution ready");
+
+        let projected = execution_authorization_attestation_from_witness_v1(
+            execution_ready.authorization().expect("authorization"),
+        );
+
+        assert_eq!(projected, *attestation_ready.execution_authorization());
+        assert_eq!(
+            execution_authorization_attestation_hash_from_packet_v1(&projected),
+            execution_authorization_attestation_hash_from_packet_v1(
+                attestation_ready.execution_authorization()
+            )
+        );
     }
 
     #[test]
