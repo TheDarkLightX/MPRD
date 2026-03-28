@@ -91,7 +91,7 @@ campaigns.
 
 A current tracked smoke receipt is checked in at:
 
-- `docs/receipts/rc1_fuzz_smoke_20260325.json`
+- `docs/receipts/rc1_fuzz_smoke_20260328.json`
 
 For future RC1 candidate cuts, rerun the same tracked campaign on the candidate commit and keep the
 new summary artifact with that cut.
