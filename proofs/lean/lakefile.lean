@@ -41,6 +41,7 @@ lean_lib MPRDLeanProofs where
     `MPRD_SignedRegistryExecutionRefinementWitnessCompiler,
     `MPRD_SignedRegistryExecutionExactPacketWitnessCompiler,
     `MPRD_SignedRegistryExecutionExactPacketRuntimeRefinement,
+    `MPRD_SignedRegistryExecutionArtifactRuntimeRefinement,
     `MPRD_SignedRegistryBridgeWitnessBoundary,
     `MPRD_SignedRegistryExecutionBoundary,
     `MPRD_SignedRegistryServeEndToEndRefinement,
