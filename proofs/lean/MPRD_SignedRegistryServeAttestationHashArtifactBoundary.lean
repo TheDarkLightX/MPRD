@@ -12,6 +12,7 @@
   artifact before the exact signed-registry packet lane can be used.
 -/
 
+import MPRD_RegistryGovernanceExecutionAuthorizationArtifactCompiler
 import MPRD_SignedRegistryExecutionArtifactRuntimeRefinement
 import MPRD_SignedRegistryServeAttestationHashReadyPacketBoundary
 import MPRD_SignedRegistryServeEndToEndRefinement
@@ -104,6 +105,123 @@ def artifactOfServeState (s : ServeState) : Artifact :=
       else
         none }
 
+def concreteAuthorizationPacketOfServeState (s : ServeState) :
+    MPRDRegistryGovernanceExecutionAuthorizationArtifactCompiler.ConcretePacket :=
+  { executionAuthorization :=
+      { policyAuthority :=
+          { policyHash := 1
+            policyRef := { policyEpoch := 1, registryRoot := 1 } }
+        stateBinding :=
+          { stateHash := 1
+            stateRef :=
+              { stateSourceId := 1
+                stateEpoch := 1
+                stateAttestationHash := 1 } }
+        governance :=
+          if s.governanceAligned = true then
+            some
+              { updateKind := .policyTweak
+                profileAppOk := true
+                profileSafetyOk := true
+                linkOk := true }
+          else
+            none }
+    signedRegistryExecutionMetadata :=
+      { executionAuthorization :=
+          { executionAuthorization :=
+              { policyHash := 1
+                policyRef := { policyEpoch := 1, registryRoot := 1 }
+                stateHash := 1
+                stateRef :=
+                  { stateSourceId := 1
+                    stateEpoch := 1
+                    stateAttestationHash := 1 }
+                governance :=
+                  if s.governanceAligned = true then
+                    some
+                      { updateKind := .policyTweak
+                        profileAppOk := true
+                        profileSafetyOk := true
+                        linkOk := true }
+                  else
+                    none }
+            executionAuthorizationHash := 1 }
+        signedRegistryBridge :=
+          { resolutionHash := 1
+            execKindId := 1
+            execVersionId := 1
+            imageId := 1
+            policySourceKindId := some 1
+            policySourceHash := some 1
+            registryCheckpointAttestationHash :=
+              if s.checkpointAttestationHashBound = true then some 1 else none } } }
+
+def concreteBoundaryWitnessOfServeState (s : ServeState) :
+    MPRDRegistryGovernanceExecutionAuthorizationArtifactCompiler.ExecutionBoundaryWitness :=
+  { chosenActionPreimagePresent := s.boundaryAdmitted
+    limitsBindingPresent := s.boundaryAdmitted }
+
+def concreteExecutorAdmissionWitnessOfServeState (s : ServeState) :
+    MPRDRegistryGovernanceExecutionAuthorizationArtifactCompiler.ExecutionExecutorAdmissionWitness :=
+  { signaturePresent := s.signatureAdmitted
+    stateProvenancePresent := s.stateProvenanceAdmitted
+    replayClearancePresent := s.replayAdmitted }
+
+def concreteBindingVectorPacketOfServeState (_s : ServeState) :
+    MPRDRegistryGovernanceExecutionAuthorizationArtifactCompiler.ExecutionBindingVectorPacket :=
+  { decisionCommitment := 1
+    policyHash := 1
+    policyRef := { policyEpoch := 1, registryRoot := 1 }
+    stateRef :=
+      { stateSourceId := 1
+        stateEpoch := 1
+        stateAttestationHash := 1 }
+    stateHash := 1
+    candidateSetHash := 1
+    chosenActionHash := 1
+    nonceOrTxHash := 1
+    limitsHash := 1 }
+
+def concreteBoundaryRefinementPacketOfServeState (_s : ServeState) :
+    MPRDRegistryGovernanceExecutionAuthorizationArtifactCompiler.ExecutionBoundaryRefinementPacket :=
+  { executionReadyPacketHash := 1
+    attestationMetadataHash := 1 }
+
+def concreteAuthorizationArtifactOfServeState (s : ServeState) :
+    MPRDRegistryGovernanceExecutionAuthorizationArtifactCompiler.SignedRegistryExecutionArtifact :=
+  MPRDRegistryGovernanceExecutionAuthorizationArtifactCompiler.signedRegistryExecutionArtifactOfConcretePacket
+    (concreteAuthorizationPacketOfServeState s)
+    (concreteBoundaryWitnessOfServeState s)
+    (concreteExecutorAdmissionWitnessOfServeState s)
+    (concreteBindingVectorPacketOfServeState s)
+    (concreteBoundaryRefinementPacketOfServeState s)
+
+theorem artifactOfServeState_matches_concrete_authorization_artifact_for_executed_states
+    {s : ServeState}
+    (hReach :
+      MPRDSignedRegistryServeAttestationHashReadyPacketBoundary.Reachable s)
+    (hExec :
+      MPRDSignedRegistryServeAttestationHashReadyPacketBoundary.Executed s) :
+    concreteAuthorizationArtifactOfServeState s = artifactOfServeState s := by
+  rcases
+      MPRDSignedRegistryServeAttestationHashReadyPacketBoundary.executed_reachable_states_require_signed_registry_serve_attestation_hash_ready_packet_boundary
+        hReach hExec with
+    ⟨hPacket, _hReady, _hRegistryAnchor, _hStateAnchor, _hPolicy, _hVerifier,
+      _hBridge, _hResolved, _hCheckpoint, hCheckpointHash, hAuth, hAuthHash,
+      hRegistryAuthHash, hGovernance, hBridgeWitness, _hVerified, _hAllowed,
+      hBinding, _hExecutor, hBoundary, hSignature, hStateProv, hReplay⟩
+  simp [concreteAuthorizationArtifactOfServeState,
+    MPRDRegistryGovernanceExecutionAuthorizationArtifactCompiler.exactAuthorizationWitnessOfConcretePacket,
+    MPRDRegistryGovernanceExecutionAuthorizationArtifactCompiler.exactBridgeWitnessOfConcretePacket,
+    MPRDRegistryGovernanceExecutionAuthorizationArtifactCompiler.signedRegistryExecutionMetadataOfConcretePacket,
+    MPRDRegistryGovernanceExecutionAuthorizationArtifactCompiler.signedRegistryExecutionArtifactOfConcretePacket,
+    concreteAuthorizationPacketOfServeState, concreteBoundaryWitnessOfServeState,
+    concreteExecutorAdmissionWitnessOfServeState, concreteBindingVectorPacketOfServeState,
+    concreteBoundaryRefinementPacketOfServeState, artifactOfServeState,
+    executionReadyOfServeState, hPacket, hCheckpointHash, hAuth, hAuthHash,
+    hRegistryAuthHash, hGovernance, hBridgeWitness, hBinding, hBoundary,
+    hSignature, hStateProv, hReplay]
+
 theorem executed_reachable_states_require_signed_registry_serve_attestation_hash_artifact_boundary
     {s : ServeState}
     (hReach : MPRDSignedRegistryServeAttestationHashReadyPacketBoundary.Reachable s)
@@ -113,51 +231,24 @@ theorem executed_reachable_states_require_signed_registry_serve_attestation_hash
   rcases
       MPRDSignedRegistryServeAttestationHashReadyPacketBoundary.executed_reachable_states_require_signed_registry_serve_attestation_hash_ready_packet_boundary
         hReach hExec with
-    ⟨hPacket, _hReady, _hRegistryAnchor, _hStateAnchor, _hPolicy, _hVerifier,
-      _hBridge, _hResolved, _hCheckpoint, _hCheckpointHash, hAuth, hAuthHash,
-      hRegistryAuthHash, hGovernance, hBridgeWitness, _hVerified, _hAllowed,
-      hBinding, _hExecutor, hBoundary, hSignature, hStateProv, hReplay⟩
-  constructor
-  · constructor
-    · simpa [artifactOfServeState, executionReadyOfServeState] using hBoundary
-    · simpa [artifactOfServeState, executionReadyOfServeState] using hBoundary
-  constructor
-  · refine ⟨?_, ?_, ?_⟩
-    · exact
-        { policyAuthorityPresent := s.executionAuthorizationBound
-          stateBindingPresent := s.executionAuthorizationBound
-          governancePresent := s.governanceAligned }
-    · simp [artifactOfServeState, executionReadyOfServeState]
-    · constructor
-      · simpa [artifactOfServeState, executionReadyOfServeState] using hAuth
-      · constructor
-        · simpa [artifactOfServeState, executionReadyOfServeState] using hAuth
-        · simpa [artifactOfServeState, executionReadyOfServeState] using hGovernance
-  constructor
-  · refine ⟨?_, ?_, ?_⟩
-    · exact
-        { registryAuthorizationPresent := s.bridgeWitnessPreserved
-          checkpointAttestationPresent := s.checkpointAttestationHashBound }
-    · simp [artifactOfServeState, executionReadyOfServeState]
-    · simpa [MPRDSignedRegistryExecutionExactPacketWitnessCompiler.bridgeWitnessHolds,
-        artifactOfServeState, executionReadyOfServeState] using hBridgeWitness
-  constructor
-  · refine ⟨?_, ?_, ?_⟩
-    · exact
-        { signaturePresent := s.signatureAdmitted
-          stateProvenancePresent := s.stateProvenanceAdmitted
-          replayClearancePresent := s.replayAdmitted }
-    · simp [artifactOfServeState, executionReadyOfServeState]
-    · constructor
-      · simpa [artifactOfServeState, executionReadyOfServeState] using hSignature
-      · constructor
-        · simpa [artifactOfServeState, executionReadyOfServeState] using hStateProv
-        · simpa [artifactOfServeState, executionReadyOfServeState] using hReplay
-  constructor
-  · simp [artifactOfServeState, hBinding]
-  constructor
-  · simp [artifactOfServeState, hPacket, hAuthHash]
-  · simp [artifactOfServeState, hAuthHash, hRegistryAuthHash]
+    ⟨_hPacket, _hReady, _hRegistryAnchor, _hStateAnchor, _hPolicy, _hVerifier,
+      _hBridge, _hResolved, _hCheckpoint, _hCheckpointHash, _hAuth, _hAuthHash,
+      _hRegistryAuthHash, hGovernance, _hBridgeWitness, _hVerified, _hAllowed,
+      _hBinding, _hExecutor, hBoundary, hSignature, hStateProv, hReplay⟩
+  have hConcrete :
+      MPRDSignedRegistryExecutionArtifactRuntimeRefinement.ArtifactHolds
+        (concreteAuthorizationArtifactOfServeState s) := by
+    apply
+      MPRDRegistryGovernanceExecutionAuthorizationArtifactCompiler.signed_registry_execution_artifact_of_concrete_packet_holds
+    · simp [concreteBoundaryWitnessOfServeState,
+        MPRDSignedRegistryExecutionExactPacketWitnessCompiler.boundaryWitnessHolds,
+        hBoundary]
+    · simp [concreteAuthorizationPacketOfServeState, hGovernance]
+    · simp [concreteExecutorAdmissionWitnessOfServeState,
+        MPRDSignedRegistryExecutionExactPacketWitnessCompiler.executorAdmissionWitnessHolds,
+        hSignature, hStateProv, hReplay]
+  simpa [artifactOfServeState_matches_concrete_authorization_artifact_for_executed_states
+    hReach hExec] using hConcrete
 
 theorem executed_reachable_states_require_signed_registry_serve_attestation_hash_packet_view
     {s : ServeState}
