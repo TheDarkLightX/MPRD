@@ -16,6 +16,8 @@
 -/
 
 import MPRD_ExecutionBoundary
+import MPRD_SignedRegistryExecutionBoundary
+import MPRD_SignedRegistryExecutionBoundaryRefinement
 import MPRD_SignedRegistryServeAttestationHashBoundary
 
 namespace MPRDSignedRegistryServeAttestationHashRefinement
@@ -94,6 +96,106 @@ theorem refinementWitnessOfServeState_holds_for_executed_states
   · simp [MPRDExecutionBoundary.ConcreteBindingsHold, refinementWitnessOfServeState, hBinding]
   · simp [MPRDExecutionBoundary.ExecutorGateHold, refinementWitnessOfServeState, hExecutor]
 
+def mapExecutionStatus :
+    MPRDSignedRegistryServeAttestationHashBoundary.ExecStatus ->
+      MPRDSignedRegistryExecutionBoundary.ExecStatus
+  | .skipped => .skipped
+  | .succeeded => .succeeded
+  | .failed => .failed
+
+def executionBoundaryViewOfServeState (s : ServeState) :
+    MPRDSignedRegistryExecutionBoundary.State :=
+  { registryResolved := s.registryResolved
+    checkpointBound := s.checkpointBound
+    executionAuthorizationBound := s.executionAuthorizationBound
+    governanceAligned := s.governanceAligned
+    verified := s.verified
+    allowed := s.allowed
+    replayOk := s.replayOk
+    bindingOk := s.bindingOk
+    executorOk := s.executorOk
+    readyRebuilt := s.readyRebuilt
+    exec := mapExecutionStatus s.exec }
+
+theorem executed_signed_registry_serve_attestation_hash_states_refine_via_signed_registry_execution_boundary
+    {s : ServeState}
+    (hReach : MPRDSignedRegistryServeAttestationHashBoundary.Reachable s)
+    (hExec : MPRDSignedRegistryServeAttestationHashBoundary.Executed s) :
+    MPRDSignedRegistryExecutionBoundary.Reachable (executionBoundaryViewOfServeState s) ∧
+      MPRDSignedRegistryExecutionBoundary.Executed (executionBoundaryViewOfServeState s) ∧
+        (∃ t : MPRDExecutionBoundary.State,
+          t.ctx.bindings =
+              (MPRDSignedRegistryExecutionBoundaryRefinement.refinementWitnessOfSignedRegistryState
+                (executionBoundaryViewOfServeState s)).bindings ∧
+            t.ctx.executorGate =
+              (MPRDSignedRegistryExecutionBoundaryRefinement.refinementWitnessOfSignedRegistryState
+                (executionBoundaryViewOfServeState s)).executorGate ∧
+              MPRDExecutionBoundary.Reachable t ∧
+                MPRDExecutionBoundary.Executed t ∧
+                  MPRDExecutionBoundary.ExecutedImpliesFullBoundaryGate t) := by
+  rcases
+      MPRDSignedRegistryServeAttestationHashBoundary.executed_reachable_states_require_signed_registry_serve_attestation_hash_boundary
+        hReach hExec with
+    ⟨hReady, _hRegistryAnchor, _hStateAnchor, _hPolicy, _hVerifier, _hBridge,
+      hResolved, hCheckpoint, _hCheckpointHash, hAuth, _hAuthHash,
+      _hRegistryAuthHash, hGovernance, _hBridgeWitness, hVerified, hAllowed,
+      hReplay, hBinding, hExecutor⟩
+  cases hExec with
+  | inl hSuccess =>
+      have hExecStateEq :
+          executionBoundaryViewOfServeState s =
+            MPRDSignedRegistryExecutionBoundaryRefinement.readyRebuiltSuccessState := by
+        simp [executionBoundaryViewOfServeState, mapExecutionStatus,
+          MPRDSignedRegistryExecutionBoundaryRefinement.readyRebuiltSuccessState,
+          MPRDSignedRegistryExecutionBoundaryRefinement.readyRebuiltSkippedState,
+          hResolved, hCheckpoint, hAuth, hGovernance, hVerified, hAllowed,
+          hReplay, hBinding, hExecutor, hReady, hSuccess]
+      have hExecStateReach :
+          MPRDSignedRegistryExecutionBoundary.Reachable
+            (executionBoundaryViewOfServeState s) := by
+        simpa [hExecStateEq] using
+          MPRDSignedRegistryExecutionBoundaryRefinement.reachable_ready_rebuilt_success_state
+      have hExecStateExec :
+          MPRDSignedRegistryExecutionBoundary.Executed
+            (executionBoundaryViewOfServeState s) := by
+        simpa [hExecStateEq] using
+          (Or.inl rfl :
+            MPRDSignedRegistryExecutionBoundary.Executed
+              MPRDSignedRegistryExecutionBoundaryRefinement.readyRebuiltSuccessState)
+      rcases
+          MPRDSignedRegistryExecutionBoundaryRefinement.executed_signed_registry_execution_states_refine_to_execution_boundary
+            hExecStateReach hExecStateExec with
+        ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
+      exact ⟨hExecStateReach, hExecStateExec,
+        ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩⟩
+  | inr hFailure =>
+      have hExecStateEq :
+          executionBoundaryViewOfServeState s =
+            MPRDSignedRegistryExecutionBoundaryRefinement.readyRebuiltFailureState := by
+        simp [executionBoundaryViewOfServeState, mapExecutionStatus,
+          MPRDSignedRegistryExecutionBoundaryRefinement.readyRebuiltFailureState,
+          MPRDSignedRegistryExecutionBoundaryRefinement.readyRebuiltSkippedState,
+          hResolved, hCheckpoint, hAuth, hGovernance, hVerified, hAllowed,
+          hReplay, hBinding, hExecutor, hReady, hFailure]
+      have hExecStateReach :
+          MPRDSignedRegistryExecutionBoundary.Reachable
+            (executionBoundaryViewOfServeState s) := by
+        simpa [hExecStateEq] using
+          MPRDSignedRegistryExecutionBoundaryRefinement.reachable_ready_rebuilt_failure_state
+      have hExecStateExec :
+          MPRDSignedRegistryExecutionBoundary.Executed
+            (executionBoundaryViewOfServeState s) := by
+        simpa [hExecStateEq] using
+          (Or.inr rfl :
+            MPRDSignedRegistryExecutionBoundary.Executed
+              MPRDSignedRegistryExecutionBoundaryRefinement.readyRebuiltFailureState)
+      rcases
+          MPRDSignedRegistryExecutionBoundaryRefinement.executed_signed_registry_execution_states_refine_to_execution_boundary
+            hExecStateReach hExecStateExec with
+        ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
+      exact ⟨hExecStateReach, hExecStateExec,
+        ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩⟩
+
 theorem executed_signed_registry_serve_attestation_hash_states_refine_to_execution_boundary
     {s : ServeState}
     (hReach : MPRDSignedRegistryServeAttestationHashBoundary.Reachable s)
@@ -105,61 +207,17 @@ theorem executed_signed_registry_serve_attestation_hash_states_refine_to_executi
             MPRDExecutionBoundary.Executed t ∧
               MPRDExecutionBoundary.ExecutedImpliesFullBoundaryGate t := by
   rcases
-      MPRDSignedRegistryServeAttestationHashBoundary.executed_reachable_states_require_signed_registry_serve_attestation_hash_boundary
+      executed_signed_registry_serve_attestation_hash_states_refine_via_signed_registry_execution_boundary
         hReach hExec with
-    ⟨_hReady, _hRegistryAnchor, _hStateAnchor, _hPolicy, _hVerifier, _hBridge,
-      _hResolved, _hCheckpoint, _hCheckpointHash, _hAuth, _hAuthHash,
-      _hRegistryAuthHash, hGovernance, _hBridgeWitness, _hVerified, hAllowed,
-      hReplay, _hBinding, _hExecutor⟩
-  let w := refinementWitnessOfServeState s
-  have hWitness : RefinementWitnessHolds w := by
-    simpa [w] using refinementWitnessOfServeState_holds_for_executed_states hReach hExec
-  rcases hWitness with ⟨hBindings, hExecutorGate⟩
-  let c := refineContext s w
-  have hVerdict : c.verdict = MPRDExecutionBoundary.Verdict.allowed := by
-    simp [c, refineContext, hAllowed]
-  have hGovernanceOk : c.governanceOk = true := by
-    simpa [c, refineContext] using hGovernance
-  have hReplayOk : c.replayOk = true := by
-    simpa [c, refineContext] using hReplay
-  have hPendingInit :
-      MPRDExecutionBoundary.Initial
-        { proof := .pending, exec := .skipped, ctx := c } := by
-    exact ⟨rfl, rfl⟩
-  have hPendingReach :
-      MPRDExecutionBoundary.Reachable
-        { proof := .pending, exec := .skipped, ctx := c } :=
-    MPRDExecutionBoundary.Reachable.init hPendingInit
-  have hVerifiedReach :
-      MPRDExecutionBoundary.Reachable
-        { proof := .verified, exec := .skipped, ctx := c } :=
-    MPRDExecutionBoundary.Reachable.step hPendingReach
-      (MPRDExecutionBoundary.Step.proof_pending_verify c)
-  cases hExec with
-  | inl hSuccess =>
-      let t := refineSuccessState s w
-      have hReachT : MPRDExecutionBoundary.Reachable t := by
-        exact MPRDExecutionBoundary.Reachable.step hVerifiedReach
-          (MPRDExecutionBoundary.Step.exec_skipped_to_success c hVerdict hGovernanceOk
-            hReplayOk hBindings hExecutorGate)
-      have hExecT : MPRDExecutionBoundary.Executed t := by
-        exact Or.inl rfl
-      have hBoundary :=
-        MPRDExecutionBoundary.reachable_executed_states_require_full_boundary_gate hReachT
-      exact ⟨t, rfl, rfl, hReachT, hExecT, hBoundary⟩
-  | inr hFailure =>
-      let t := refineFailedState s w
-      have hReachT : MPRDExecutionBoundary.Reachable t := by
-        exact MPRDExecutionBoundary.Reachable.step hVerifiedReach
-          (MPRDExecutionBoundary.Step.exec_skipped_to_failed c hVerdict hGovernanceOk
-            hReplayOk hBindings hExecutorGate)
-      have hExecT : MPRDExecutionBoundary.Executed t := by
-        exact Or.inr rfl
-      have hBoundary :=
-        MPRDExecutionBoundary.reachable_executed_states_require_full_boundary_gate hReachT
-      exact ⟨t, rfl, rfl, hReachT, hExecT, hBoundary⟩
+    ⟨_hExecStateReach, _hExecStateExec, hAbstract⟩
+  simpa [executionBoundaryViewOfServeState,
+    MPRDSignedRegistryExecutionBoundaryRefinement.refinementWitnessOfSignedRegistryState,
+    refinementWitnessOfServeState] using hAbstract
 
 end MPRDSignedRegistryServeAttestationHashRefinement
+
+abbrev executed_signed_registry_serve_attestation_hash_states_refine_via_signed_registry_execution_boundary_v1 :=
+  @MPRDSignedRegistryServeAttestationHashRefinement.executed_signed_registry_serve_attestation_hash_states_refine_via_signed_registry_execution_boundary
 
 abbrev executed_signed_registry_serve_attestation_hash_states_refine_to_execution_boundary_v1 :=
   @MPRDSignedRegistryServeAttestationHashRefinement.executed_signed_registry_serve_attestation_hash_states_refine_to_execution_boundary
