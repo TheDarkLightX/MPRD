@@ -38,6 +38,7 @@ lean_lib MPRDLeanProofs where
     `MPRD_SignedRegistryBridgeMetadataPacketBoundary,
     `MPRD_SignedRegistryExecutionBoundaryRefinement,
     `MPRD_RegistryGovernanceExecutionMetadataCompiler,
+    `MPRD_RegistryGovernanceExecutionAuthorizationPacketCompiler,
     `MPRD_SignedRegistryExecutionMetadataPacketBoundary,
     `MPRD_SignedRegistryExecutionRefinementPacketBoundary,
     `MPRD_SignedRegistryExecutionRefinementWitnessCompiler,
