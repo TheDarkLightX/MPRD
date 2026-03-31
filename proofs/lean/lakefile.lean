@@ -19,6 +19,7 @@ lean_lib MPRDLeanProofs where
     `MPRD_ExecutionReadyPacketRefinement,
     `MPRD_ExecutionReadyRefinementWitnessCompiler,
     `MPRD_ExecutionReadyRuntimeRefinement,
+    `MPRD_ExecutionReadyArtifactRuntimeRefinement,
     `MPRD_ExecutionBindingVectorPacketBoundary,
     `MPRD_ExecutionBoundaryRefinementPacketBoundary,
     `MPRD_AttestationReadyExecutionAuthorizationBoundary,
