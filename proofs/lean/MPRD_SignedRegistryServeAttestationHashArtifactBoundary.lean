@@ -14,6 +14,7 @@
 
 import MPRD_SignedRegistryExecutionArtifactRuntimeRefinement
 import MPRD_SignedRegistryServeAttestationHashReadyPacketBoundary
+import MPRD_SignedRegistryServeEndToEndRefinement
 
 namespace MPRDSignedRegistryServeAttestationHashArtifactBoundary
 
@@ -158,7 +159,55 @@ theorem executed_reachable_states_require_signed_registry_serve_attestation_hash
   · simp [artifactOfServeState, hPacket, hAuthHash]
   · simp [artifactOfServeState, hAuthHash, hRegistryAuthHash]
 
+theorem executed_reachable_states_require_signed_registry_serve_attestation_hash_packet_view
+    {s : ServeState}
+    (hReach : MPRDSignedRegistryServeAttestationHashReadyPacketBoundary.Reachable s)
+    (hExec : MPRDSignedRegistryServeAttestationHashReadyPacketBoundary.Executed s) :
+    MPRDExecutionReadyPacketBoundary.Reachable (packetViewOfServeState s) ∧
+      MPRDExecutionReadyPacketBoundary.Executed (packetViewOfServeState s) := by
+  rcases
+      MPRDSignedRegistryServeAttestationHashReadyPacketBoundary.executed_reachable_states_require_signed_registry_serve_attestation_hash_ready_packet_boundary
+        hReach hExec with
+    ⟨hPacket, hReady, _hRegistryAnchor, _hStateAnchor, _hPolicy, _hVerifier,
+      _hBridge, _hResolved, hCheckpoint, _hCheckpointHash, hAuth, _hAuthHash,
+      _hRegistryAuthHash, _hGovernance, _hBridgeWitness, _hVerified, _hAllowed,
+      _hBinding, _hExecutor, hBoundary, hSignature, hStateProv, hReplay⟩
+  cases hExec with
+  | inl hSuccess =>
+      have hPacketEq :
+          packetViewOfServeState s =
+            MPRDSignedRegistryServeEndToEndRefinement.groupedPacketSuccess := by
+        simp [packetViewOfServeState, mapServeExec,
+          MPRDSignedRegistryServeEndToEndRefinement.groupedPacketSuccess,
+          MPRDSignedRegistryServeEndToEndRefinement.groupedPacketReadySkipped,
+          hBoundary, hAuth, hCheckpoint, hSignature, hStateProv, hReplay,
+          hPacket, hReady, hSuccess]
+      refine ⟨?_, ?_⟩
+      · simpa [hPacketEq] using
+          MPRDSignedRegistryServeEndToEndRefinement.reachable_grouped_packet_success
+      · simpa [hPacketEq] using
+          (Or.inl rfl : MPRDExecutionReadyPacketBoundary.Executed
+            MPRDSignedRegistryServeEndToEndRefinement.groupedPacketSuccess)
+  | inr hFailure =>
+      have hPacketEq :
+          packetViewOfServeState s =
+            MPRDSignedRegistryServeEndToEndRefinement.groupedPacketFailure := by
+        simp [packetViewOfServeState, mapServeExec,
+          MPRDSignedRegistryServeEndToEndRefinement.groupedPacketFailure,
+          MPRDSignedRegistryServeEndToEndRefinement.groupedPacketReadySkipped,
+          hBoundary, hAuth, hCheckpoint, hSignature, hStateProv, hReplay,
+          hPacket, hReady, hFailure]
+      refine ⟨?_, ?_⟩
+      · simpa [hPacketEq] using
+          MPRDSignedRegistryServeEndToEndRefinement.reachable_grouped_packet_failure
+      · simpa [hPacketEq] using
+          (Or.inr rfl : MPRDExecutionReadyPacketBoundary.Executed
+            MPRDSignedRegistryServeEndToEndRefinement.groupedPacketFailure)
+
 end MPRDSignedRegistryServeAttestationHashArtifactBoundary
 
 abbrev executed_reachable_states_require_signed_registry_serve_attestation_hash_artifact_boundary_v1 :=
   @MPRDSignedRegistryServeAttestationHashArtifactBoundary.executed_reachable_states_require_signed_registry_serve_attestation_hash_artifact_boundary
+
+abbrev executed_reachable_states_require_signed_registry_serve_attestation_hash_packet_view_v1 :=
+  @MPRDSignedRegistryServeAttestationHashArtifactBoundary.executed_reachable_states_require_signed_registry_serve_attestation_hash_packet_view

@@ -57,61 +57,15 @@ theorem executed_signed_registry_serve_attestation_hash_states_refine_to_executi
       MPRDSignedRegistryServeAttestationHashArtifactBoundary.executed_reachable_states_require_signed_registry_serve_attestation_hash_artifact_boundary
         hReach hExec
   rcases
-      MPRDSignedRegistryServeAttestationHashReadyPacketBoundary.executed_reachable_states_require_signed_registry_serve_attestation_hash_ready_packet_boundary
+      MPRDSignedRegistryServeAttestationHashArtifactBoundary.executed_reachable_states_require_signed_registry_serve_attestation_hash_packet_view
         hReach hExec with
-    ⟨hPacket, hReady, _hRegistryAnchor, _hStateAnchor, _hPolicy, _hVerifier,
-      _hBridge, _hResolved, hCheckpoint, _hCheckpointHash, hAuth, _hAuthHash,
-      _hRegistryAuthHash, _hGovernance, _hBridgeWitness, _hVerified, _hAllowed,
-      _hBinding, _hExecutor, hBoundary, hSignature, hStateProv, hReplay⟩
-  cases hExec with
-  | inl hSuccess =>
-      have hPacketEq :
-          packetViewOfServeState s =
-            MPRDSignedRegistryServeEndToEndRefinement.groupedPacketSuccess := by
-        simp [MPRDSignedRegistryServeAttestationHashArtifactBoundary.packetViewOfServeState,
-          MPRDSignedRegistryServeAttestationHashArtifactBoundary.mapServeExec,
-          packetViewOfServeState,
-          MPRDSignedRegistryServeEndToEndRefinement.groupedPacketSuccess,
-          MPRDSignedRegistryServeEndToEndRefinement.groupedPacketReadySkipped,
-          hBoundary, hAuth, hCheckpoint, hSignature, hStateProv, hReplay,
-          hPacket, hReady, hSuccess]
-      have hPacketReach : MPRDExecutionReadyPacketBoundary.Reachable (packetViewOfServeState s) := by
-        simpa [hPacketEq] using
-          MPRDSignedRegistryServeEndToEndRefinement.reachable_grouped_packet_success
-      have hPacketExec : MPRDExecutionReadyPacketBoundary.Executed (packetViewOfServeState s) := by
-        simpa [hPacketEq] using
-          (Or.inl rfl : MPRDExecutionReadyPacketBoundary.Executed
-            MPRDSignedRegistryServeEndToEndRefinement.groupedPacketSuccess)
-      rcases
-          MPRDSignedRegistryExecutionArtifactRuntimeRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary_from_artifact
-            hPacketReach hPacketExec hArtifact with
-        ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
-      exact ⟨hPacketReach, hPacketExec,
-        ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩⟩
-  | inr hFailure =>
-      have hPacketEq :
-          packetViewOfServeState s =
-            MPRDSignedRegistryServeEndToEndRefinement.groupedPacketFailure := by
-        simp [MPRDSignedRegistryServeAttestationHashArtifactBoundary.packetViewOfServeState,
-          MPRDSignedRegistryServeAttestationHashArtifactBoundary.mapServeExec,
-          packetViewOfServeState,
-          MPRDSignedRegistryServeEndToEndRefinement.groupedPacketFailure,
-          MPRDSignedRegistryServeEndToEndRefinement.groupedPacketReadySkipped,
-          hBoundary, hAuth, hCheckpoint, hSignature, hStateProv, hReplay,
-          hPacket, hReady, hFailure]
-      have hPacketReach : MPRDExecutionReadyPacketBoundary.Reachable (packetViewOfServeState s) := by
-        simpa [hPacketEq] using
-          MPRDSignedRegistryServeEndToEndRefinement.reachable_grouped_packet_failure
-      have hPacketExec : MPRDExecutionReadyPacketBoundary.Executed (packetViewOfServeState s) := by
-        simpa [hPacketEq] using
-          (Or.inr rfl : MPRDExecutionReadyPacketBoundary.Executed
-            MPRDSignedRegistryServeEndToEndRefinement.groupedPacketFailure)
-      rcases
-          MPRDSignedRegistryExecutionArtifactRuntimeRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary_from_artifact
-            hPacketReach hPacketExec hArtifact with
-        ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
-      exact ⟨hPacketReach, hPacketExec,
-        ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩⟩
+    ⟨hPacketReach, hPacketExec⟩
+  rcases
+      MPRDSignedRegistryExecutionArtifactRuntimeRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary_from_artifact
+        hPacketReach hPacketExec hArtifact with
+    ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
+  exact ⟨hPacketReach, hPacketExec,
+    ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩⟩
 
 end MPRDSignedRegistryServeAttestationHashExactPacketRefinement
 
