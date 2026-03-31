@@ -45,6 +45,7 @@ lean_lib MPRDLeanProofs where
     `MPRD_SignedRegistryServeBoundary,
     `MPRD_SignedRegistryServeReadyPacketBoundary,
     `MPRD_SignedRegistryServeAttestationHashBoundary,
+    `MPRD_SignedRegistryServeAttestationHashRefinement,
     `MPRD_SignedRegistryServeIdempotentFileBoundary,
     `MPRD_SignedRegistryServeIdempotentHttpBoundary,
     `MPRD_RegistryPolicyAuthority,

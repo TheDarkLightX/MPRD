@@ -42,6 +42,7 @@ assumption.
 - `MPRD_SignedRegistryServeBoundary.lean`: a lightweight top-level proof for the shipped production `mprd serve` path: executed states require validated registry and state anchors, explicit policy selection, production verifier binding, ready-bridge invocation, the signed-registry bridge facts, and the concrete execution guards.
 - `MPRD_SignedRegistryServeReadyPacketBoundary.lean`: a lightweight top-level proof for the shipped production `mprd serve` path after `ExecutionReadyPacketV1` grouping: executed states require the signed-registry serve-boundary facts and the grouped ready-packet admissions together before the live `execute_ready` boundary can fire.
 - `MPRD_SignedRegistryServeAttestationHashBoundary.lean`: a lightweight top-level proof for the shipped production `mprd serve` path after the concrete attestation-hash tightening: executed states require exact checkpoint-attestation, execution-authorization-hash, and registry-authorization-hash binding plus preservation of the concrete bridge witness, in addition to the signed-registry serve-boundary facts and concrete execution guards.
+- `MPRD_SignedRegistryServeAttestationHashRefinement.lean`: a lightweight top-level refinement bridge for that richer signed-registry attestation-hash serve model: once those exact hash-bound serve facts hold on an executed state, the state refines directly into a reachable abstract `MPRD_ExecutionBoundary` state without an extra witness premise at that top-level model.
 - `MPRD_SignedRegistryServeIdempotentFileBoundary.lean`: a lightweight top-level proof for the shipped production `mprd serve` path when the side-effect sink is `idempotent_file`: successful local execution requires the signed-registry serve-boundary facts, explicit `idempotent_file` selection, configured audit-file binding, and a durable local file barrier before success.
 - `MPRD_SignedRegistryServeIdempotentHttpBoundary.lean`: a lightweight top-level proof for the shipped production `mprd serve` path when the side-effect sink is `idempotent_http`: successful remote execution requires the signed-registry serve-boundary facts, explicit `idempotent_http` selection, configured effect-journal binding, a pending-barrier check, and a committed local effect barrier before success.
 - `MPRD_RegistryPolicyAuthority.lean`: a lightweight proof of the registry-backed policy admission boundary: a node only resolves a live policy after a selected trusted authority mode, manifest verification, exact `policy_ref` alignment, policy authorization, and image routing.
@@ -96,6 +97,7 @@ lake env lean MPRD_SignedRegistryServeExecutionBoundaryRefinement.lean
 lake env lean MPRD_SignedRegistryServeBoundary.lean
 lake env lean MPRD_SignedRegistryServeReadyPacketBoundary.lean
 lake env lean MPRD_SignedRegistryServeAttestationHashBoundary.lean
+lake env lean MPRD_SignedRegistryServeAttestationHashRefinement.lean
 lake env lean MPRD_SignedRegistryServeIdempotentFileBoundary.lean
 lake env lean MPRD_SignedRegistryServeIdempotentHttpBoundary.lean
 lake env lean MPRD_RegistryPolicyAuthority.lean
