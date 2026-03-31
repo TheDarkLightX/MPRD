@@ -14,6 +14,7 @@
   extra premise".
 -/
 
+import MPRD_ExecutionReadyArtifactRuntimeRefinement
 import MPRD_ExecutionReadyPacketRefinement
 import MPRD_ExecutionReadyRuntimeRefinement
 import MPRD_SignedRegistryServeReadyPacketBoundary
@@ -24,6 +25,8 @@ def proof_bundle_version : String := "mprd-leanproofs-v1"
 
 abbrev ServeState := MPRDSignedRegistryServeReadyPacketBoundary.State
 abbrev PacketState := MPRDExecutionReadyPacketBoundary.State
+abbrev ExecutionReadyArtifact :=
+  MPRDExecutionReadyArtifactRuntimeRefinement.ExecutionReadyArtifact
 
 def refinementWitnessOfServeState (s : ServeState) :
     MPRDExecutionReadyPacketRefinement.RefinementWitness :=
@@ -110,6 +113,52 @@ def groupedPacketSuccess : PacketState :=
 
 def groupedPacketFailure : PacketState :=
   { groupedPacketReadySkipped with exec := .failed }
+
+def executionReadyArtifactOfServeState (s : ServeState) : ExecutionReadyArtifact :=
+  { executionBindingVector :=
+      if s.bindingOk = true then
+        some
+          { decisionCommitment := 1
+            policyHash := 1
+            policyRef := { policyEpoch := 1, registryRoot := 1 }
+            stateRef :=
+              { stateSourceId := 1
+                stateEpoch := 1
+                stateAttestationHash := 1 }
+            stateHash := 1
+            candidateSetHash := 1
+            chosenActionHash := 1
+            nonceOrTxHash := 1
+            limitsHash := 1 }
+      else
+        none
+    executionBoundaryRefinement :=
+      if s.packetGrouped = true ∧ s.executionAuthorizationBound = true then
+        some
+          { executionReadyPacketHash := 1
+            attestationMetadataHash := 1 }
+      else
+        none
+    executionAuthorizationMetadata :=
+      if s.executionAuthorizationBound = true ∧ s.governanceAligned = true then
+        some
+          { executionAuthorization :=
+              { policyHash := 1
+                policyRef := { policyEpoch := 1, registryRoot := 1 }
+                stateHash := 1
+                stateRef :=
+                  { stateSourceId := 1
+                    stateEpoch := 1
+                    stateAttestationHash := 1 }
+                governance :=
+                  some
+                    { updateKind := .policyTweak
+                      profileAppOk := true
+                      profileSafetyOk := true
+                      linkOk := true } }
+            executionAuthorizationHash := 1 }
+      else
+        none }
 
 theorem reachable_grouped_packet_ready_skipped :
     MPRDExecutionReadyPacketBoundary.Reachable groupedPacketReadySkipped := by
@@ -212,6 +261,96 @@ theorem reachable_grouped_packet_failure :
     (MPRDExecutionReadyPacketBoundary.Step.execute_failed groupedPacketReadySkipped
       rfl rfl rfl)
 
+theorem executed_signed_registry_serve_states_reach_execution_ready_packet
+    {s : ServeState}
+    (hReach : MPRDSignedRegistryServeReadyPacketBoundary.Reachable s)
+    (hExec : MPRDSignedRegistryServeReadyPacketBoundary.Executed s) :
+    MPRDExecutionReadyPacketBoundary.Reachable (packetViewOfServeState s) ∧
+      MPRDExecutionReadyPacketBoundary.Executed (packetViewOfServeState s) := by
+  rcases
+      MPRDSignedRegistryServeReadyPacketBoundary.executed_reachable_states_require_signed_registry_serve_ready_packet_boundary
+        hReach hExec with
+    ⟨hPacket, hReady, _hRegistryAnchor, _hStateAnchor, _hPolicy, _hVerifier,
+      _hBridge, _hResolved, hCheckpoint, hAuth, _hGovernance, _hVerified,
+      _hAllowed, _hBinding, _hExecutor, hBoundary, hSignature, hStateProv,
+      hReplay⟩
+  cases hExec with
+  | inl hSuccess =>
+      have hPacketEq : packetViewOfServeState s = groupedPacketSuccess := by
+        simp [packetViewOfServeState, mapServeExec, groupedPacketSuccess,
+          groupedPacketReadySkipped, hBoundary, hAuth, hCheckpoint, hSignature,
+          hStateProv, hReplay, hPacket, hReady, hSuccess]
+      exact ⟨by simpa [hPacketEq] using reachable_grouped_packet_success,
+        by simpa [hPacketEq] using
+          (Or.inl rfl : MPRDExecutionReadyPacketBoundary.Executed groupedPacketSuccess)⟩
+  | inr hFailure =>
+      have hPacketEq : packetViewOfServeState s = groupedPacketFailure := by
+        simp [packetViewOfServeState, mapServeExec, groupedPacketFailure,
+          groupedPacketReadySkipped, hBoundary, hAuth, hCheckpoint, hSignature,
+          hStateProv, hReplay, hPacket, hReady, hFailure]
+      exact ⟨by simpa [hPacketEq] using reachable_grouped_packet_failure,
+        by simpa [hPacketEq] using
+          (Or.inr rfl : MPRDExecutionReadyPacketBoundary.Executed groupedPacketFailure)⟩
+
+theorem executionReadyArtifactOfServeState_holds_for_executed_states
+    {s : ServeState}
+    (hReach : MPRDSignedRegistryServeReadyPacketBoundary.Reachable s)
+    (hExec : MPRDSignedRegistryServeReadyPacketBoundary.Executed s) :
+    MPRDExecutionReadyArtifactRuntimeRefinement.ArtifactHolds
+      (executionReadyArtifactOfServeState s) := by
+  rcases
+      MPRDSignedRegistryServeReadyPacketBoundary.executed_reachable_states_require_signed_registry_serve_ready_packet_boundary
+        hReach hExec with
+    ⟨hPacket, _hReady, _hRegistryAnchor, _hStateAnchor, _hPolicy, _hVerifier,
+      _hBridge, _hResolved, _hCheckpoint, hAuth, hGovernance, _hVerified,
+      _hAllowed, hBinding, _hExecutor, _hBoundary, _hSignature, _hStateProv,
+      _hReplay⟩
+  refine ⟨?_, ?_, ?_⟩
+  · simp [executionReadyArtifactOfServeState, hBinding]
+  · simp [executionReadyArtifactOfServeState, hPacket, hAuth]
+  · refine ⟨?_, ?_, ?_⟩
+    · exact
+        { executionAuthorization :=
+            { policyHash := 1
+              policyRef := { policyEpoch := 1, registryRoot := 1 }
+              stateHash := 1
+              stateRef :=
+                { stateSourceId := 1
+                  stateEpoch := 1
+                  stateAttestationHash := 1 }
+              governance :=
+                some
+                  { updateKind := .policyTweak
+                    profileAppOk := true
+                    profileSafetyOk := true
+                    linkOk := true } }
+          executionAuthorizationHash := 1 }
+    · simp [executionReadyArtifactOfServeState, hAuth, hGovernance]
+    · simp
+
+theorem executionReadyArtifactOfServeState_compiles_runtime_witness_for_executed_states
+    {s : ServeState}
+    (hReach : MPRDSignedRegistryServeReadyPacketBoundary.Reachable s)
+    (hExec : MPRDSignedRegistryServeReadyPacketBoundary.Executed s) :
+    MPRDExecutionReadyArtifactRuntimeRefinement.compileRuntimeWitness
+        (packetViewOfServeState s) (executionReadyArtifactOfServeState s) =
+      runtimeRefinementWitnessOfServeState s := by
+  rcases
+      MPRDSignedRegistryServeReadyPacketBoundary.executed_reachable_states_require_signed_registry_serve_ready_packet_boundary
+        hReach hExec with
+    ⟨hPacket, _hReady, _hRegistryAnchor, _hStateAnchor, _hPolicy, _hVerifier,
+      _hBridge, _hResolved, _hCheckpoint, hAuth, hGovernance, _hVerified,
+      _hAllowed, hBinding, hExecutor, hBoundary, hSignature, hStateProv,
+      hReplay⟩
+  simp [MPRDExecutionReadyArtifactRuntimeRefinement.compileRuntimeWitness,
+    MPRDExecutionReadyArtifactRuntimeRefinement.compileBindings,
+    MPRDExecutionReadyArtifactRuntimeRefinement.compileExecutorGate,
+    MPRDExecutionReadyArtifactRuntimeRefinement.canonicalBindings,
+    MPRDExecutionReadyArtifactRuntimeRefinement.canonicalExecutorGate,
+    executionReadyArtifactOfServeState, packetViewOfServeState,
+    runtimeRefinementWitnessOfServeState, hPacket, hAuth, hGovernance, hBinding,
+    hBoundary, hSignature, hStateProv, hReplay, hExecutor]
+
 theorem executed_signed_registry_serve_states_refine_via_execution_ready_packet
     {s : ServeState}
     (hReach : MPRDSignedRegistryServeReadyPacketBoundary.Reachable s)
@@ -226,42 +365,13 @@ theorem executed_signed_registry_serve_states_refine_via_execution_ready_packet
               MPRDExecutionBoundary.Reachable t ∧
                 MPRDExecutionBoundary.Executed t ∧
                   MPRDExecutionBoundary.ExecutedImpliesFullBoundaryGate t) := by
+  rcases executed_signed_registry_serve_states_reach_execution_ready_packet hReach hExec with
+    ⟨hPacketReach, hPacketExec⟩
   rcases
-      MPRDSignedRegistryServeReadyPacketBoundary.executed_reachable_states_require_signed_registry_serve_ready_packet_boundary
-        hReach hExec with
-    ⟨hPacket, hReady, _hRegistryAnchor, _hStateAnchor, _hPolicy, _hVerifier,
-      _hBridge, _hResolved, hCheckpoint, hAuth, _hGovernance, _hVerified,
-      _hAllowed, _hBinding, _hExecutor, hBoundary, hSignature, hStateProv,
-      hReplay⟩
-  cases hExec with
-  | inl hSuccess =>
-      have hPacketEq : packetViewOfServeState s = groupedPacketSuccess := by
-        simp [packetViewOfServeState, mapServeExec, groupedPacketSuccess,
-          groupedPacketReadySkipped, hBoundary, hAuth, hCheckpoint, hSignature,
-          hStateProv, hReplay, hPacket, hReady, hSuccess]
-      have hPacketReach : MPRDExecutionReadyPacketBoundary.Reachable (packetViewOfServeState s) := by
-        simpa [hPacketEq] using reachable_grouped_packet_success
-      have hPacketExec : MPRDExecutionReadyPacketBoundary.Executed (packetViewOfServeState s) := by
-        simpa [hPacketEq] using (Or.inl rfl : MPRDExecutionReadyPacketBoundary.Executed groupedPacketSuccess)
-      rcases
-          MPRDExecutionReadyPacketRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary
-            hPacketReach hPacketExec hWitness with
-        ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
-      exact ⟨hPacketReach, hPacketExec, ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩⟩
-  | inr hFailure =>
-      have hPacketEq : packetViewOfServeState s = groupedPacketFailure := by
-        simp [packetViewOfServeState, mapServeExec, groupedPacketFailure,
-          groupedPacketReadySkipped, hBoundary, hAuth, hCheckpoint, hSignature,
-          hStateProv, hReplay, hPacket, hReady, hFailure]
-      have hPacketReach : MPRDExecutionReadyPacketBoundary.Reachable (packetViewOfServeState s) := by
-        simpa [hPacketEq] using reachable_grouped_packet_failure
-      have hPacketExec : MPRDExecutionReadyPacketBoundary.Executed (packetViewOfServeState s) := by
-        simpa [hPacketEq] using (Or.inr rfl : MPRDExecutionReadyPacketBoundary.Executed groupedPacketFailure)
-      rcases
-          MPRDExecutionReadyPacketRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary
-            hPacketReach hPacketExec hWitness with
-        ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
-      exact ⟨hPacketReach, hPacketExec, ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩⟩
+      MPRDExecutionReadyPacketRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary
+        hPacketReach hPacketExec hWitness with
+    ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
+  exact ⟨hPacketReach, hPacketExec, ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩⟩
 
 theorem refinementWitnessOfServeState_holds_for_executed_states
     {s : ServeState}
@@ -321,22 +431,30 @@ theorem executed_signed_registry_serve_states_refine_to_execution_boundary_via_r
               MPRDExecutionBoundary.Reachable t ∧
                 MPRDExecutionBoundary.Executed t ∧
                   MPRDExecutionBoundary.ExecutedImpliesFullBoundaryGate t) := by
-  let w := runtimeRefinementWitnessOfServeState s
-  have hRuntime :
-      MPRDExecutionReadyRefinementWitnessCompiler.RuntimeRefinementWitnessHolds w := by
-    simpa [w] using runtimeRefinementWitnessOfServeState_holds_for_executed_states hReach hExec
-  have hWitness :
-      MPRDExecutionReadyPacketRefinement.RefinementWitnessHolds
-        (MPRDExecutionReadyRefinementWitnessCompiler.compileWitness w) :=
-    MPRDExecutionReadyRefinementWitnessCompiler.compiled_witness_holds hRuntime
+  let a := executionReadyArtifactOfServeState s
+  have hArtifact :
+      MPRDExecutionReadyArtifactRuntimeRefinement.ArtifactHolds a := by
+    simpa [a] using executionReadyArtifactOfServeState_holds_for_executed_states hReach hExec
+  rcases executed_signed_registry_serve_states_reach_execution_ready_packet hReach hExec with
+    ⟨hPacketReach, hPacketExec⟩
   rcases
-      executed_signed_registry_serve_states_refine_via_execution_ready_packet hReach hExec hWitness with
-    ⟨hPacketReach, hPacketExec, _hAbstract⟩
-  rcases
-      MPRDExecutionReadyRuntimeRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary
-        hPacketReach hPacketExec hRuntime with
+      MPRDExecutionReadyArtifactRuntimeRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary_from_artifact
+        hPacketReach hPacketExec hArtifact with
     ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
-  exact ⟨hPacketReach, hPacketExec, ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩⟩
+  have hCompileEq :
+      MPRDExecutionReadyArtifactRuntimeRefinement.compileRuntimeWitness
+          (packetViewOfServeState s) a =
+        runtimeRefinementWitnessOfServeState s := by
+    simpa [a] using
+      executionReadyArtifactOfServeState_compiles_runtime_witness_for_executed_states hReach hExec
+  have hBindings' :
+      t.ctx.bindings = (runtimeRefinementWitnessOfServeState s).bindings := by
+    simpa [hCompileEq] using hBindings
+  have hExecutorGate' :
+      t.ctx.executorGate = (runtimeRefinementWitnessOfServeState s).executorGate := by
+    simpa [hCompileEq] using hExecutorGate
+  exact ⟨hPacketReach, hPacketExec,
+    ⟨t, hBindings', hExecutorGate', hAbsReach, hAbsExec, hAbsBoundary⟩⟩
 
 theorem executed_signed_registry_serve_states_refine_to_execution_boundary
     {s : ServeState}
