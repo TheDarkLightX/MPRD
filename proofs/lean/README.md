@@ -34,6 +34,7 @@ assumption.
 - `MPRD_SignedRegistryCheckpointBridge.lean`: a lightweight proof of the stricter signed-registry execution path: rebuilding the live ready bundle, and therefore executing, requires registry resolution, exact checkpoint binding, execution-authorization binding, and governance alignment.
 - `MPRD_SignedRegistryBridgeMetadataPacketBoundary.lean`: a lightweight local theorem for the grouped signed-registry bridge metadata packet: the grouped `SignedRegistryBridgeMetadataPacketV1` language is extensionally equal to a separate loose two-field language carrying the exact registry-authorization attestation packet plus the optional signed-registry checkpoint attestation hash reconstructed from metadata.
 - `MPRD_SignedRegistryExecutionBoundaryRefinement.lean`: a lightweight no-witness refinement bridge from the concrete signed-registry execution-boundary model into the abstract `MPRD_ExecutionBoundary` theorem.
+- `MPRD_RegistryGovernanceExecutionMetadataCompiler.lean`: a lightweight local compiler theorem for the concrete ready-bridge seam: once the concrete governance sources reconcile, the concrete registry resolution plus policy/state fields compile to the exact grouped `SignedRegistryExecutionMetadataPacketV1` language instead of rebuilding that packet ad hoc inside the ready-bridge helper.
 - `MPRD_SignedRegistryExecutionMetadataPacketBoundary.lean`: a lightweight local theorem for the grouped signed-registry execution metadata packet: the grouped `SignedRegistryExecutionMetadataPacketV1` language is extensionally equal to a separate loose two-field language carrying the exact execution-authorization metadata packet plus the exact signed-registry bridge metadata packet.
 - `MPRD_SignedRegistryExecutionRefinementPacketBoundary.lean`: a lightweight local theorem for the grouped signed-registry execution refinement packet: the grouped `SignedRegistryExecutionRefinementPacketV1` language is extensionally equal to a separate loose four-field language carrying the exact grouped ready packet, binding-vector packet, refinement packet, and signed-registry execution metadata packet.
 - `MPRD_SignedRegistryExecutionRefinementWitnessCompiler.lean`: a lightweight local compiler theorem for the grouped signed-registry execution refinement packet: once that grouped packet language exists, there is one canonical abstract `ExecutionReadyPacket` refinement witness shape for the next proof step.
@@ -101,6 +102,7 @@ lake env lean MPRD_GovernanceExecutionBridge.lean
 lake env lean MPRD_SignedRegistryCheckpointBridge.lean
 lake env lean MPRD_SignedRegistryBridgeMetadataPacketBoundary.lean
 lake env lean MPRD_SignedRegistryExecutionBoundaryRefinement.lean
+lake env lean MPRD_RegistryGovernanceExecutionMetadataCompiler.lean
 lake env lean MPRD_SignedRegistryExecutionMetadataPacketBoundary.lean
 lake env lean MPRD_SignedRegistryExecutionRefinementPacketBoundary.lean
 lake env lean MPRD_SignedRegistryExecutionRefinementWitnessCompiler.lean
