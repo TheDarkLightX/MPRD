@@ -15,6 +15,7 @@
 -/
 
 import MPRD_SignedRegistryServeAttestationHashArtifactBoundary
+import MPRD_SignedRegistryServeAttestationHashExactPacketRefinement
 import MPRD_SignedRegistryServeIdempotentHttpBoundary
 
 namespace MPRDSignedRegistryServeAttestationHashReadyPacketIdempotentHttpRefinement
@@ -122,15 +123,11 @@ theorem compatible_succeeded_reachable_states_refine_to_execution_boundary_and_i
       hRegistryAuthHash, hGovernance, hBridgeWitness, hVerified, hAllowed,
       hBinding, hExecutor, _hBoundary, _hSignature, _hStateProv, _hReplay⟩
   rcases
-      MPRDSignedRegistryServeAttestationHashArtifactBoundary.executed_reachable_states_require_signed_registry_serve_attestation_hash_packet_view
+      MPRDSignedRegistryServeAttestationHashExactPacketRefinement.executed_signed_registry_serve_attestation_hash_states_refine_to_execution_boundary
         hReachServe hServeExecuted with
-    ⟨hPacketReach, hPacketExec⟩
-  rcases
-      MPRDSignedRegistryExecutionArtifactRuntimeRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary_from_generic_artifact_witness
-        hPacketReach hPacketExec
-        (MPRDSignedRegistryServeAttestationHashArtifactBoundary.executed_reachable_states_require_signed_registry_serve_attestation_hash_artifact_boundary
-          hReachServe hServeExecuted) with
+    ⟨_hPacketReach, _hPacketExec,
     ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
+    ⟩
   rcases
       MPRDSignedRegistryServeIdempotentHttpBoundary.succeeded_reachable_states_require_signed_registry_serve_idempotent_http_boundary
         hReachHttp hHttpExec with
