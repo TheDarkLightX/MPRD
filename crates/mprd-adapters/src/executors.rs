@@ -1838,10 +1838,30 @@ mod tests {
         proof: &'a mut ProofBundle,
     ) -> mprd_core::ExecutionReadyBundle<'a> {
         let ready = ready_with_governance(token, proof);
+        let resolution_hash = mprd_core::registry_authorization_attestation_hash_from_fields_v1(
+            &token.policy_hash,
+            &mprd_core::artifact_repo::Id32([0xAA; 32]),
+            &mprd_core::artifact_repo::Id32([0xAB; 32]),
+            &mprd_core::artifact_repo::Id32([0xAC; 32]),
+            Some(&mprd_core::artifact_repo::Id32([0xAD; 32])),
+            Some(&Hash32([0xAE; 32])),
+        )
+        .expect("resolution hash");
+        let registry_authorization = mprd_core::registry_authorization_witness_v1(
+            resolution_hash,
+            mprd_core::artifact_repo::Id32([0xAA; 32]),
+            mprd_core::artifact_repo::Id32([0xAB; 32]),
+            mprd_core::artifact_repo::Id32([0xAC; 32]),
+            Some(mprd_core::artifact_repo::Id32([0xAD; 32])),
+            Some(Hash32([0xAE; 32])),
+        )
+        .expect("registry authorization");
         let bridge = mprd_core::execution_registry_bridge_witness_v1(
-            Hash32([0xAA; 32]),
+            &token.policy_hash,
+            registry_authorization,
             Some(Hash32([0xBB; 32])),
-        );
+        )
+        .expect("registry bridge witness");
         mprd_core::prepare_execution_ready_with_registry_bridge(&ready, bridge)
             .expect("prepare_execution_ready_with_registry_bridge")
     }
@@ -2018,6 +2038,8 @@ mod tests {
         let mut proof = dummy_proof();
         let ready = ready_with_governance_and_bridge(&token, &mut proof);
         let action_preimage = require_ready_action_preimage(&ready);
+        let expected_registry_authorization_hash =
+            hex::encode(ready.bridge().expect("bridge").registry_authorization_hash().0);
 
         let payload = execute_payload_from_parts(
             ready.token(),
@@ -2035,7 +2057,7 @@ mod tests {
         assert_eq!(payload.governance_link_ok, Some(true));
         assert_eq!(
             payload.registry_authorization_hash.as_deref(),
-            Some(hex::encode([0xAA; 32]).as_str())
+            Some(expected_registry_authorization_hash.as_str())
         );
         assert_eq!(
             payload.registry_checkpoint_attestation_hash.as_deref(),
@@ -2049,6 +2071,8 @@ mod tests {
         let mut proof = dummy_proof();
         let ready = ready_with_governance_and_bridge(&token, &mut proof);
         let action_preimage = require_ready_action_preimage(&ready);
+        let expected_registry_authorization_hash =
+            hex::encode(ready.bridge().expect("bridge").registry_authorization_hash().0);
 
         let payload = webhook_payload_from_parts(
             ready.token(),
@@ -2085,7 +2109,7 @@ mod tests {
             payload
                 .get("registry_authorization_hash")
                 .and_then(serde_json::Value::as_str),
-            Some(hex::encode([0xAA; 32]).as_str())
+            Some(expected_registry_authorization_hash.as_str())
         );
         assert_eq!(
             payload
@@ -2103,9 +2127,10 @@ mod tests {
         let executor = FileExecutor::new(&path).unwrap();
         let token = dummy_token();
         let mut proof = dummy_proof();
-        let result = executor
-            .execute_ready(&ready_with_governance_and_bridge(&token, &mut proof))
-            .unwrap();
+        let ready = ready_with_governance_and_bridge(&token, &mut proof);
+        let expected_registry_authorization_hash =
+            hex::encode(ready.bridge().expect("bridge").registry_authorization_hash().0);
+        let result = executor.execute_ready(&ready).unwrap();
 
         assert!(result.success);
         let line = std::fs::read_to_string(&path).expect("read audit file");
@@ -2138,7 +2163,7 @@ mod tests {
             record
                 .get("registry_authorization_hash")
                 .and_then(serde_json::Value::as_str),
-            Some(hex::encode([0xAA; 32]).as_str())
+            Some(expected_registry_authorization_hash.as_str())
         );
         assert_eq!(
             record
