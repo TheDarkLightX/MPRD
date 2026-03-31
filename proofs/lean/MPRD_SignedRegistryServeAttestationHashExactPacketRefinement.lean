@@ -7,8 +7,9 @@
     * the attestation-hash tightening, and
     * the grouped exact ready-packet admissions.
 
-  This composes the richer shipped-path model through the exact signed-registry
-  packet lane and then into the abstract `MPRD_ExecutionBoundary` theorem
+  This composes the richer shipped-path model through the grouped
+  signed-registry execution artifact lane and its direct runtime-witness
+  compiler, and then into the abstract `MPRD_ExecutionBoundary` theorem
   without a separate witness premise at this top-level model.
 -/
 
@@ -40,13 +41,11 @@ theorem executed_signed_registry_serve_attestation_hash_states_refine_to_executi
       MPRDExecutionReadyPacketBoundary.Executed (packetViewOfServeState s) ∧
         (∃ t : MPRDExecutionBoundary.State,
           t.ctx.bindings =
-              (MPRDSignedRegistryExecutionExactPacketWitnessCompiler.compileRuntimeWitness
-                (MPRDSignedRegistryExecutionArtifactRuntimeRefinement.compileExactPacket
-                  (artifactOfServeState s))).bindings ∧
+              (MPRDSignedRegistryExecutionArtifactRuntimeRefinement.compileRuntimeWitness
+                (artifactOfServeState s)).bindings ∧
             t.ctx.executorGate =
-              (MPRDSignedRegistryExecutionExactPacketWitnessCompiler.compileRuntimeWitness
-                (MPRDSignedRegistryExecutionArtifactRuntimeRefinement.compileExactPacket
-                  (artifactOfServeState s))).executorGate ∧
+              (MPRDSignedRegistryExecutionArtifactRuntimeRefinement.compileRuntimeWitness
+                (artifactOfServeState s)).executorGate ∧
               MPRDExecutionBoundary.Reachable t ∧
                 MPRDExecutionBoundary.Executed t ∧
                   MPRDExecutionBoundary.ExecutedImpliesFullBoundaryGate t) := by

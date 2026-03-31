@@ -2,13 +2,13 @@
   MPRD_SignedRegistryExecutionArtifactRuntimeRefinement.lean
 
   A lightweight compiler/refinement bridge from the grouped signed-registry
-  execution artifact language into the exact signed-registry packet lane.
+  execution artifact language into the grouped runtime refinement-witness lane.
 
   This is intentionally narrower than a full runtime-to-formal refinement
   theorem. It closes one more local seam: once the shipped grouped runtime
   artifact exists and its grouped `ExecutionReadyPacketV1` admissions hold, the
   next refinement step can consume one canonical artifact language instead of a
-  manually reconstructed exact packet.
+  manually reconstructed exact packet or a hand-built runtime witness.
 -/
 
 import MPRD_ExecutionBindingVectorPacketBoundary
@@ -21,6 +21,8 @@ namespace MPRDSignedRegistryExecutionArtifactRuntimeRefinement
 def proof_bundle_version : String := "mprd-leanproofs-v1"
 
 abbrev PacketState := MPRDExecutionReadyPacketBoundary.State
+abbrev RuntimeWitness :=
+  MPRDExecutionReadyRefinementWitnessCompiler.RuntimeRefinementWitness
 abbrev ExactPacket :=
   MPRDSignedRegistryExecutionExactPacketWitnessCompiler.SignedRegistryExecutionExactPacket
 abbrev ExecutionReadyPacket :=
@@ -64,6 +66,54 @@ def compileExactPacket (a : SignedRegistryExecutionArtifact) : ExactPacket :=
       { executionAuthorizationMetadataPresent := a.signedRegistryExecutionMetadata.isSome
         signedRegistryBridgeMetadataPresent := a.signedRegistryExecutionMetadata.isSome } }
 
+def compileBindings (a : SignedRegistryExecutionArtifact) :
+    MPRDExecutionBoundary.BindingVector :=
+  -- This local artifact lane only tracks exact-tuple presence, so every
+  -- concrete binding bit is compiled from the same grouped witness surface.
+  { journalAllowed := a.executionBindingVector.isSome
+    limitsHashMatches := a.executionBindingVector.isSome
+    decisionCommitmentValid := a.executionBindingVector.isSome
+    policyHashMatches := a.executionBindingVector.isSome
+    policyEpochMatches := a.executionBindingVector.isSome
+    registryRootMatches := a.executionBindingVector.isSome
+    stateSourceMatches := a.executionBindingVector.isSome
+    stateEpochMatches := a.executionBindingVector.isSome
+    stateAttestationMatches := a.executionBindingVector.isSome
+    stateHashMatches := a.executionBindingVector.isSome
+    candidateSetHashMatches := a.executionBindingVector.isSome
+    chosenActionHashMatches := a.executionBindingVector.isSome
+    nonceMatches := a.executionBindingVector.isSome }
+
+def compileExecutorGate (a : SignedRegistryExecutionArtifact) :
+    MPRDExecutionBoundary.ExecutorGate :=
+  -- Boundary admissions carry the execute-ready preimage bits; the grouped
+  -- binding-vector presence stands in for the remaining hash/schema checks.
+  { preimagePresent := a.executionReady.boundary.chosenActionPreimagePresent
+    limitsBytesBindingOk := a.executionReady.boundary.limitsBindingPresent
+    actionPreimageHashMatches := a.executionBindingVector.isSome
+    schemaValid := a.executionBindingVector.isSome }
+
+def compileRuntimeWitness (a : SignedRegistryExecutionArtifact) :
+    RuntimeWitness :=
+  { governanceAdmitted :=
+      match a.executionReady.authorization with
+      | some authorization => authorization.governancePresent
+      | none => false
+    signatureAdmitted :=
+      match a.executionReady.executorAdmission with
+      | some admission => admission.signaturePresent
+      | none => false
+    stateProvenanceAdmitted :=
+      match a.executionReady.executorAdmission with
+      | some admission => admission.stateProvenancePresent
+      | none => false
+    replayAdmitted :=
+      match a.executionReady.executorAdmission with
+      | some admission => admission.replayClearancePresent
+      | none => false
+    bindings := compileBindings a
+    executorGate := compileExecutorGate a }
+
 theorem compiled_exact_packet_holds
     {a : SignedRegistryExecutionArtifact}
     (h : ArtifactHolds a) :
@@ -84,6 +134,32 @@ theorem compiled_exact_packet_holds
     exact ⟨admission, by simpa [compileExactPacket] using hAdmissionSome, hAdmissionHolds⟩
   · simp [compileExactPacket, hBindingVector, hRefinement, hMetadata]
 
+theorem compile_runtime_witness_matches_exact_packet_compiler
+    (a : SignedRegistryExecutionArtifact) :
+    compileRuntimeWitness a =
+      MPRDSignedRegistryExecutionExactPacketWitnessCompiler.compileRuntimeWitness
+        (compileExactPacket a) := by
+  cases a
+  rfl
+
+theorem compiled_runtime_witness_holds
+    {a : SignedRegistryExecutionArtifact}
+    (h : ArtifactHolds a) :
+    MPRDExecutionReadyRefinementWitnessCompiler.RuntimeRefinementWitnessHolds
+      (compileRuntimeWitness a) := by
+  have hExact :
+      MPRDSignedRegistryExecutionExactPacketWitnessCompiler.executionWitnessRelevantHolds
+        (compileExactPacket a) := by
+    exact compiled_exact_packet_holds h
+  have hCompiled :
+      MPRDExecutionReadyRefinementWitnessCompiler.RuntimeRefinementWitnessHolds
+        (MPRDSignedRegistryExecutionExactPacketWitnessCompiler.compileRuntimeWitness
+          (compileExactPacket a)) := by
+    exact
+      MPRDSignedRegistryExecutionExactPacketWitnessCompiler.compiled_runtime_witness_holds
+        hExact
+  simpa [compile_runtime_witness_matches_exact_packet_compiler a] using hCompiled
+
 theorem executed_execution_ready_packet_states_refine_to_execution_boundary_from_artifact
     {s : PacketState}
     (hReach : MPRDExecutionReadyPacketBoundary.Reachable s)
@@ -91,18 +167,15 @@ theorem executed_execution_ready_packet_states_refine_to_execution_boundary_from
     {a : SignedRegistryExecutionArtifact}
     (hArtifact : ArtifactHolds a) :
     ∃ t : MPRDExecutionBoundary.State,
-      t.ctx.bindings =
-          (MPRDSignedRegistryExecutionExactPacketWitnessCompiler.compileRuntimeWitness
-            (compileExactPacket a)).bindings ∧
-        t.ctx.executorGate =
-            (MPRDSignedRegistryExecutionExactPacketWitnessCompiler.compileRuntimeWitness
-              (compileExactPacket a)).executorGate ∧
+      t.ctx.bindings = (compileRuntimeWitness a).bindings ∧
+        t.ctx.executorGate = (compileRuntimeWitness a).executorGate ∧
           MPRDExecutionBoundary.Reachable t ∧
             MPRDExecutionBoundary.Executed t ∧
               MPRDExecutionBoundary.ExecutedImpliesFullBoundaryGate t := by
-  exact
-    MPRDSignedRegistryExecutionExactPacketRuntimeRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary
-      hReach hExec (compiled_exact_packet_holds hArtifact)
+  simpa [MPRDExecutionReadyRefinementWitnessCompiler.compileWitness, compileRuntimeWitness]
+    using
+      MPRDExecutionReadyRuntimeRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary
+        hReach hExec (compiled_runtime_witness_holds hArtifact)
 
 end MPRDSignedRegistryExecutionArtifactRuntimeRefinement
 
