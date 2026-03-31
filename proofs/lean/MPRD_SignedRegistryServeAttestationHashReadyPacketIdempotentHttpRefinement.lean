@@ -9,11 +9,12 @@
     same successful execution, the composed state carries both:
 
       * the stronger serve facts plus the abstract execution-boundary witness,
-        through the exact signed-registry packet refinement lane, and
+        through the grouped signed-registry execution artifact lane and the
+        smaller generic execute-ready artifact witness, and
       * the concrete pending/committed HTTP barrier facts.
 -/
 
-import MPRD_SignedRegistryServeAttestationHashExactPacketRefinement
+import MPRD_SignedRegistryServeAttestationHashArtifactBoundary
 import MPRD_SignedRegistryServeIdempotentHttpBoundary
 
 namespace MPRDSignedRegistryServeAttestationHashReadyPacketIdempotentHttpRefinement
@@ -24,14 +25,13 @@ abbrev ServeState :=
   MPRDSignedRegistryServeAttestationHashReadyPacketBoundary.State
 abbrev HttpState := MPRDSignedRegistryServeIdempotentHttpBoundary.State
 abbrev packetViewOfServeState :=
-  MPRDSignedRegistryServeAttestationHashExactPacketRefinement.packetViewOfServeState
+  MPRDSignedRegistryServeAttestationHashArtifactBoundary.packetViewOfServeState
 abbrev artifactOfServeState :=
-  MPRDSignedRegistryServeAttestationHashExactPacketRefinement.artifactOfServeState
+  MPRDSignedRegistryServeAttestationHashArtifactBoundary.artifactOfServeState
 
 abbrev runtimeWitnessOfServeState (s : ServeState) :=
-  MPRDSignedRegistryExecutionExactPacketWitnessCompiler.compileRuntimeWitness
-    (MPRDSignedRegistryExecutionArtifactRuntimeRefinement.compileExactPacket
-      (artifactOfServeState s))
+  MPRDSignedRegistryExecutionArtifactRuntimeRefinement.compileRuntimeWitness
+    (artifactOfServeState s)
 
 def ExecCompatible
     (s : MPRDSignedRegistryServeAttestationHashReadyPacketBoundary.ExecStatus)
@@ -122,10 +122,15 @@ theorem compatible_succeeded_reachable_states_refine_to_execution_boundary_and_i
       hRegistryAuthHash, hGovernance, hBridgeWitness, hVerified, hAllowed,
       hBinding, hExecutor, _hBoundary, _hSignature, _hStateProv, _hReplay⟩
   rcases
-      MPRDSignedRegistryServeAttestationHashExactPacketRefinement.executed_signed_registry_serve_attestation_hash_states_refine_to_execution_boundary
+      MPRDSignedRegistryServeAttestationHashArtifactBoundary.executed_reachable_states_require_signed_registry_serve_attestation_hash_packet_view
         hReachServe hServeExecuted with
-    ⟨_hPacketReach, _hPacketExec,
-      ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩⟩
+    ⟨hPacketReach, hPacketExec⟩
+  rcases
+      MPRDSignedRegistryExecutionArtifactRuntimeRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary_from_generic_artifact_witness
+        hPacketReach hPacketExec
+        (MPRDSignedRegistryServeAttestationHashArtifactBoundary.executed_reachable_states_require_signed_registry_serve_attestation_hash_artifact_boundary
+          hReachServe hServeExecuted) with
+    ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
   rcases
       MPRDSignedRegistryServeIdempotentHttpBoundary.succeeded_reachable_states_require_signed_registry_serve_idempotent_http_boundary
         hReachHttp hHttpExec with
