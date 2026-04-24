@@ -37,6 +37,9 @@ OPTIONAL_BLOCKING_DECISIONS = {
     "reject_optional_parallel_lane",
     "reject_next_guided_candidate_for_now",
 }
+OPTIONAL_STABLE_DECISIONS = {
+    "stable_optional_lane",
+}
 HARNESS_SOURCE_HINTS = {
     "orchestrator_ordering_symbolic": [
         "internal/experiments/concolic_20260405/src/bin/orchestrator-ordering-kani.rs",
@@ -333,6 +336,7 @@ def check_optional_receipts(surface: dict[str, Any]) -> tuple[list[dict[str, Any
             "git_head": receipt.get("git_head"),
             "decision": decision,
             "next_guidance_decision": next_guidance,
+            "stabilizes_optional_lane": decision in OPTIONAL_STABLE_DECISIONS,
             "blocking": bool(reasons),
             "reasons": reasons,
         }
@@ -433,13 +437,25 @@ def check_surface(surface: dict[str, Any]) -> dict[str, Any]:
     problems.extend(blocker_problems)
     optional_receipt_summaries, optional_research_blockers = check_optional_receipts(surface)
 
-    optional_status = surface.get("optional_parallel_status")
+    atlas_optional_status = surface.get("optional_parallel_status")
+    has_stable_optional_receipt = any(
+        receipt.get("stabilizes_optional_lane")
+        for receipt in optional_receipt_summaries
+        if receipt.get("exists") and not receipt.get("blocking")
+    )
+    optional_status = (
+        "stable_optional_lane"
+        if atlas_optional_status == "mixed_optional_lane" and has_stable_optional_receipt
+        else atlas_optional_status
+    )
     optional_research_block = optional_status == "mixed_optional_lane" or bool(optional_research_blockers)
     return {
         "surface_id": surface["surface_id"],
         "mandatory_ok": not problems,
         "problems": problems,
+        "atlas_optional_status": atlas_optional_status,
         "optional_status": optional_status,
+        "has_stable_optional_receipt": has_stable_optional_receipt,
         "optional_research_block": optional_research_block,
         "optional_research_blockers": optional_research_blockers,
         "receipts": receipt_summaries,
