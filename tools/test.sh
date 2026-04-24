@@ -13,6 +13,9 @@ Commands:
   core       Run mprd-core tests
   proof      Run mprd-proof tests
   cli        Run mprd-cli tests
+  disaster-loop Run bounded neuro-symbolic disaster-state witness loop (compact JSON by default)
+  disaster-gate Run disaster loop and fail unless the bounded research gate is open
+  disaster-selftest Run disaster-loop fail-closed logic self-tests
   zk         Run mprd-zk tests (can be slow)
   all        Run full workspace tests (can be slow)
   pbt-core   Run mprd-core with higher PROPTEST_CASES (default 256)
@@ -39,6 +42,15 @@ case "$subcmd" in
     ;;
   cli)
     cargo test -p mprd-cli "$@"
+    ;;
+  disaster-loop)
+    python3 tools/run_neuro_symbolic_disaster_loop.py "$@"
+    ;;
+  disaster-gate)
+    python3 tools/run_neuro_symbolic_disaster_loop.py --strict-research-gate "$@"
+    ;;
+  disaster-selftest)
+    python3 tools/run_neuro_symbolic_disaster_loop.py --self-test "$@"
     ;;
   zk)
     cargo test -p mprd-zk "$@"
