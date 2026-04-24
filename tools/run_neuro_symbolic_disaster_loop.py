@@ -40,6 +40,9 @@ OPTIONAL_BLOCKING_DECISIONS = {
 OPTIONAL_STABLE_DECISIONS = {
     "stable_optional_lane",
 }
+RECEIPT_GIT_DRIFT_COMPATIBLE_PATHS = {
+    "tools/run_neuro_symbolic_disaster_loop.py",
+}
 HARNESS_SOURCE_HINTS = {
     "orchestrator_ordering_symbolic": [
         "internal/experiments/concolic_20260405/src/bin/orchestrator-ordering-kani.rs",
@@ -179,6 +182,35 @@ BLOCKER_STATE_MUTATIONS: tuple[tuple[str, str], ...] = (
 )
 
 
+OPTIONAL_CONFLICT_MUTATIONS: tuple[tuple[str, str, str], ...] = (
+    (
+        "atlas_mixed_stable_receipt",
+        "researchable_under_current_bounded_receipts",
+        "the atlas still says mixed, but the newest optional stability receipt is stable",
+    ),
+    (
+        "atlas_stable_reject_receipt",
+        "blocked_for_promotion_due_optional_instability",
+        "the atlas says stable, but an optional receipt rejects the lane",
+    ),
+    (
+        "stable_receipt_rejects_next_guidance",
+        "blocked_for_promotion_due_optional_instability",
+        "the optional receipt decision is stable, but its next-guidance decision rejects",
+    ),
+    (
+        "stable_and_blocking_optional_receipts",
+        "blocked_for_promotion_due_optional_instability",
+        "one optional receipt is stable while another optional receipt still blocks",
+    ),
+    (
+        "atlas_stable_missing_optional_receipt",
+        "blocked_for_promotion_due_optional_instability",
+        "the atlas says stable, but an optional receipt path is missing",
+    ),
+)
+
+
 @dataclass(frozen=True)
 class Hypothesis:
     hypothesis_id: str
@@ -211,6 +243,25 @@ def git_head() -> str:
         text=True,
     )
     return proc.stdout.strip()
+
+
+def receipt_git_drift(receipt_git_head: str, current_git_head: str) -> tuple[bool, list[str]]:
+    if receipt_git_head == current_git_head:
+        return True, []
+    proc = subprocess.run(
+        ["git", "diff", "--name-only", f"{receipt_git_head}..{current_git_head}"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return False, []
+    changed_paths = sorted(line.strip() for line in proc.stdout.splitlines() if line.strip())
+    compatible = bool(changed_paths) and all(
+        path in RECEIPT_GIT_DRIFT_COMPATIBLE_PATHS for path in changed_paths
+    )
+    return compatible, changed_paths
 
 
 def load_text(path: Path) -> str:
@@ -906,6 +957,138 @@ def mutate_blocker_check(check: dict[str, Any], mutation_id: str) -> dict[str, A
     return mutated
 
 
+def synthetic_optional_receipt(
+    surface_id: str,
+    mutation_id: str,
+    *,
+    decision: str | None,
+    next_guidance_decision: str | None = None,
+    exists: bool = True,
+    blocking: bool = False,
+) -> dict[str, Any]:
+    reasons = []
+    if not exists:
+        reasons.append("missing_receipt")
+    if decision in OPTIONAL_BLOCKING_DECISIONS:
+        reasons.append(f"decision:{decision}")
+    if next_guidance_decision in OPTIONAL_BLOCKING_DECISIONS:
+        reasons.append(f"next_guidance_decision:{next_guidance_decision}")
+    if blocking and not reasons:
+        reasons.append("synthetic_optional_conflict_block")
+    return {
+        "path": f"synthetic://{surface_id}/{mutation_id}",
+        "exists": exists,
+        "schema": "mprd/synthetic-optional-conflict/v1" if exists else None,
+        "git_head": None,
+        "decision": decision,
+        "next_guidance_decision": next_guidance_decision,
+        "stabilizes_optional_lane": decision in OPTIONAL_STABLE_DECISIONS,
+        "blocking": bool(reasons),
+        "reasons": reasons,
+    }
+
+
+def mutate_optional_conflict_check(check: dict[str, Any], mutation_id: str) -> dict[str, Any]:
+    mutated = deepcopy(check)
+    surface_id = mutated["surface_id"]
+    mutated["optional_research_blockers"] = []
+    mutated["optional_receipts"] = []
+
+    if mutation_id == "atlas_mixed_stable_receipt":
+        mutated["atlas_optional_status"] = "mixed_optional_lane"
+        mutated["optional_status"] = "stable_optional_lane"
+        mutated["has_stable_optional_receipt"] = True
+        mutated["optional_research_block"] = False
+        mutated["optional_receipts"] = [
+            synthetic_optional_receipt(
+                surface_id,
+                mutation_id,
+                decision="stable_optional_lane",
+            )
+        ]
+        return mutated
+
+    if mutation_id == "atlas_stable_reject_receipt":
+        blocker = (
+            f"decision:reject_optional_parallel_lane:synthetic://{surface_id}/{mutation_id}"
+        )
+        mutated["atlas_optional_status"] = "stable_optional_lane"
+        mutated["optional_status"] = "stable_optional_lane"
+        mutated["has_stable_optional_receipt"] = False
+        mutated["optional_research_block"] = True
+        mutated["optional_research_blockers"] = [blocker]
+        mutated["optional_receipts"] = [
+            synthetic_optional_receipt(
+                surface_id,
+                mutation_id,
+                decision="reject_optional_parallel_lane",
+            )
+        ]
+        return mutated
+
+    if mutation_id == "stable_receipt_rejects_next_guidance":
+        blocker = (
+            f"next_guidance_decision:reject_next_guided_candidate_for_now:"
+            f"synthetic://{surface_id}/{mutation_id}"
+        )
+        mutated["atlas_optional_status"] = "mixed_optional_lane"
+        mutated["optional_status"] = "mixed_optional_lane"
+        mutated["has_stable_optional_receipt"] = False
+        mutated["optional_research_block"] = True
+        mutated["optional_research_blockers"] = [blocker]
+        mutated["optional_receipts"] = [
+            synthetic_optional_receipt(
+                surface_id,
+                mutation_id,
+                decision="stable_optional_lane",
+                next_guidance_decision="reject_next_guided_candidate_for_now",
+            )
+        ]
+        return mutated
+
+    if mutation_id == "stable_and_blocking_optional_receipts":
+        blocker = (
+            f"decision:mixed_optional_lane:synthetic://{surface_id}/{mutation_id}/blocking"
+        )
+        mutated["atlas_optional_status"] = "mixed_optional_lane"
+        mutated["optional_status"] = "stable_optional_lane"
+        mutated["has_stable_optional_receipt"] = True
+        mutated["optional_research_block"] = True
+        mutated["optional_research_blockers"] = [blocker]
+        mutated["optional_receipts"] = [
+            synthetic_optional_receipt(
+                surface_id,
+                f"{mutation_id}/stable",
+                decision="stable_optional_lane",
+            ),
+            synthetic_optional_receipt(
+                surface_id,
+                f"{mutation_id}/blocking",
+                decision="mixed_optional_lane",
+            ),
+        ]
+        return mutated
+
+    if mutation_id == "atlas_stable_missing_optional_receipt":
+        blocker = f"optional_missing_receipt:synthetic://{surface_id}/{mutation_id}"
+        mutated["atlas_optional_status"] = "stable_optional_lane"
+        mutated["optional_status"] = "stable_optional_lane"
+        mutated["has_stable_optional_receipt"] = False
+        mutated["optional_research_block"] = True
+        mutated["optional_research_blockers"] = [blocker]
+        mutated["optional_receipts"] = [
+            synthetic_optional_receipt(
+                surface_id,
+                mutation_id,
+                decision=None,
+                exists=False,
+            )
+        ]
+        return mutated
+
+    raise ValueError(f"unknown optional conflict mutation: {mutation_id}")
+
+
 def evaluate_receipt_state_mutations(
     surfaces: dict[str, dict[str, Any]], checks: dict[str, dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -959,6 +1142,45 @@ def evaluate_blocker_state_mutations(
                 "mutation_class": "blocker",
                 "description": description,
                 "fail_closed_observed": result["verdict"] == "UNKNOWN_BLOCKED",
+            }
+            results.append(result)
+    return results
+
+
+def evaluate_optional_conflict_state_mutations(
+    surfaces: dict[str, dict[str, Any]], checks: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for surface_id, surface in sorted(surfaces.items()):
+        check = checks[surface_id]
+        has_optional_lane = (
+            check.get("optional_receipts")
+            or check.get("atlas_optional_status") is not None
+            or check.get("optional_status") is not None
+        )
+        if not check.get("mandatory_ok") or not has_optional_lane:
+            continue
+        for mutation_id, expected_researchability, description in OPTIONAL_CONFLICT_MUTATIONS:
+            mutated_checks = dict(checks)
+            mutated_checks[surface_id] = mutate_optional_conflict_check(check, mutation_id)
+            hypothesis = Hypothesis(
+                hypothesis_id=f"synthetic-optional-conflict::{surface_id}::{mutation_id}",
+                kind="synthetic_optional_conflict_state_mutation",
+                surfaces=(surface_id,),
+                danger_states=tuple(surface.get("danger_states", [])),
+                what_if=(
+                    f"What if `{surface_id}` saw this synthetic optional-lane "
+                    f"source-of-truth conflict: {description}?"
+                ),
+            )
+            result = evaluate(hypothesis, mutated_checks)
+            observed = result["researchability"] == expected_researchability
+            result["synthetic_mutation"] = {
+                "mutation_id": mutation_id,
+                "mutation_class": "optional_conflict",
+                "description": description,
+                "expected_researchability": expected_researchability,
+                "expected_outcome_observed": observed,
             }
             results.append(result)
     return results
@@ -1069,6 +1291,26 @@ def summarize_synthetic_provenance_mutations(results: list[dict[str, Any]]) -> d
     }
 
 
+def summarize_synthetic_optional_conflict_mutations(
+    results: list[dict[str, Any]]
+) -> dict[str, Any]:
+    summary = summarize(results)
+    failures = [
+        result["hypothesis_id"]
+        for result in results
+        if not result.get("synthetic_mutation", {}).get("expected_outcome_observed", False)
+    ]
+    expected_counts: dict[str, int] = {}
+    for result in results:
+        expected = result["synthetic_mutation"]["expected_researchability"]
+        expected_counts[expected] = expected_counts.get(expected, 0) + 1
+    summary["expected_researchability_counts"] = expected_counts
+    summary["expected_outcome_observed"] = len(results) - len(failures)
+    summary["expectation_failures"] = len(failures)
+    summary["failure_ids"] = failures
+    return summary
+
+
 def summarize_optional_evidence(checks: dict[str, dict[str, Any]]) -> dict[str, Any]:
     blocked = []
     for surface_id, check in sorted(checks.items()):
@@ -1164,6 +1406,7 @@ def summarize_receipt_provenance(
             "exists": 0,
             "with_git_head": 0,
             "matching_git_head": 0,
+            "compatible_git_head_drift": 0,
             "mismatched_git_head": 0,
             "missing_git_head": 0,
         }
@@ -1173,6 +1416,7 @@ def summarize_receipt_provenance(
         "mandatory": empty(),
         "optional": empty(),
         "mismatches": [],
+        "compatible_git_head_drifts": [],
         "missing_git_head_receipts": [],
     }
 
@@ -1187,15 +1431,20 @@ def summarize_receipt_provenance(
             if git == current_git_head:
                 bucket["matching_git_head"] += 1
             else:
-                bucket["mismatched_git_head"] += 1
-                summary["mismatches"].append(
-                    {
-                        "surface_id": surface_id,
-                        "channel": channel,
-                        "path": receipt.get("path"),
-                        "git_head": git,
-                    }
-                )
+                compatible, changed_paths = receipt_git_drift(git, current_git_head)
+                entry = {
+                    "surface_id": surface_id,
+                    "channel": channel,
+                    "path": receipt.get("path"),
+                    "git_head": git,
+                    "changed_paths": changed_paths,
+                }
+                if compatible:
+                    bucket["compatible_git_head_drift"] += 1
+                    summary["compatible_git_head_drifts"].append(entry)
+                else:
+                    bucket["mismatched_git_head"] += 1
+                    summary["mismatches"].append(entry)
         else:
             bucket["missing_git_head"] += 1
             summary["missing_git_head_receipts"].append(
@@ -1337,9 +1586,13 @@ def summarize_gate_status(
     receipt_provenance: dict[str, Any],
     frontier: dict[str, Any],
     synthetic_provenance_summary: dict[str, Any] | None = None,
+    synthetic_optional_conflict_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     synthetic_provenance_summary = synthetic_provenance_summary or {
         "fail_closed_failures": 0
+    }
+    synthetic_optional_conflict_summary = synthetic_optional_conflict_summary or {
+        "expectation_failures": 0
     }
     blockers = []
     if summary["reachable_disaster_witnesses"]:
@@ -1352,6 +1605,8 @@ def summarize_gate_status(
         blockers.append("synthetic_blocker_fail_closed_failure")
     if synthetic_provenance_summary["fail_closed_failures"]:
         blockers.append("synthetic_provenance_fail_closed_failure")
+    if synthetic_optional_conflict_summary["expectation_failures"]:
+        blockers.append("synthetic_optional_conflict_failure")
     if not frontier["simple_path_frontier_exhausted"]:
         blockers.append("composition_frontier_not_exhausted")
     if optional_evidence["surfaces_with_optional_research_block"]:
@@ -1377,8 +1632,16 @@ def summarize_gate_status(
             synthetic_summary["fail_closed_failures"] == 0
             and synthetic_blocker_summary["fail_closed_failures"] == 0
             and synthetic_provenance_summary["fail_closed_failures"] == 0
+            and synthetic_optional_conflict_summary["expectation_failures"] == 0
         ),
+        "synthetic_optional_conflict_ok": synthetic_optional_conflict_summary[
+            "expectation_failures"
+        ]
+        == 0,
         "receipt_git_head_mismatch_free": not receipt_provenance["has_git_head_mismatch"],
+        "receipt_git_head_compatible_drifts": len(
+            receipt_provenance.get("compatible_git_head_drifts", [])
+        ),
         "open_for_bounded_research": gate == "OPEN_FOR_BOUNDED_RESEARCH",
     }
 
@@ -1402,6 +1665,7 @@ def summarize_result_storage(
     synthetic_mutation_results: list[dict[str, Any]],
     synthetic_blocker_results: list[dict[str, Any]],
     synthetic_provenance_results: list[dict[str, Any]],
+    synthetic_optional_conflict_results: list[dict[str, Any]],
 ) -> dict[str, Any]:
     mode = "full" if full_results else "compact"
     return {
@@ -1423,6 +1687,9 @@ def summarize_result_storage(
             "synthetic_provenance_results": result_digest(
                 "synthetic_provenance_results", synthetic_provenance_results
             ),
+            "synthetic_optional_conflict_results": result_digest(
+                "synthetic_optional_conflict_results", synthetic_optional_conflict_results
+            ),
         },
     }
 
@@ -1432,6 +1699,7 @@ def sample_results(
     synthetic_mutation_results: list[dict[str, Any]],
     synthetic_blocker_results: list[dict[str, Any]],
     synthetic_provenance_results: list[dict[str, Any]],
+    synthetic_optional_conflict_results: list[dict[str, Any]],
     limit: int = 40,
 ) -> dict[str, Any]:
     blocked = [
@@ -1451,6 +1719,11 @@ def sample_results(
         for result in synthetic_provenance_results
         if not result.get("fail_closed_observed", False)
     ]
+    synthetic_optional_conflict_failures = [
+        result
+        for result in synthetic_optional_conflict_results
+        if not result.get("synthetic_mutation", {}).get("expected_outcome_observed", False)
+    ]
     return {
         "limit": limit,
         "blocked_results": blocked[:limit],
@@ -1458,6 +1731,7 @@ def sample_results(
         "unknown_results": unknown[:limit],
         "synthetic_fail_closed_failures": synthetic_failures[:limit],
         "synthetic_provenance_fail_closed_failures": synthetic_provenance_failures[:limit],
+        "synthetic_optional_conflict_failures": synthetic_optional_conflict_failures[:limit],
         "truncated": {
             "blocked_results": max(0, len(blocked) - limit),
             "reachable_results": max(0, len(reachable) - limit),
@@ -1465,6 +1739,9 @@ def sample_results(
             "synthetic_fail_closed_failures": max(0, len(synthetic_failures) - limit),
             "synthetic_provenance_fail_closed_failures": max(
                 0, len(synthetic_provenance_failures) - limit
+            ),
+            "synthetic_optional_conflict_failures": max(
+                0, len(synthetic_optional_conflict_failures) - limit
             ),
         },
     }
@@ -1486,6 +1763,7 @@ def stable_report_hash(report: dict[str, Any]) -> str:
         "synthetic_mutation_summary",
         "synthetic_blocker_summary",
         "synthetic_provenance_summary",
+        "synthetic_optional_conflict_summary",
         "optional_evidence_summary",
         "research_block_summary",
         "blocked_family_summary",
@@ -1566,6 +1844,21 @@ def self_test() -> int:
         "researchable_under_current_bounded_receipts",
     )
 
+    stable_override = {"safe": mutate_optional_conflict_check(fake_checks["safe"], "atlas_mixed_stable_receipt")}
+    assert_equal(
+        "optional conflict stable override",
+        classify_surface_ids(("safe",), stable_override)["researchability"],
+        "researchable_under_current_bounded_receipts",
+    )
+    blocking_conflict = {
+        "safe": mutate_optional_conflict_check(fake_checks["safe"], "atlas_stable_reject_receipt")
+    }
+    assert_equal(
+        "optional conflict blocking receipt",
+        classify_surface_ids(("safe",), blocking_conflict)["researchability"],
+        "blocked_for_promotion_due_optional_instability",
+    )
+
     fake_surfaces = {
         "safe": {"surface_id": "safe", "danger_states": ["s1", "s2"]},
         "optional": {"surface_id": "optional", "danger_states": ["o1", "o2", "o3"]},
@@ -1574,6 +1867,15 @@ def self_test() -> int:
     assert_equal("compressed total", compressed["totals"]["total"], 11)
     assert_equal("compressed researchable", compressed["totals"]["researchable"], 2)
     assert_equal("compressed optional blocked", compressed["totals"]["optional_blocked"], 9)
+
+    optional_conflicts = evaluate_optional_conflict_state_mutations(fake_surfaces, fake_checks)
+    optional_conflict_summary = summarize_synthetic_optional_conflict_mutations(optional_conflicts)
+    assert_equal("synthetic optional conflict count", optional_conflict_summary["hypotheses"], 5)
+    assert_equal(
+        "synthetic optional conflict expectations",
+        optional_conflict_summary["expectation_failures"],
+        0,
+    )
 
     family_summary = summarize_blocked_families(
         [
@@ -1682,6 +1984,7 @@ def self_test() -> int:
                     "blocked_family_summary",
                     "receipt_provenance",
                     "synthetic_provenance_mutation",
+                    "synthetic_optional_conflict_mutation",
                     "gate_status",
                     "missing_edge_fail_closed",
                 ],
@@ -1698,6 +2001,7 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     synthetic_summary = report["synthetic_mutation_summary"]
     synthetic_blocker_summary = report["synthetic_blocker_summary"]
     synthetic_provenance_summary = report["synthetic_provenance_summary"]
+    synthetic_optional_conflict_summary = report["synthetic_optional_conflict_summary"]
     optional_evidence = report["optional_evidence_summary"]
     research_blocks = report["research_block_summary"]
     blocked_family_summary = report["blocked_family_summary"]
@@ -1734,10 +2038,13 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         f"- Synthetic blocker fail-closed failures: `{synthetic_blocker_summary['fail_closed_failures']}`",
         f"- Synthetic provenance mutations checked: `{synthetic_provenance_summary['hypotheses']}`",
         f"- Synthetic provenance fail-closed failures: `{synthetic_provenance_summary['fail_closed_failures']}`",
+        f"- Synthetic optional-conflict mutations checked: `{synthetic_optional_conflict_summary['hypotheses']}`",
+        f"- Synthetic optional-conflict expectation failures: `{synthetic_optional_conflict_summary['expectation_failures']}`",
         f"- Optional-evidence blocked surfaces: `{optional_evidence['surfaces_with_optional_research_block']}`",
         f"- Dominant optional block: `{research_blocks['dominant_optional_block_surface']}` / `{research_blocks['dominant_optional_block_count']}`",
         f"- Blocked hypothesis families: `{blocked_family_summary['blocked_kind_count']}`",
         f"- Receipt git-head mismatches: `{len(provenance['mismatches'])}`",
+        f"- Receipt git-head compatible drifts: `{len(provenance['compatible_git_head_drifts'])}`",
         f"- Compressed independent frontier: `{compressed['totals']['total']}` what-ifs through order `{compressed['max_order']}`",
         f"- Result storage mode: `{result_storage['mode']}`",
         "",
@@ -1770,6 +2077,21 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     lines.append(f"- Fail-closed failures: `{synthetic_provenance_summary['fail_closed_failures']}`")
     for key, value in sorted(synthetic_provenance_summary["by_channel"].items()):
         lines.append(f"- `{key}`: `{value}`")
+    lines.extend(["", "## Synthetic Optional-Conflict Mutations", ""])
+    lines.append(f"- Checked: `{synthetic_optional_conflict_summary['hypotheses']}`")
+    lines.append(
+        f"- Expected outcomes observed: "
+        f"`{synthetic_optional_conflict_summary['expected_outcome_observed']}`"
+    )
+    lines.append(
+        f"- Expectation failures: `{synthetic_optional_conflict_summary['expectation_failures']}`"
+    )
+    for key, value in sorted(
+        synthetic_optional_conflict_summary["expected_researchability_counts"].items()
+    ):
+        lines.append(f"- expected `{key}`: `{value}`")
+    for key, value in sorted(synthetic_optional_conflict_summary["researchability_counts"].items()):
+        lines.append(f"- observed `{key}`: `{value}`")
     lines.extend(["", "## Frontier", ""])
     lines.append(f"- Surface count: `{frontier['surface_count']}`")
     lines.append(f"- Max simple path depth: `{frontier['max_simple_path_depth']}`")
@@ -1822,6 +2144,7 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         lines.append(
             f"- `{channel}` receipts: total `{bucket['total']}`, exists `{bucket['exists']}`, "
             f"with git head `{bucket['with_git_head']}`, matching `{bucket['matching_git_head']}`, "
+            f"compatible drift `{bucket['compatible_git_head_drift']}`, "
             f"mismatched `{bucket['mismatched_git_head']}`, missing git head `{bucket['missing_git_head']}`"
         )
     if provenance["mismatches"]:
@@ -1831,6 +2154,13 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
             )
     else:
         lines.append("- Git-head mismatches: none")
+    if provenance["compatible_git_head_drifts"]:
+        for item in provenance["compatible_git_head_drifts"][:20]:
+            changed = ", ".join(item["changed_paths"])
+            lines.append(
+                f"- compatible drift `{item['surface_id']}` `{item['channel']}` `{item['path']}` "
+                f"from `{item['git_head']}` via `{changed}`"
+            )
     lines.extend(["", "## Result Storage", ""])
     lines.append(f"- Mode: `{result_storage['mode']}`")
     lines.append(f"- Full results included: `{result_storage['full_results_included']}`")
@@ -1903,7 +2233,7 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         "chain-terminal, fan-out, convergence, re-entry, and cycle-amplification hypotheses over "
         "the current atlas/receipt witness space. It also summarizes the full independent "
         "co-reachability frontier through order 11 in compressed form and runs synthetic "
-        "receipt-state, blocker-state, and provenance-state mutation checks. "
+        "receipt-state, blocker-state, provenance-state, and optional-conflict mutation checks. "
         "It is not a global proof of safety."
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1960,9 +2290,13 @@ def main() -> int:
     results = [evaluate(hypothesis, checks) for hypothesis in hypotheses]
     synthetic_mutation_results = evaluate_receipt_state_mutations(surfaces, checks)
     synthetic_blocker_results = evaluate_blocker_state_mutations(surfaces, checks)
+    synthetic_optional_conflict_results = evaluate_optional_conflict_state_mutations(surfaces, checks)
     summary = summarize(results)
     synthetic_mutation_summary = summarize_synthetic_mutations(synthetic_mutation_results)
     synthetic_blocker_summary = summarize_synthetic_mutations(synthetic_blocker_results)
+    synthetic_optional_conflict_summary = summarize_synthetic_optional_conflict_mutations(
+        synthetic_optional_conflict_results
+    )
     optional_evidence_summary = summarize_optional_evidence(checks)
     research_block_summary = summarize_research_blocks(results, checks)
     blocked_family_summary = summarize_blocked_families(results)
@@ -1989,6 +2323,7 @@ def main() -> int:
         receipt_provenance_summary,
         frontier,
         synthetic_provenance_summary,
+        synthetic_optional_conflict_summary,
     )
     result_storage = summarize_result_storage(
         args.full_results,
@@ -1996,12 +2331,14 @@ def main() -> int:
         synthetic_mutation_results,
         synthetic_blocker_results,
         synthetic_provenance_results,
+        synthetic_optional_conflict_results,
     )
     result_sample_summary = sample_results(
         results,
         synthetic_mutation_results,
         synthetic_blocker_results,
         synthetic_provenance_results,
+        synthetic_optional_conflict_results,
     )
 
     report = {
@@ -2029,6 +2366,7 @@ def main() -> int:
         "synthetic_mutation_summary": synthetic_mutation_summary,
         "synthetic_blocker_summary": synthetic_blocker_summary,
         "synthetic_provenance_summary": synthetic_provenance_summary,
+        "synthetic_optional_conflict_summary": synthetic_optional_conflict_summary,
         "optional_evidence_summary": optional_evidence_summary,
         "research_block_summary": research_block_summary,
         "blocked_family_summary": blocked_family_summary,
@@ -2043,6 +2381,9 @@ def main() -> int:
         "synthetic_mutation_results": synthetic_mutation_results if args.full_results else [],
         "synthetic_blocker_results": synthetic_blocker_results if args.full_results else [],
         "synthetic_provenance_results": synthetic_provenance_results
+        if args.full_results
+        else [],
+        "synthetic_optional_conflict_results": synthetic_optional_conflict_results
         if args.full_results
         else [],
     }
@@ -2062,6 +2403,8 @@ def main() -> int:
     print(json.dumps(report["synthetic_blocker_summary"], indent=2, sort_keys=True))
     print("synthetic_provenance_summary:")
     print(json.dumps(report["synthetic_provenance_summary"], indent=2, sort_keys=True))
+    print("synthetic_optional_conflict_summary:")
+    print(json.dumps(report["synthetic_optional_conflict_summary"], indent=2, sort_keys=True))
     print("gate_summary:")
     print(json.dumps(report["gate_summary"], indent=2, sort_keys=True))
     print("result_storage:")
