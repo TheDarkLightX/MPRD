@@ -43,6 +43,9 @@ OPTIONAL_STABLE_DECISIONS = {
 RECEIPT_GIT_DRIFT_COMPATIBLE_PATHS = {
     "tools/run_neuro_symbolic_disaster_loop.py",
 }
+GATE_RELEVANT_TRACKED_PATHS = (
+    "tools/run_neuro_symbolic_disaster_loop.py",
+)
 HARNESS_SOURCE_HINTS = {
     "orchestrator_ordering_symbolic": [
         "internal/experiments/concolic_20260405/src/bin/orchestrator-ordering-kani.rs",
@@ -262,6 +265,28 @@ def receipt_git_drift(receipt_git_head: str, current_git_head: str) -> tuple[boo
         path in RECEIPT_GIT_DRIFT_COMPATIBLE_PATHS for path in changed_paths
     )
     return compatible, changed_paths
+
+
+def summarize_gate_worktree() -> dict[str, Any]:
+    proc = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--", *GATE_RELEVANT_TRACKED_PATHS],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    dirty_entries = []
+    for line in proc.stdout.splitlines():
+        if not line:
+            continue
+        status = line[:2]
+        path = line[3:].strip()
+        dirty_entries.append({"status": status, "path": path})
+    return {
+        "checked_paths": list(GATE_RELEVANT_TRACKED_PATHS),
+        "dirty": bool(dirty_entries),
+        "dirty_entries": dirty_entries,
+    }
 
 
 def load_text(path: Path) -> str:
@@ -1587,6 +1612,7 @@ def summarize_gate_status(
     frontier: dict[str, Any],
     synthetic_provenance_summary: dict[str, Any] | None = None,
     synthetic_optional_conflict_summary: dict[str, Any] | None = None,
+    worktree_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     synthetic_provenance_summary = synthetic_provenance_summary or {
         "fail_closed_failures": 0
@@ -1594,6 +1620,7 @@ def summarize_gate_status(
     synthetic_optional_conflict_summary = synthetic_optional_conflict_summary or {
         "expectation_failures": 0
     }
+    worktree_summary = worktree_summary or {"dirty": False}
     blockers = []
     if summary["reachable_disaster_witnesses"]:
         blockers.append("reachable_disaster_witness")
@@ -1613,6 +1640,8 @@ def summarize_gate_status(
         blockers.append("optional_research_block")
     if receipt_provenance["has_git_head_mismatch"]:
         blockers.append("receipt_git_head_mismatch")
+    if worktree_summary["dirty"]:
+        blockers.append("checker_worktree_dirty")
 
     if summary["reachable_disaster_witnesses"]:
         gate = "BLOCKED_REACHABLE_DISASTER_WITNESS"
@@ -1642,6 +1671,7 @@ def summarize_gate_status(
         "receipt_git_head_compatible_drifts": len(
             receipt_provenance.get("compatible_git_head_drifts", [])
         ),
+        "checker_worktree_clean": not worktree_summary["dirty"],
         "open_for_bounded_research": gate == "OPEN_FOR_BOUNDED_RESEARCH",
     }
 
@@ -1752,6 +1782,7 @@ def stable_report_hash(report: dict[str, Any]) -> str:
         "schema",
         "program_id",
         "current_git_head",
+        "worktree_summary",
         "atlas",
         "max_depth",
         "surface_count",
@@ -1946,6 +1977,17 @@ def self_test() -> int:
     )
     assert_equal("gate provenance mismatch", provenance_gate["gate"], "BLOCKED_FAIL_CLOSED")
 
+    dirty_gate = summarize_gate_status(
+        {"reachable_disaster_witnesses": 0, "unknown_blocked": 0},
+        synthetic_ok,
+        synthetic_ok,
+        {"surfaces_with_optional_research_block": 0},
+        {"has_git_head_mismatch": False},
+        {"simple_path_frontier_exhausted": True},
+        worktree_summary={"dirty": True},
+    )
+    assert_equal("gate checker dirty", dirty_gate["gate"], "BLOCKED_FAIL_CLOSED")
+
     synthetic_provenance = evaluate_provenance_state_mutations(
         provenance_checks,
         {"reachable_disaster_witnesses": 0, "unknown_blocked": 0},
@@ -1985,6 +2027,7 @@ def self_test() -> int:
                     "receipt_provenance",
                     "synthetic_provenance_mutation",
                     "synthetic_optional_conflict_mutation",
+                    "checker_worktree_dirty",
                     "gate_status",
                     "missing_edge_fail_closed",
                 ],
@@ -2012,6 +2055,7 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     result_storage = report["result_storage"]
     result_samples = report["result_samples"]
     frontier = report["frontier"]
+    worktree_summary = report["worktree_summary"]
     lines = [
         "# Neuro-Symbolic Disaster Loop",
         "",
@@ -2022,6 +2066,7 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         f"Re-entry edge source: `{report['edge_sources']['reentry_edges']}`",
         f"Stable receipt hash: `{report['stable_receipt_hash']}`",
         f"Current git head: `{report['current_git_head']}`",
+        f"Gate worktree clean: `{not worktree_summary['dirty']}`",
         "",
         "## Summary",
         "",
@@ -2045,6 +2090,7 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         f"- Blocked hypothesis families: `{blocked_family_summary['blocked_kind_count']}`",
         f"- Receipt git-head mismatches: `{len(provenance['mismatches'])}`",
         f"- Receipt git-head compatible drifts: `{len(provenance['compatible_git_head_drifts'])}`",
+        f"- Gate-relevant dirty paths: `{len(worktree_summary['dirty_entries'])}`",
         f"- Compressed independent frontier: `{compressed['totals']['total']}` what-ifs through order `{compressed['max_order']}`",
         f"- Result storage mode: `{result_storage['mode']}`",
         "",
@@ -2161,6 +2207,13 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
                 f"- compatible drift `{item['surface_id']}` `{item['channel']}` `{item['path']}` "
                 f"from `{item['git_head']}` via `{changed}`"
             )
+    lines.extend(["", "## Gate Worktree", ""])
+    lines.append(f"- Checked paths: `{', '.join(worktree_summary['checked_paths'])}`")
+    if worktree_summary["dirty_entries"]:
+        for item in worktree_summary["dirty_entries"]:
+            lines.append(f"- dirty `{item['status']}` `{item['path']}`")
+    else:
+        lines.append("- dirty paths: none")
     lines.extend(["", "## Result Storage", ""])
     lines.append(f"- Mode: `{result_storage['mode']}`")
     lines.append(f"- Full results included: `{result_storage['full_results_included']}`")
@@ -2270,6 +2323,7 @@ def main() -> int:
 
     atlas = json.loads(ATLAS.read_text(encoding="utf-8"))
     current_git_head = git_head()
+    worktree_summary = summarize_gate_worktree()
     surfaces = {surface["surface_id"]: surface for surface in atlas.get("surfaces", [])}
     effective_max_depth = args.max_depth if args.max_depth > 0 else len(surfaces)
     frontier = {
@@ -2324,6 +2378,7 @@ def main() -> int:
         frontier,
         synthetic_provenance_summary,
         synthetic_optional_conflict_summary,
+        worktree_summary,
     )
     result_storage = summarize_result_storage(
         args.full_results,
@@ -2346,6 +2401,7 @@ def main() -> int:
         "program_id": atlas.get("program_id"),
         "generated_at_utc": now_iso(),
         "current_git_head": current_git_head,
+        "worktree_summary": worktree_summary,
         "atlas": rel(ATLAS),
         "max_depth": effective_max_depth,
         "surface_count": len(surfaces),
