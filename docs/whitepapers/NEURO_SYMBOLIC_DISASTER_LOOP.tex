@@ -32,7 +32,7 @@
 {\large Repository DOI badge URL:\par}
 {\large \href{https://zenodo.org/badge/latestdoi/1113028896}{https://zenodo.org/badge/latestdoi/1113028896}\par}
 {\large Technique: What-if witness spaces and neuro-symbolic disaster loops\par}
-{\large Case-study artifact: MPRD\par}
+{\large Case-study artifacts: MPRD and ZenoDEX\par}
 {\large License: CC BY 4.0\par}
 \vspace{0.35in}
 \begin{minipage}{0.88\linewidth}
@@ -56,7 +56,7 @@ Modern assurance fails most often at composition boundaries. A parser, proof, fu
 
 The method generalizes counterexample-guided reasoning from local program inputs to the assurance workflow itself. The neural side is an existential generator: it asks "what if?" over surfaces, graph edges, evidence states, and fault mutations. The symbolic side is a universal gate: it checks every generated witness in a bounded language, rejects unknown or stale evidence fail-closed, and opens research only when all obligations are discharged. The mathematical core comes from witness-space factorization, quantifier factoring, Galois-style obligation carving, verifier-compiler loops, and loop-space geometry.
 
-The paper's case study is MPRD, where the loop checked 16,003 materialized what-ifs plus a compressed 75,599,999-combination independent frontier, found 0 reachable disaster witnesses, observed 0 fail-closed failures across receipt, blocker, provenance, and optional-conflict mutations, and opened the bounded research gate. The claim is intentionally bounded: it proves no global software safety theorem. It proves a replayable no-witness result for a named witness language, atlas, receipt set, checker, and depth.
+The first case study is MPRD, where the loop checked 16,003 materialized what-ifs plus a compressed 75,599,999-combination independent frontier, found 0 reachable disaster witnesses, observed 0 fail-closed failures across receipt, blocker, provenance, and optional-conflict mutations, and opened the bounded research gate. The second case study is ZenoDEX, a financial protocol and DEX assurance surface where the same loop shape is applied to loss-bearing witness spaces: settlement certificates, oracle freshness, nonce replay, integer rounding, sealed-bid terminal states, confidential receipts, proof gates, and claim-evidence routing. The claim is intentionally bounded: it proves no global software safety theorem. It proves a replayable no-witness result for a named witness language, atlas, receipt set, checker, and depth, and it shows how the same discipline generalizes to financial mechanisms.
 
 \end{abstract}
 \section{The Assurance Gap}
@@ -291,6 +291,55 @@ x_k\sim_{\mathrm{visible}}x_0
 \]
 The method blocks such loops by making obligations visible. A stale receipt, dirty checker, failed optional lane, or missing blocker changes the quotient and therefore cannot silently return to the same researchable state.
 
+\subsection{Loss-Bearing Witness Spaces}
+Financial protocols add a useful refinement. A disaster is not only an invariant violation; it can be a reachable state with positive extractable value, stalled settlement, stale oracle use, replay acceptance, rounding leakage, or unbound receipt execution. Let $V$ be a value accounting map and let $\mathrm{AllowedFlow}$ be the value flow explicitly authorized by the protocol rules. Define the unexplained value movement of a witness by:
+
+\[
+\mathrm{Leak}(z,x)
+=
+\max\{0,\;V_{\mathrm{after}}(z,x)-V_{\mathrm{before}}(x)
+-\mathrm{AllowedFlow}(z,x)\}.
+\]
+A financial disaster witness is:
+
+\[
+\begin{aligned}
+\mathrm{LossWitness}(z,x)\Longleftrightarrow\;&
+\mathrm{Reachable}(z,x)\\
+&\wedge\;(\mathrm{BreaksConservation}(z,x)
+\vee \mathrm{AcceptsReplay}(z,x)\\
+&\quad\vee\;\mathrm{ExecutesStaleOracle}(z,x)
+\vee \mathrm{ReceiptUnbound}(z,x)\\
+&\quad\vee\;\mathrm{RoundingLeak}(z,x)
+\vee \mathrm{StuckValueState}(z,x))\\
+&\wedge\;\mathrm{Leak}(z,x)>0.
+\end{aligned}
+\]
+The standard reading is: a witness matters financially when it is reachable, hits a bad mechanism class, and moves value outside the allowed accounting rules. This separates "the proof has not covered this case yet" from "this case can lose money." Both can block promotion, but they carry different remediation work.
+
+For a financial surface, the witness language decomposes into typed fibers:
+
+\[
+L_{\mathrm{fin}} =
+L_{\mathrm{exec}}\cup L_{\mathrm{acct}}\cup L_{\mathrm{oracle}}
+\cup L_{\mathrm{receipt}}\cup L_{\mathrm{privacy}}
+\cup L_{\mathrm{liveness}}\cup L_{\mathrm{governance}}.
+\]
+Each fiber has its own checker shape. Arithmetic conservation may route to a proof assistant or SMT solver. Oracle freshness may route to a temporal model and runtime gate. Sealed-bid deadlocks may route to state-machine replay. Receipt binding may route to deterministic packet verification. The loop is stronger when the witness language records this routing explicitly instead of treating all "what ifs" as one undifferentiated fuzz queue.
+
+\subsection{Claim-Evidence Routing}
+The ZenoDEX case study also motivates a claim-evidence graph. Let $C$ be promoted claims, $E_v$ be evidence artifacts, and $R\subseteq C\times E_v$ connect claims to replayable checks. A claim is promotable only when every required evidence class has a passing artifact:
+
+\[
+\begin{aligned}
+\mathrm{Promotable}(c)\Longleftrightarrow\;&
+\mathrm{Status}(c)\in\{\mathrm{supported},\mathrm{proved}\}\\
+&\wedge\;\forall k\in K(c)\;\exists e\in E_v\;.\;R(c,e)\\
+&\wedge\;\mathrm{Kind}(e)=k\wedge\mathrm{Pass}(e).
+\end{aligned}
+\]
+If any required evidence is missing, stale, disputed, inconclusive, or tied to private scratch state that cannot be replayed, the public claim does not promote. This is the same neuro-symbolic loop at a higher layer: the proposer suggests a claim and its expected evidence route; the checker treats the claim-evidence graph as state and rejects unsupported promotion.
+
 \section{Generic Algorithm}
 The method can be implemented with the following abstract interface.
 
@@ -472,8 +521,75 @@ It is not:
 \neg\exists w\in W_{\infty}(A)\;
 \mathrm{ReachableDisaster}(w,\varepsilon).
 \]
+\section{Case Study: ZenoDEX Financial-Risk Hardening}
+ZenoDEX is used here as an additional case study because financial protocols make the stakes of compositional disaster states concrete. The value-moving surface includes batch settlement, quote and settlement receipts, oracle freshness, nonce sequencing, rounding and dust handling, proof-gated settlement updates, perpetual-market epoch settlement, confidential extension receipts, and sealed-bid auction terminal states.
+
+The useful abstraction is:
+
+\[
+x_{\mathrm{dex}} =
+(\sigma_{\mathrm{ledger}},\sigma_{\mathrm{oracle}},
+\sigma_{\mathrm{receipt}},\sigma_{\mathrm{claim}},
+\sigma_{\mathrm{proof}},\sigma_{\mathrm{time}}).
+\]
+The standard reading is: the DEX assurance state is not just balances and pools. It also includes oracle time, receipt roots, promoted claims, proof/binding state, and temporal queue state. A what-if loop must perturb all of these coordinates, because many DeFi failures occur in the composition of otherwise reasonable modules.
+
+The ZenoDEX evidence structure inspected for this paper includes:
+
+\begin{itemize}
+\item a tool-agnostic claims registry that marks promoted, supported, proved, and
+disputed claims with replay commands,
+\item public replay lanes that separate tracked manifests and checker scripts from
+private scratch evidence,
+\item proof-carrying settlement witness kernels for exact-in and exact-out
+settlement,
+\item deterministic tests for minimal economic witnesses such as rounding leakage
+and reward-subsidized oracle manipulation,
+\item machine-checked proofs for nonce replay, canonical route selection, rounding,
+CPMM settlement, and batch-auction canonicalization,
+\item bounded temporal models for oracle recovery, settlement witness lifecycle,
+exact-out fallback liveness, liquidation queue drain, and settlement witness
+inclusion under bounded ingress, reorg, fee-priority, and builder-pressure
+assumptions,
+\item a sealed-bid disaster-state catalog covering empty-auction, no-reveal, and
+empty-bond terminal paths,
+\item confidential extension and FHE sealed-bid alpha boundaries that require
+freshness, binding, replay protection, local output bounds, and explicit
+fallback paths.
+\end{itemize}
+This adds three lessons beyond the MPRD case study.
+
+First, financial witness languages must include value functions. A state can be syntactically valid and still be unacceptable if it enables positive extraction or creates value outside authorized accounting:
+
+\[
+\exists z\in L_{\mathrm{fin}}(x)\;.\;
+\mathrm{Reachable}(z,x)\wedge \mathrm{Leak}(z,x)>0
+\quad\Rightarrow\quad
+\mathrm{RejectPromotion}(x).
+\]
+Second, liveness can be a safety property when value is locked or risk keeps accumulating. A "safe" fail-closed state that never settles can become a financial disaster. Therefore the loop must ask not only "can a bad transition execute?" but also "can an accepted witness remain unresolved past the bounded fairness assumptions?"
+
+Third, public claims need explicit exclusion. ZenoDEX's assurance surface distinguishes release-backed, public-replay, disputed, experimental, and out-of-scope surfaces. This is essential for publishable assurance: an incomplete proof lane should become an honest boundary, not a hidden global claim.
+
+The bounded ZenoDEX-style gate can be written:
+
+\[
+\begin{aligned}
+\mathrm{Open}_{\mathrm{fin}}(x,d)\Longleftrightarrow\;&
+\neg\exists z\in L_{\mathrm{fin},d}(x)\;.\;
+\mathrm{LossWitness}(z,x)\\
+&\wedge\;\forall c\in C_{\mathrm{promoted}}\;.\;
+\mathrm{Promotable}(c)\\
+&\wedge\;\forall c\in C_{\mathrm{disputed}}\;.\;
+\neg\mathrm{ReleaseAuthoritative}(c)\\
+&\wedge\;\mathrm{ReplayLanesGreen}(x)
+\wedge\mathrm{PrivateScratchExcluded}(x).
+\end{aligned}
+\]
+This is a financial version of the same technique. The loop does not claim that a live DEX is universally safe. It claims that, for a named bounded surface, no generated loss-bearing witness survives replay; every promoted claim has its required evidence route; disputed claims stay excluded; and private or experimental tooling is not part of the public proof.
+
 \section{Replication Protocol}
-The public replication path has three tiers.
+The public replication path has three tiers for the archived MPRD case study, plus an optional ZenoDEX case-study replay when the ZenoDEX repository or archive is available.
 
 \subsection{Tier 1: Paper and Checker Availability}
 Clone the repository archive associated with the Zenodo release:
@@ -538,6 +654,18 @@ The compact and full modes should agree on the stable semantic hash. If they do 
 
 No private hypothesis generator is required for these replication tiers. Private or experimental tools may help generate new what-if candidates, but public claims require deterministic receipts that can be checked from the archived artifact set.
 
+\subsection{Optional ZenoDEX Case-Study Replay}
+When the ZenoDEX repository or a Zenodo archive of it is available, the same paper claims can be inspected through its public replay surface:
+
+\begin{verbatim}
+git clone https://github.com/TheDarkLightX/ZenoDEX.git
+cd ZenoDEX
+python3 tools/permissionless_assurance.py status
+python3 tools/build_stateful_disaster_search_expansion_plan.py --format json
+python3 tools/sealed_bid_disaster_catalog.py
+\end{verbatim}
+The expected public posture is not "all DEX behavior is proved." The expected posture is that the repository declares its promoted claim boundary, exposes replay commands for promoted claims, records disputed or experimental surfaces honestly, and makes named financial disaster witnesses executable or checkable under bounded assumptions.
+
 \section{What This Proves}
 The result proves bounded statements about a named witness language and evidence state.
 
@@ -568,6 +696,9 @@ It does not prove:
 \item that future code changes preserve the result,
 \item that cryptographic, network, OS, compiler, or deployment assumptions hold,
 \item that absence of a generated witness means absence of vulnerability.
+\item that the ZenoDEX case-study observations prove a live DeFi deployment safe
+without its own current release archive, configuration, keys, oracle
+assumptions, and replayed evidence.
 \end{itemize}
 It also does not give the LLM authority. The LLM or human proposer may suggest cases, but a case is only promotable after deterministic replay says it is promotable. Unknown is not a weak pass; it is a reject.
 
@@ -602,6 +733,8 @@ checker logic is small enough to formalize.
 appears.
 \item Study obligation-targeted witness routing as a scheduling policy for
 LLM-assisted security review.
+\item Release a standalone ZenoDEX financial-risk case-study bundle with the same
+archival shape as the MPRD receipt bundle.
 \end{itemize}
 \section{Code and Data Availability}
 The paper, renderer, and reference checker are part of the MPRD repository:
@@ -615,6 +748,8 @@ The paper, renderer, and reference checker are part of the MPRD repository:
 \path|docs/whitepapers/neuro_symbolic_case_study/neuro_symbolic_disaster_loop_latest.json|
 \end{itemize}
 The Zenodo archive DOI will be minted after the first tagged release associated with this repository. The repository README uses Zenodo's GitHub badge endpoint so the badge resolves to the latest DOI once available.
+
+The ZenoDEX case study is described as a second application of the technique. Its full reproducibility depends on a separately released ZenoDEX repository or archive. The MPRD Zenodo archive should not be read as containing all ZenoDEX evidence unless those artifacts are explicitly included in the release payload.
 
 \section{Relationship to Formal Methods Philosophy Tutorials}
 This paper packages the following tutorial ideas into a software-hardening method:
