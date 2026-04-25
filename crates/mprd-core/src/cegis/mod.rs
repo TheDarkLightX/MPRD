@@ -460,6 +460,7 @@ fn build_node_hash_to_atom_map(
 mod tests {
     use super::*;
     use crate::policy_algebra::{CanonicalPolicy, PolicyExpr};
+    use proptest::prelude::*;
 
     struct SequenceProposer {
         actions: Vec<ActionId>,
@@ -475,6 +476,14 @@ mod tests {
                 .ok_or_else(|| MprdError::InvalidInput("proposer ran out of actions".into()))?;
             self.idx = self.idx.saturating_add(1);
             Ok(a)
+        }
+    }
+
+    fn step_from_ordinal(v: u8) -> Step {
+        match v % 3 {
+            0 => Step::Neg,
+            1 => Step::Zero,
+            _ => Step::Pos,
         }
     }
 
@@ -587,5 +596,46 @@ mod tests {
 
         assert!(!result.allowed());
         assert_eq!(result.failed_atom.as_deref(), Some("action_db_pos"));
+    }
+
+    proptest! {
+        #[test]
+        fn reserved_action_db_pos_atom_ignores_state_spoof(
+            db in 0u8..3,
+            da in 0u8..3,
+            dd in 0u8..3,
+            spoof_value in any::<bool>(),
+        ) {
+            let limits = PolicyLimits::DEFAULT;
+            let expr = PolicyExpr::any(
+                vec![
+                    PolicyExpr::True,
+                    PolicyExpr::deny_if("action_db_pos", limits).unwrap(),
+                ],
+                limits,
+            )
+            .unwrap();
+            let canon = CanonicalPolicy::new(expr, limits).unwrap();
+            let verifier = PolicyAlgebraVerifier::new(canon, limits).unwrap();
+
+            let db_step = step_from_ordinal(db);
+            let action = ActionId::from_delta(&crate::tokenomics_v6::types::Delta {
+                db: db_step,
+                da: step_from_ordinal(da),
+                dd: step_from_ordinal(dd),
+            });
+            let mut spoofed = BTreeMap::new();
+            spoofed.insert("action_db_pos".to_string(), spoof_value);
+            let state = State::new(EpochId(3), spoofed);
+
+            let result = verifier.verify(&state, action).unwrap();
+
+            if db_step == Step::Pos {
+                prop_assert!(!result.allowed());
+                prop_assert_eq!(result.failed_atom.as_deref(), Some("action_db_pos"));
+            } else {
+                prop_assert!(result.allowed());
+            }
+        }
     }
 }

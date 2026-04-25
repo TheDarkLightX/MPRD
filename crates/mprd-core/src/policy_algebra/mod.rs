@@ -52,6 +52,7 @@ impl EvalContext for std::collections::HashMap<String, bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use std::collections::BTreeMap;
 
     #[derive(Default)]
@@ -290,6 +291,68 @@ mod tests {
 
         assert_eq!(result.outcome, PolicyOutcomeKind::DenySoft);
         assert!(!result.allowed());
+    }
+
+    proptest! {
+        #[test]
+        fn not_of_atom_is_fail_closed_for_missing_or_true(signal in prop::option::of(any::<bool>())) {
+            let limits = lim();
+            let expr = PolicyExpr::not(PolicyExpr::atom("blacklisted", limits).unwrap());
+            let mut ctx = MapCtx::default();
+            if let Some(v) = signal {
+                ctx = ctx.with("blacklisted", v);
+            }
+
+            let result = evaluate(&expr, &ctx, limits).unwrap();
+
+            match signal {
+                None => {
+                    prop_assert_eq!(result.outcome, PolicyOutcomeKind::DenySoft);
+                    prop_assert!(!result.allowed());
+                }
+                Some(false) => {
+                    prop_assert_eq!(result.outcome, PolicyOutcomeKind::Allow);
+                    prop_assert!(result.allowed());
+                }
+                Some(true) => {
+                    prop_assert_eq!(result.outcome, PolicyOutcomeKind::DenySoft);
+                    prop_assert!(!result.allowed());
+                }
+            }
+        }
+
+        #[test]
+        fn not_of_nested_all_is_fail_closed_if_any_child_signal_is_missing(
+            blacklisted in prop::option::of(any::<bool>()),
+            in_region in prop::option::of(any::<bool>()),
+        ) {
+            let limits = lim();
+            let blacklisted_atom = PolicyExpr::atom("blacklisted", limits).unwrap();
+            let in_region_atom = PolicyExpr::atom("in_region", limits).unwrap();
+            let expr = PolicyExpr::not(
+                PolicyExpr::all(vec![blacklisted_atom, in_region_atom], limits).unwrap(),
+            );
+            let mut ctx = MapCtx::default();
+            if let Some(v) = blacklisted {
+                ctx = ctx.with("blacklisted", v);
+            }
+            if let Some(v) = in_region {
+                ctx = ctx.with("in_region", v);
+            }
+
+            let result = evaluate(&expr, &ctx, limits).unwrap();
+
+            match (blacklisted, in_region) {
+                (Some(b), Some(r)) => {
+                    let expected_allowed = !(b && r);
+                    prop_assert_eq!(result.allowed(), expected_allowed);
+                }
+                _ => {
+                    prop_assert_eq!(result.outcome, PolicyOutcomeKind::DenySoft);
+                    prop_assert!(!result.allowed());
+                }
+            }
+        }
     }
 
     #[test]
