@@ -485,13 +485,12 @@ pub const GOVERNANCE_INPUT_PROFILE_APP_OK_V1: &str = "profile_app_ok";
 pub const GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1: &str = "profile_safety_ok";
 pub const GOVERNANCE_INPUT_LINK_OK_V1: &str = "link_ok";
 
-const GOVERNANCE_PREPARED_INPUT_KEYS_V1: [&str; 6] = [
+const GOVERNANCE_TRIGGER_INPUT_KEYS_V1: [&str; 5] = [
     GOVERNANCE_INPUT_IS_POLICY_TWEAK_V1,
     GOVERNANCE_INPUT_IS_SAFETY_CHANGE_V1,
     GOVERNANCE_INPUT_IS_CAP_EXPAND_V1,
     GOVERNANCE_INPUT_PROFILE_APP_OK_V1,
     GOVERNANCE_INPUT_PROFILE_SAFETY_OK_V1,
-    GOVERNANCE_INPUT_LINK_OK_V1,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1774,14 +1773,15 @@ fn decode_policy_input_bool_v1(raw: &[u8]) -> Result<bool> {
 /// present in the observed state.
 ///
 /// Semantics:
-/// - if none of the canonical governance prepared-input keys are present, governance admission is
+/// - if none of the governance-specific prepared-input keys are present, governance admission is
 ///   not modeled on this runtime packet and `Ok(None)` is returned.
-/// - if any of the keys are present, all required keys must be present and must satisfy the
+/// - if any governance-specific key is present, all required keys, including the shared `link_ok`
+///   rail, must be present and must satisfy the
 ///   canonical prepared-lane admission rule fail-closed.
 pub fn governance_admission_witness_v1(
     state: &StateSnapshot,
 ) -> Result<Option<GovernanceAdmissionWitnessV1>> {
-    let has_any = GOVERNANCE_PREPARED_INPUT_KEYS_V1
+    let has_any = GOVERNANCE_TRIGGER_INPUT_KEYS_V1
         .iter()
         .any(|k| state.policy_inputs.contains_key(*k));
     if !has_any {
@@ -4687,6 +4687,45 @@ mod tests {
         assert_eq!(execution_authorization.state_hash(), &token.state_hash);
         assert_eq!(execution_authorization.state_ref(), &token.state_ref);
         assert!(execution_authorization.governance().is_none());
+    }
+
+    #[test]
+    fn prepare_attestation_ready_treats_link_ok_alone_as_non_governance() {
+        let candidate = valid_http_call_candidate();
+        let decision = Decision {
+            chosen_index: 0,
+            chosen_action: candidate.clone(),
+            policy_hash: dummy_hash(71),
+            decision_commitment: dummy_hash(72),
+        };
+        let state = StateSnapshot {
+            fields: HashMap::new(),
+            policy_inputs: HashMap::from([(GOVERNANCE_INPUT_LINK_OK_V1.into(), b"1".to_vec())]),
+            state_hash: dummy_hash(73),
+            state_ref: StateRef {
+                state_source_id: dummy_hash(74),
+                state_epoch: 8,
+                state_attestation_hash: dummy_hash(75),
+            },
+        };
+        let token = DecisionToken {
+            policy_hash: decision.policy_hash,
+            policy_ref: PolicyRef {
+                policy_epoch: 6,
+                registry_root: dummy_hash(76),
+            },
+            state_hash: state.state_hash,
+            state_ref: state.state_ref.clone(),
+            chosen_action_hash: hash::hash_candidate(&decision.chosen_action),
+            nonce_or_tx_hash: dummy_hash(77),
+            timestamp_ms: 0,
+            signature: vec![],
+        };
+
+        let ready = prepare_attestation_ready(&token, &decision, &state).expect("ready");
+
+        assert!(ready.governance().is_none());
+        assert!(ready.execution_authorization().governance().is_none());
     }
 
     #[test]

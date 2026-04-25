@@ -48,7 +48,7 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
-use mprd_core::{StateSnapshot, Value};
+use mprd_core::{Hash32, StateSnapshot, Value};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -242,6 +242,71 @@ pub struct EncryptedState {
 
     /// Key ID used for encryption.
     pub key_id: String,
+}
+
+const MODE_C_DISCLOSURE_BINDING_DOMAIN_V1: &[u8] = b"MPRD_MODE_C_DISCLOSURE_BINDING_V1";
+
+/// Compute a deterministic binding hash for plaintext Mode C disclosures.
+///
+/// The encrypted payload binding commits this hash so relays cannot alter
+/// `revealed_fields` or field commitments without invalidating verification.
+pub fn mode_c_disclosure_binding_hash_v1(encrypted_state: &EncryptedState) -> Hash32 {
+    fn encode_value(bytes: &mut Vec<u8>, value: &Value) {
+        match value {
+            Value::Bool(v) => {
+                bytes.push(1);
+                bytes.push(u8::from(*v));
+            }
+            Value::Int(v) => {
+                bytes.push(2);
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+            Value::UInt(v) => {
+                bytes.push(3);
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+            Value::String(v) => {
+                bytes.push(4);
+                bytes.extend_from_slice(&(v.len() as u32).to_le_bytes());
+                bytes.extend_from_slice(v.as_bytes());
+            }
+            Value::Bytes(v) => {
+                bytes.push(5);
+                bytes.extend_from_slice(&(v.len() as u32).to_le_bytes());
+                bytes.extend_from_slice(v);
+            }
+        }
+    }
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(MODE_C_DISCLOSURE_BINDING_DOMAIN_V1);
+
+    let mut commitment_keys: Vec<&String> = encrypted_state.field_commitments.keys().collect();
+    commitment_keys.sort();
+    bytes.extend_from_slice(&(commitment_keys.len() as u32).to_le_bytes());
+    for key in commitment_keys {
+        let commitment = &encrypted_state.field_commitments[key];
+        bytes.extend_from_slice(&(key.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(key.as_bytes());
+        bytes.extend_from_slice(&commitment.hash);
+        bytes.push(match commitment.scheme {
+            CommitmentScheme::Sha256 => 1,
+            CommitmentScheme::Pedersen => 2,
+            CommitmentScheme::Poseidon => 3,
+        });
+    }
+
+    let mut revealed_keys: Vec<&String> = encrypted_state.revealed_fields.keys().collect();
+    revealed_keys.sort();
+    bytes.extend_from_slice(&(revealed_keys.len() as u32).to_le_bytes());
+    for key in revealed_keys {
+        let value = &encrypted_state.revealed_fields[key];
+        bytes.extend_from_slice(&(key.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(key.as_bytes());
+        encode_value(&mut bytes, value);
+    }
+
+    mprd_core::hash::sha256(&bytes)
 }
 
 /// State encryption configuration.
@@ -918,6 +983,48 @@ mod tests {
         let c2 = gen.commit_with_blinding(value, blinding);
 
         assert_eq!(c1, c2);
+    }
+
+    #[test]
+    fn mode_c_disclosure_binding_hash_covers_revealed_fields_and_commitments() {
+        let base = EncryptedState {
+            state_commitment: Commitment {
+                hash: [1u8; 32],
+                scheme: CommitmentScheme::Sha256,
+            },
+            field_commitments: HashMap::from([(
+                "balance".into(),
+                Commitment {
+                    hash: [2u8; 32],
+                    scheme: CommitmentScheme::Sha256,
+                },
+            )]),
+            revealed_fields: HashMap::from([("public_counter".into(), Value::UInt(7))]),
+            ciphertext: vec![3, 4, 5],
+            nonce: [6u8; 12],
+            key_id: "k".into(),
+        };
+
+        let mut changed_reveal = base.clone();
+        changed_reveal
+            .revealed_fields
+            .insert("public_counter".into(), Value::UInt(8));
+
+        let mut changed_commitment = base.clone();
+        changed_commitment
+            .field_commitments
+            .get_mut("balance")
+            .expect("commitment")
+            .hash = [9u8; 32];
+
+        assert_ne!(
+            mode_c_disclosure_binding_hash_v1(&base),
+            mode_c_disclosure_binding_hash_v1(&changed_reveal)
+        );
+        assert_ne!(
+            mode_c_disclosure_binding_hash_v1(&base),
+            mode_c_disclosure_binding_hash_v1(&changed_commitment)
+        );
     }
 
     #[test]

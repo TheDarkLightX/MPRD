@@ -40,6 +40,7 @@ OPTIONAL_BLOCKING_DECISIONS = {
 OPTIONAL_STABLE_DECISIONS = {
     "stable_optional_lane",
 }
+JSON_LOAD_ERROR_KEY = "__json_load_error__"
 RECEIPT_GIT_DRIFT_COMPATIBLE_PATHS = {
     "tools/run_neuro_symbolic_disaster_loop.py",
 }
@@ -234,7 +235,19 @@ def rel(path: Path) -> str:
 def load_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return {
+            JSON_LOAD_ERROR_KEY: (
+                f"JSONDecodeError:{exc.msg}:line={exc.lineno}:column={exc.colno}"
+            )
+        }
+
+
+def json_load_error(receipt: dict[str, Any]) -> str | None:
+    value = receipt.get(JSON_LOAD_ERROR_KEY)
+    return value if isinstance(value, str) else None
 
 
 def git_head() -> str:
@@ -397,6 +410,23 @@ def check_optional_receipts(surface: dict[str, Any]) -> tuple[list[dict[str, Any
             )
             continue
 
+        if error := json_load_error(receipt):
+            rel_path = rel(path)
+            blockers.append(f"optional_malformed_receipt:{rel_path}")
+            summaries.append(
+                {
+                    "path": rel_path,
+                    "exists": True,
+                    "schema": None,
+                    "git_head": None,
+                    "decision": None,
+                    "next_guidance_decision": None,
+                    "blocking": True,
+                    "reasons": [f"malformed_receipt:{error}"],
+                }
+            )
+            continue
+
         decision = receipt.get("decision")
         next_guidance = receipt.get("next_guidance_decision")
         reasons = []
@@ -482,6 +512,21 @@ def check_surface(surface: dict[str, Any]) -> dict[str, Any]:
                     "exists": False,
                     "ok": False,
                     "reasons": ["missing_receipt"],
+                    "schema": None,
+                    "git_head": None,
+                    "started_at_utc": None,
+                    "generated_at_utc": None,
+                }
+            )
+            continue
+        if error := json_load_error(receipt):
+            problems.append(f"malformed_receipt:{rel(path)}")
+            receipt_summaries.append(
+                {
+                    "path": rel(path),
+                    "exists": True,
+                    "ok": False,
+                    "reasons": [f"malformed_receipt:{error}"],
                     "schema": None,
                     "git_head": None,
                     "started_at_utc": None,

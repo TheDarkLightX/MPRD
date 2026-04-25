@@ -790,6 +790,7 @@ impl TokenomicsV6 {
     ///
     /// Postconditions:
     /// - `base_fee_agrs` and offsets affect protocol budgets; `tip_agrs` is paid immediately
+    /// - payer's AGRS decreases by `base_fee_agrs + tip_agrs`
     /// - payer's BCR decreases by `offset_request_bcr` (BCR is burned on use)
     fn apply_service_tx(&mut self, tx: ServiceTx) -> Result<()> {
         self.ensure_epoch_open()?;
@@ -832,6 +833,19 @@ impl TokenomicsV6 {
         }
         let payer_new_bcr = sub_u64(payer_prev_bcr, tx.offset_request_bcr.get())?;
 
+        let payer_prev_agrs = self
+            .operators
+            .get(&tx.payer)
+            .ok_or_else(|| MprdError::InvalidInput("unknown payer".into()))?
+            .agrs_balance;
+        let payer_agrs_charge = add_u64(tx.base_fee_agrs.get(), tx.tip_agrs.get())?;
+        if payer_prev_agrs < payer_agrs_charge {
+            return Err(MprdError::InvalidInput(
+                "insufficient AGRS for service fees".into(),
+            ));
+        }
+        let payer_new_agrs = sub_u64(payer_prev_agrs, payer_agrs_charge)?;
+
         let servicer_prev_agrs = self
             .operators
             .get(&tx.servicer)
@@ -862,6 +876,7 @@ impl TokenomicsV6 {
             .operators
             .get_mut(&tx.payer)
             .ok_or_else(|| MprdError::InvalidInput("unknown payer".into()))?;
+        payer.agrs_balance = payer_new_agrs;
         payer.bcr_balance = payer_new_bcr;
 
         let servicer = self
@@ -1349,6 +1364,8 @@ mod tests {
         };
         eng.apply_service_tx(tx).unwrap();
 
+        // Payer is charged base fee + tip in AGRS.
+        assert_eq!(eng.agrs_balance(a).unwrap().get(), 889_900);
         // Tip paid directly to servicer.
         assert_eq!(eng.agrs_balance(b).unwrap().get(), 100);
         // Offset consumed payer BCR (1:1).

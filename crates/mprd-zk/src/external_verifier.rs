@@ -1115,6 +1115,7 @@ impl ExternalVerifier {
         key_id: &str,
         encrypted_state: &EncryptedState,
     ) -> Option<[u8; 32]> {
+        let disclosure_hash = crate::privacy::mode_c_disclosure_binding_hash_v1(encrypted_state);
         let ctx_hash = mprd_core::limits::mode_c_encryption_ctx_hash_v1(
             &mprd_core::Hash32(request.state_hash),
             &mprd_core::Hash32(request.nonce_or_tx_hash),
@@ -1122,6 +1123,7 @@ impl ExternalVerifier {
             alg,
             &encrypted_state.nonce,
             &encrypted_state.ciphertext,
+            &disclosure_hash,
         );
         let limits_bytes = mprd_core::limits::limits_bytes_mode_c_encryption_ctx_v1(&ctx_hash);
         Some(limits_hash(&limits_bytes))

@@ -566,6 +566,31 @@ pub fn record_hash_v2_from_record(record: &DecisionLogRecordV2) -> Hash32 {
     )
 }
 
+fn record_hash_v1_from_record(record: &DecisionLogRecordV1) -> Hash32 {
+    let mut bytes = Vec::with_capacity(512);
+    bytes.extend_from_slice(DECISION_LOG_RECORD_DOMAIN_V1);
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&record.published_at_ms.to_le_bytes());
+    bytes.extend_from_slice(&record.prev_record_hash.0);
+
+    bytes.extend_from_slice(&record.policy_hash.0);
+    bytes.extend_from_slice(&record.policy_epoch.to_le_bytes());
+    bytes.extend_from_slice(&record.registry_root.0);
+    bytes.extend_from_slice(&record.state_hash.0);
+    bytes.extend_from_slice(&record.state_source_id.0);
+    bytes.extend_from_slice(&record.state_epoch.to_le_bytes());
+    bytes.extend_from_slice(&record.state_attestation_hash.0);
+    bytes.extend_from_slice(&record.chosen_action_hash.0);
+    bytes.extend_from_slice(&record.nonce_or_tx_hash.0);
+
+    bytes.extend_from_slice(&record.limits_hash.0);
+    bytes.extend_from_slice(&record.limits_bytes_hash.0);
+    bytes.extend_from_slice(&record.chosen_action_preimage_hash.0);
+    bytes.extend_from_slice(&record.risc0_receipt_hash.0);
+
+    sha256(&bytes)
+}
+
 pub fn record_hash_v3_from_record(record: &DecisionLogRecordV3) -> Hash32 {
     let token = DecisionToken {
         policy_hash: record.policy_hash,
@@ -959,8 +984,15 @@ fn verify_chain(path: &Path) -> Result<(Hash32, bool)> {
         }
 
         match &record {
-            DecisionLogRecord::V1(_) => {
+            DecisionLogRecord::V1(r) => {
                 saw_unverified_v1 = true;
+                let expected = record_hash_v1_from_record(r);
+                if expected != r.record_hash {
+                    return Err(MprdError::ExecutionError(format!(
+                        "decision log hash mismatch at line {}",
+                        idx + 1
+                    )));
+                }
             }
             DecisionLogRecord::V2(r) => {
                 let expected = record_hash_v2_from_record(r);
@@ -1039,6 +1071,29 @@ mod tests {
             attestation_metadata: Default::default(),
         };
         (token, proof)
+    }
+
+    fn sample_v1_record(prev_record_hash: Hash32, published_at_ms: i64) -> DecisionLogRecordV1 {
+        let (token, proof) = sample_token_and_proof();
+        DecisionLogRecordV1 {
+            record_version: 1,
+            published_at_ms,
+            prev_record_hash,
+            record_hash: record_hash_v1(&prev_record_hash, published_at_ms, &token, &proof),
+            policy_hash: token.policy_hash,
+            policy_epoch: token.policy_ref.policy_epoch,
+            registry_root: token.policy_ref.registry_root,
+            state_hash: token.state_hash,
+            state_source_id: token.state_ref.state_source_id,
+            state_epoch: token.state_ref.state_epoch,
+            state_attestation_hash: token.state_ref.state_attestation_hash,
+            chosen_action_hash: token.chosen_action_hash,
+            nonce_or_tx_hash: token.nonce_or_tx_hash,
+            limits_hash: proof.limits_hash,
+            limits_bytes_hash: sha256(&proof.limits_bytes),
+            chosen_action_preimage_hash: sha256(&proof.chosen_action_preimage),
+            risc0_receipt_hash: sha256(&proof.risc0_receipt),
+        }
     }
 
     #[test]
@@ -1125,6 +1180,48 @@ mod tests {
         }
 
         assert!(VerifiedDecisionLog::open(&path).is_err());
+    }
+
+    #[test]
+    fn verified_decision_log_rejects_v1_hash_mismatch() {
+        let dir = std::env::temp_dir().join(format!(
+            "mprd_decision_log_bad_v1_hash_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("decisions.jsonl");
+
+        let mut record = sample_v1_record(Hash32([0u8; 32]), 1_700_000_000_000);
+        record.record_hash = Hash32([9u8; 32]);
+
+        let mut file = fs::File::create(&path).unwrap();
+        writeln!(file, "{}", serde_json::to_string(&record).unwrap()).unwrap();
+
+        assert!(VerifiedDecisionLog::open(&path).is_err());
+    }
+
+    #[test]
+    fn verified_decision_log_accepts_valid_v1_chain_and_marks_legacy() {
+        let dir = std::env::temp_dir().join(format!(
+            "mprd_decision_log_valid_v1_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("decisions.jsonl");
+
+        let record = sample_v1_record(Hash32([0u8; 32]), 1_700_000_000_000);
+        let mut file = fs::File::create(&path).unwrap();
+        writeln!(file, "{}", serde_json::to_string(&record).unwrap()).unwrap();
+
+        let verified = VerifiedDecisionLog::open(&path).expect("open");
+        assert!(verified.saw_unverified_v1());
+        assert_eq!(verified.last_record_hash(), record.record_hash);
     }
 
     #[test]

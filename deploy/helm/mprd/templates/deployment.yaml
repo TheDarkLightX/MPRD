@@ -45,6 +45,11 @@ spec:
             - name: RUST_LOG
               value: info
             {{- if not .Values.insecureDemo }}
+            - name: MPRD_OPERATOR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mprd.fullname" . }}-secrets
+                  key: MPRD_OPERATOR_API_KEY
             - name: MPRD_OPERATOR_REGISTRY_STATE_PATH
               value: /registry/registry_state.json
             - name: MPRD_REGISTRY_KEY_HEX

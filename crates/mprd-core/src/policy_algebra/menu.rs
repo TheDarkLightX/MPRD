@@ -169,7 +169,7 @@ fn build_tokenomics_v6_action_gate_fast(limits: PolicyLimits) -> Result<PolicyEx
 
 fn build_tokenomics_v6_pid_update_gate(limits: PolicyLimits) -> Result<PolicyExpr> {
     // Mirrors `policies/tokenomics/canonical/mprd_tokenomics_v6_pid_update_gate.tau` structure:
-    // all checks are host-computed sbf rails; Tau/PolicyAlgebra combines them.
+    // boolean rails mirror the derived numeric checks for PolicyAlgebra composition.
     let link_ok = PolicyExpr::atom("link_ok", limits)?;
     let control_auth_ok = PolicyExpr::atom("control_auth_ok", limits)?;
     let params_version_ok = PolicyExpr::atom("params_version_ok", limits)?;

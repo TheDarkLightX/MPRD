@@ -20,6 +20,7 @@ persistence:
 secrets:
   registryKeyHex: ""
   tokenSigningKeyHex: ""
+  operatorApiKey: ""
   manifestKeyHex: ""
 
 configJson: |

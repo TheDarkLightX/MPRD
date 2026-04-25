@@ -256,6 +256,44 @@ mod tests {
     }
 
     #[test]
+    fn not_of_missing_atom_remains_deny_soft_fail_closed() {
+        let limits = lim();
+        let expr = PolicyExpr::not(PolicyExpr::atom("blacklisted", limits).unwrap());
+
+        let result = evaluate(&expr, &MapCtx::default(), limits).unwrap();
+
+        assert_eq!(result.outcome, PolicyOutcomeKind::DenySoft);
+        assert!(!result.allowed());
+    }
+
+    #[test]
+    fn not_of_present_false_atom_still_allows() {
+        let limits = lim();
+        let expr = PolicyExpr::not(PolicyExpr::atom("blacklisted", limits).unwrap());
+
+        let ctx = MapCtx::default().with("blacklisted", false);
+        let result = evaluate(&expr, &ctx, limits).unwrap();
+
+        assert_eq!(result.outcome, PolicyOutcomeKind::Allow);
+        assert!(result.allowed());
+    }
+
+    #[test]
+    fn not_of_composite_with_missing_atom_remains_deny_soft_fail_closed() {
+        let limits = lim();
+        let ok = PolicyExpr::atom("ok", limits).unwrap();
+        let missing = PolicyExpr::atom("missing", limits).unwrap();
+        let child = PolicyExpr::all(vec![ok, missing], limits).unwrap();
+        let expr = PolicyExpr::not(child);
+
+        let ctx = MapCtx::default().with("ok", true);
+        let result = evaluate(&expr, &ctx, limits).unwrap();
+
+        assert_eq!(result.outcome, PolicyOutcomeKind::DenySoft);
+        assert!(!result.allowed());
+    }
+
+    #[test]
     fn trace_is_bounded_fail_closed() {
         let limits = PolicyLimits {
             max_children: 64,

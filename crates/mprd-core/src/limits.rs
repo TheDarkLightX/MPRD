@@ -135,6 +135,7 @@ pub fn mode_c_encryption_ctx_hash_v1(
     algorithm: &str,
     encryption_nonce: &[u8; 12],
     ciphertext: &[u8],
+    disclosure_hash: &Hash32,
 ) -> Hash32 {
     let ciphertext_hash = crate::hash::sha256(ciphertext);
     let mut bytes = Vec::new();
@@ -147,6 +148,7 @@ pub fn mode_c_encryption_ctx_hash_v1(
     bytes.extend_from_slice(algorithm.as_bytes());
     bytes.extend_from_slice(encryption_nonce);
     bytes.extend_from_slice(&ciphertext_hash.0);
+    bytes.extend_from_slice(&disclosure_hash.0);
     crate::hash::sha256(&bytes)
 }
 

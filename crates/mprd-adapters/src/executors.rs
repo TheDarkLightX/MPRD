@@ -135,6 +135,8 @@ struct ParsedHttpEffectBarrier {
     resolution_kind: Option<CommittedHttpEffectBarrierResolutionKind>,
 }
 
+const MAX_HTTP_EFFECT_BARRIER_BYTES: u64 = 64 * 1024;
+
 fn parse_http_effect_barrier(
     path: &Path,
     suffix: &str,
@@ -159,13 +161,46 @@ fn parse_http_effect_barrier(
         )));
     }
 
+    let metadata = fs::symlink_metadata(path).map_err(|e| {
+        MprdError::ExecutionError(format!(
+            "Failed to inspect {} {}: {}",
+            kind,
+            path.display(),
+            e
+        ))
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(MprdError::ExecutionError(format!(
+            "{} {} is not a regular file",
+            kind,
+            path.display()
+        )));
+    }
+    if metadata.len() > MAX_HTTP_EFFECT_BARRIER_BYTES {
+        return Err(MprdError::ExecutionError(format!(
+            "{} {} exceeds maximum size {} bytes",
+            kind,
+            path.display(),
+            MAX_HTTP_EFFECT_BARRIER_BYTES
+        )));
+    }
+
     let mut file = File::open(path).map_err(|e| {
         MprdError::ExecutionError(format!("Failed to read {} {}: {}", kind, path.display(), e))
     })?;
     let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).map_err(|e| {
+    let mut limited_reader = (&mut file).take(MAX_HTTP_EFFECT_BARRIER_BYTES + 1);
+    limited_reader.read_to_end(&mut bytes).map_err(|e| {
         MprdError::ExecutionError(format!("Failed to read {} {}: {}", kind, path.display(), e))
     })?;
+    if bytes.len() as u64 > MAX_HTTP_EFFECT_BARRIER_BYTES {
+        return Err(MprdError::ExecutionError(format!(
+            "{} {} exceeds maximum size {} bytes",
+            kind,
+            path.display(),
+            MAX_HTTP_EFFECT_BARRIER_BYTES
+        )));
+    }
     let payload: PendingHttpEffectBarrierPayload = serde_json::from_slice(&bytes).map_err(|e| {
         MprdError::ExecutionError(format!(
             "Failed to parse {} {}: {}",
@@ -288,8 +323,18 @@ pub fn summarize_http_effect_journal_root(root: &Path) -> Result<EffectJournalSu
 
         for entry in entries {
             let path = entry.path();
-            if path.is_dir() {
+            let file_type = entry.file_type().map_err(|e| {
+                MprdError::ExecutionError(format!(
+                    "Failed to inspect HTTP effect journal entry {}: {}",
+                    path.display(),
+                    e
+                ))
+            })?;
+            if file_type.is_dir() {
                 stack.push(path);
+                continue;
+            }
+            if !file_type.is_file() {
                 continue;
             }
 
@@ -353,8 +398,18 @@ pub fn list_pending_http_effect_barriers(root: &Path) -> Result<Vec<PendingHttpE
 
         for entry in entries {
             let path = entry.path();
-            if path.is_dir() {
+            let file_type = entry.file_type().map_err(|e| {
+                MprdError::ExecutionError(format!(
+                    "Failed to inspect HTTP effect journal entry {}: {}",
+                    path.display(),
+                    e
+                ))
+            })?;
+            if file_type.is_dir() {
                 stack.push(path);
+                continue;
+            }
+            if !file_type.is_file() {
                 continue;
             }
 
@@ -408,8 +463,18 @@ pub fn list_committed_http_effect_barriers(root: &Path) -> Result<Vec<CommittedH
 
         for entry in entries {
             let path = entry.path();
-            if path.is_dir() {
+            let file_type = entry.file_type().map_err(|e| {
+                MprdError::ExecutionError(format!(
+                    "Failed to inspect HTTP effect journal entry {}: {}",
+                    path.display(),
+                    e
+                ))
+            })?;
+            if file_type.is_dir() {
                 stack.push(path);
+                continue;
+            }
+            if !file_type.is_file() {
                 continue;
             }
 
@@ -2038,8 +2103,13 @@ mod tests {
         let mut proof = dummy_proof();
         let ready = ready_with_governance_and_bridge(&token, &mut proof);
         let action_preimage = require_ready_action_preimage(&ready);
-        let expected_registry_authorization_hash =
-            hex::encode(ready.bridge().expect("bridge").registry_authorization_hash().0);
+        let expected_registry_authorization_hash = hex::encode(
+            ready
+                .bridge()
+                .expect("bridge")
+                .registry_authorization_hash()
+                .0,
+        );
 
         let payload = execute_payload_from_parts(
             ready.token(),
@@ -2071,8 +2141,13 @@ mod tests {
         let mut proof = dummy_proof();
         let ready = ready_with_governance_and_bridge(&token, &mut proof);
         let action_preimage = require_ready_action_preimage(&ready);
-        let expected_registry_authorization_hash =
-            hex::encode(ready.bridge().expect("bridge").registry_authorization_hash().0);
+        let expected_registry_authorization_hash = hex::encode(
+            ready
+                .bridge()
+                .expect("bridge")
+                .registry_authorization_hash()
+                .0,
+        );
 
         let payload = webhook_payload_from_parts(
             ready.token(),
@@ -2128,8 +2203,13 @@ mod tests {
         let token = dummy_token();
         let mut proof = dummy_proof();
         let ready = ready_with_governance_and_bridge(&token, &mut proof);
-        let expected_registry_authorization_hash =
-            hex::encode(ready.bridge().expect("bridge").registry_authorization_hash().0);
+        let expected_registry_authorization_hash = hex::encode(
+            ready
+                .bridge()
+                .expect("bridge")
+                .registry_authorization_hash()
+                .0,
+        );
         let result = executor.execute_ready(&ready).unwrap();
 
         assert!(result.success);
@@ -2565,6 +2645,44 @@ mod tests {
             execution_idempotency_key_v1(&token_b)
         );
         assert_eq!(barriers[1].timestamp_ms, token_b.timestamp_ms);
+    }
+
+    #[test]
+    fn list_pending_http_effect_barriers_rejects_oversized_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("http_effects");
+        let token = dummy_token();
+        let policy_dir = root.join(hex::encode(token.policy_hash.0));
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        let path = policy_dir.join(format!(
+            "{}.pending.json",
+            execution_idempotency_key_v1(&token)
+        ));
+        std::fs::write(
+            &path,
+            vec![b'{'; (MAX_HTTP_EFFECT_BARRIER_BYTES as usize) + 1],
+        )
+        .unwrap();
+
+        let err = list_pending_http_effect_barriers(&root).expect_err("oversize must fail closed");
+        assert!(
+            err.to_string().contains("exceeds maximum size"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_pending_http_effect_barriers_ignores_symlink_entries() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("http_effects");
+        std::fs::create_dir_all(&root).unwrap();
+        symlink("/dev/zero", root.join("attack.pending.json")).unwrap();
+
+        let barriers = list_pending_http_effect_barriers(&root).expect("barriers");
+        assert!(barriers.is_empty());
     }
 
     #[test]

@@ -121,9 +121,10 @@ pub use registry_bound_attestor::{
 
 // Re-export privacy primitives
 pub use privacy::{
-    Commitment, CommitmentGenerator, CommitmentOpening, CommitmentScheme, EncryptedState,
-    EncryptionConfig, EncryptionWitness, PrivateAttestationConfig, PrivateAttestationResult,
-    Property, PropertyProof, SelectiveDisclosure, SelectiveDisclosureBuilder, StateEncryptor,
+    mode_c_disclosure_binding_hash_v1, Commitment, CommitmentGenerator, CommitmentOpening,
+    CommitmentScheme, EncryptedState, EncryptionConfig, EncryptionWitness,
+    PrivateAttestationConfig, PrivateAttestationResult, Property, PropertyProof,
+    SelectiveDisclosure, SelectiveDisclosureBuilder, StateEncryptor,
 };
 
 // Re-export Risc0 host integration (real proofs only)

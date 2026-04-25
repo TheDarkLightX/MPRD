@@ -36,6 +36,11 @@ spec:
               value: /config/config.json
             - name: MPRD_OPERATOR_STORE_DIR
               value: /data/operator
+            - name: MPRD_OPERATOR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mprd-secrets
+                  key: MPRD_OPERATOR_API_KEY
             - name: MPRD_OPERATOR_REGISTRY_STATE_PATH
               value: /registry/registry_state.json
             - name: MPRD_REGISTRY_KEY_HEX

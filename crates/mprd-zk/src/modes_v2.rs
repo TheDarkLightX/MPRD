@@ -1386,6 +1386,7 @@ impl ZkAttestor for RobustPrivateAttestor {
         };
 
         // Bind the encrypted payload to the receipt transcript via committed `limits_hash/limits_bytes`.
+        let disclosure_hash = crate::privacy::mode_c_disclosure_binding_hash_v1(&encrypted_state);
         let ctx_hash = mprd_core::limits::mode_c_encryption_ctx_hash_v1(
             &token.state_hash,
             &token.nonce_or_tx_hash,
@@ -1393,6 +1394,7 @@ impl ZkAttestor for RobustPrivateAttestor {
             &self.encryption_config.algorithm,
             &encrypted_state.nonce,
             &encrypted_state.ciphertext,
+            &disclosure_hash,
         );
         let limits_bytes = mprd_core::limits::limits_bytes_mode_c_encryption_ctx_v1(&ctx_hash);
 
@@ -1614,6 +1616,7 @@ impl ZkLocalVerifier for RobustPrivateVerifier {
         if encrypted_state.key_id != key_id {
             return VerificationStatus::Failure("Mode C encrypted_state key_id mismatch".into());
         }
+        let disclosure_hash = crate::privacy::mode_c_disclosure_binding_hash_v1(&encrypted_state);
         let expected_ctx = mprd_core::limits::mode_c_encryption_ctx_hash_v1(
             &token.state_hash,
             &token.nonce_or_tx_hash,
@@ -1621,6 +1624,7 @@ impl ZkLocalVerifier for RobustPrivateVerifier {
             &alg,
             &encrypted_state.nonce,
             &encrypted_state.ciphertext,
+            &disclosure_hash,
         );
         if committed_ctx != expected_ctx {
             return VerificationStatus::Failure("Mode C encryption binding mismatch".into());

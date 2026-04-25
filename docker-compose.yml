@@ -29,6 +29,7 @@ services:
   # Required env vars:
   # - MPRD_REGISTRY_KEY_HEX (32-byte hex, 64 chars)
   # - MPRD_TOKEN_SIGNING_KEY_HEX (32-byte hex, 64 chars)
+  # - MPRD_OPERATOR_API_KEY (strong random string for API authentication)
   #
   # Required bind mounts:
   # - ./deploy/run/registry_state.json -> /data/registry_state.json (signed checkpoint JSON)
@@ -48,6 +49,7 @@ services:
       MPRD_OPERATOR_STORE_DIR: /data/operator
       # Used by the operator API health/alerts.
       MPRD_OPERATOR_REGISTRY_STATE_PATH: /data/registry_state.json
+      MPRD_OPERATOR_API_KEY: ${MPRD_OPERATOR_API_KEY:?set MPRD_OPERATOR_API_KEY}
       MPRD_OPERATOR_REGISTRY_KEY_HEX: ${MPRD_REGISTRY_KEY_HEX:?set MPRD_REGISTRY_KEY_HEX}
       MPRD_OPERATOR_MANIFEST_KEY_HEX: ${MPRD_MANIFEST_KEY_HEX:-${MPRD_REGISTRY_KEY_HEX}}
       # Optional (used only when execution.executor_type=http)

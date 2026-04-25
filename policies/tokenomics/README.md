@@ -70,8 +70,10 @@ For the trust-boundary contract of `i_link_ok`, see `canonical/link_ok_contract.
 
 ## PID update gate (v6)
 
-`mprd_tokenomics_v6_pid_update_gate.tau` is **sbf-only** by design:
-- the host computes the PID proposal and the numeric safety checks (bounds, step limits, split cap)
-- Tau enforces the *boolean structure* (`link_ok & auth_ok & all_checks_ok`)
+`mprd_tokenomics_v6_pid_update_gate.tau` enforces numeric PID safety invariants inside Tau:
+- bounds checks for each new value (`min <= new <= max`)
+- step checks for each value (`|new-old| <= step_limit`)
+- split cap (`new_burn + new_auction <= 10_000`)
 
-This keeps Tau execution bounded and avoids brittle bitvector arithmetic in the interpreter.
+Version/window rails remain explicit (`params_version_ok`, `update_window_ok`) and are ANDed
+into the final acceptance decision.

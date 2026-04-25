@@ -326,19 +326,8 @@ impl PolicyAlgebraVerifier {
         })
     }
 
-    fn signal_for(
-        &self,
-        state: &State,
-        action: ActionId,
-        atom: &policy_algebra::PolicyAtom,
-    ) -> Option<bool> {
-        // State-provided signals.
-        if let Some(v) = state.signals.get(atom.as_str()).copied() {
-            return Some(v);
-        }
-
-        // Action-derived signals (deterministic).
-        match atom.as_str() {
+    fn action_signal_for(action: ActionId, atom: &str) -> Option<bool> {
+        match atom {
             "action_noop" => Some(action == ActionId::NOOP),
             "action_db_neg" => Some(action.to_delta().db == Step::Neg),
             "action_db_zero" => Some(action.to_delta().db == Step::Zero),
@@ -351,6 +340,19 @@ impl PolicyAlgebraVerifier {
             "action_dd_pos" => Some(action.to_delta().dd == Step::Pos),
             _ => None,
         }
+    }
+
+    fn signal_for(
+        &self,
+        state: &State,
+        action: ActionId,
+        atom: &policy_algebra::PolicyAtom,
+    ) -> Option<bool> {
+        if let Some(v) = Self::action_signal_for(action, atom.as_str()) {
+            return Some(v);
+        }
+
+        state.signals.get(atom.as_str()).copied()
     }
 
     fn derive_failed_atom(&self, trace: &PolicyTrace) -> Option<String> {
@@ -562,5 +564,27 @@ mod tests {
         let t1 = verifier.replay_trace(&state, action).unwrap();
         let t2 = verifier.replay_trace(&state, action).unwrap();
         assert_eq!(t1, t2);
+    }
+
+    #[test]
+    fn state_cannot_override_reserved_action_atoms() {
+        let limits = PolicyLimits::DEFAULT;
+        let expr = PolicyExpr::deny_if("action_db_pos", limits).unwrap();
+        let canon = CanonicalPolicy::new(expr, limits).unwrap();
+        let verifier = PolicyAlgebraVerifier::new(canon, limits).unwrap();
+
+        let mut signals = BTreeMap::new();
+        signals.insert("action_db_pos".to_string(), false);
+        let state = State::new(EpochId(3), signals);
+        let denied_action = ActionId::from_delta(&crate::tokenomics_v6::types::Delta {
+            db: Step::Pos,
+            da: Step::Zero,
+            dd: Step::Zero,
+        });
+
+        let result = verifier.verify(&state, denied_action).unwrap();
+
+        assert!(!result.allowed());
+        assert_eq!(result.failed_atom.as_deref(), Some("action_db_pos"));
     }
 }

@@ -26,10 +26,11 @@ use mprd_core::wire::{self, WireKind};
 /// Receipts can be large due to STARK proofs; 16 MiB is generous but bounded.
 pub const MAX_RECEIPT_BYTES: u64 = 16 * 1024 * 1024;
 
-/// Maximum size for MPB lite artifacts (1 MiB).
+/// Maximum size for MPB lite artifacts (8 MiB).
 ///
-/// MPB artifacts include bytecode + trace data; 1 MiB is ample.
-pub const MAX_MPB_ARTIFACT_BYTES: u64 = 1024 * 1024;
+/// V3 artifacts may include every candidate preimage; 64 * 16 KiB already reaches
+/// 1 MiB before serialization overhead, so the verifier cap must leave headroom.
+pub const MAX_MPB_ARTIFACT_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Maximum size for proof bundles (2 MiB).
 pub const MAX_PROOF_BUNDLE_BYTES: u64 = 2 * 1024 * 1024;
@@ -147,7 +148,7 @@ pub fn deserialize_receipt<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, Bound
 ///
 /// # Security
 ///
-/// Limits input to `MAX_MPB_ARTIFACT_BYTES` (1 MiB) to prevent DoS.
+/// Limits input to `MAX_MPB_ARTIFACT_BYTES` to prevent DoS.
 pub fn deserialize_mpb_artifact<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, BoundedDeserError> {
     let payload = extract_mpb_artifact_payload(bytes)?;
     deserialize_bounded(payload, MAX_MPB_ARTIFACT_BYTES)

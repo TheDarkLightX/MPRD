@@ -33,6 +33,7 @@ cp /path/to/policy_artifacts/* deploy/run/artifacts/
 ```bash
 export MPRD_REGISTRY_KEY_HEX=...
 export MPRD_TOKEN_SIGNING_KEY_HEX=...
+export MPRD_OPERATOR_API_KEY=...
 ```
 
 3) Run:
@@ -102,7 +103,7 @@ helm install mprd deploy/helm/mprd
 For production, provide your own `values.yaml` with:
 
 - image repo/tag
-- registry checkpoint path (ConfigMap) and keys (Secret)
+- registry checkpoint path (ConfigMap) and keys (Secret, including `MPRD_OPERATOR_API_KEY`)
 - PVC size/class
 
 ## AWS / RunPod / “anywhere Docker runs”

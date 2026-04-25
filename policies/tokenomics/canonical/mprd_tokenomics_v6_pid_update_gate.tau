@@ -4,10 +4,12 @@
 # Validates daemon/PID-proposed parameter updates with bounded, fail-closed checks.
 #
 # Invariants enforced:
-# - host-computed numeric checks must all hold (bounds + step limits + split cap)
+# - each new value is inside its configured [min,max] range
+# - |new-old| is inside the configured per-step limit
+# - new_burn + new_auction <= 10,000 bps
 #
 # Design principle:
-# - Host computes expensive/overflow-prone math; Tau checks bounded Boolean structure.
+# - Numeric safety invariants are enforced inside Tau for trustless proof inputs.
 # ============================================================================
 
 # Inputs
@@ -18,17 +20,24 @@ i_control_auth_ok         : sbf    = in file("inputs/control_auth_ok.in").
 i_params_version_ok       : sbf    = in file("inputs/params_version_ok.in").   # proposed_version > current (monotone)
 i_update_window_ok        : sbf    = in file("inputs/update_window_ok.in").    # current phase allows updates
 
-# Host-computed checks (sbf-only):
-# - In-range for each new value
-# - Per-step limit for each value
-# - Split cap: burn + auction <= 10,000
-i_burn_in_range_ok         : sbf    = in file("inputs/burn_in_range_ok.in").
-i_auction_in_range_ok      : sbf    = in file("inputs/auction_in_range_ok.in").
-i_drip_in_range_ok         : sbf    = in file("inputs/drip_in_range_ok.in").
-i_burn_step_ok             : sbf    = in file("inputs/burn_step_ok.in").
-i_auction_step_ok          : sbf    = in file("inputs/auction_step_ok.in").
-i_drip_step_ok             : sbf    = in file("inputs/drip_step_ok.in").
-i_split_ok                 : sbf    = in file("inputs/split_ok.in").
+i_old_burn_surplus_bps    : bv[16] = in file("inputs/old_burn_surplus_bps.in").
+i_old_auction_surplus_bps : bv[16] = in file("inputs/old_auction_surplus_bps.in").
+i_old_drip_rate_bps       : bv[16] = in file("inputs/old_drip_rate_bps.in").
+
+i_new_burn_surplus_bps    : bv[16] = in file("inputs/new_burn_surplus_bps.in").
+i_new_auction_surplus_bps : bv[16] = in file("inputs/new_auction_surplus_bps.in").
+i_new_drip_rate_bps       : bv[16] = in file("inputs/new_drip_rate_bps.in").
+
+i_step_burn_bps           : bv[16] = in file("inputs/step_burn_bps.in").
+i_step_auction_bps        : bv[16] = in file("inputs/step_auction_bps.in").
+i_step_drip_bps           : bv[16] = in file("inputs/step_drip_bps.in").
+
+i_min_burn_bps            : bv[16] = in file("inputs/min_burn_bps.in").
+i_max_burn_bps            : bv[16] = in file("inputs/max_burn_bps.in").
+i_min_auction_bps         : bv[16] = in file("inputs/min_auction_bps.in").
+i_max_auction_bps         : bv[16] = in file("inputs/max_auction_bps.in").
+i_min_drip_bps            : bv[16] = in file("inputs/min_drip_bps.in").
+i_max_drip_bps            : bv[16] = in file("inputs/max_drip_bps.in").
 
 # Debug outputs (optional but useful)
 o_burn_in_range_ok         : sbf    = out file("outputs/burn_in_range_ok.out").
@@ -41,7 +50,7 @@ o_split_ok                 : sbf    = out file("outputs/split_ok.out").
 o_params_version_ok        : sbf    = out file("outputs/params_version_ok.out").
 o_update_window_ok         : sbf    = out file("outputs/update_window_ok.out").
 
-# All host-computed checks combined.
+# All computed checks combined.
 o_all_checks_ok            : sbf    = out file("outputs/all_checks_ok.out").
 
 # Result
@@ -49,33 +58,86 @@ o_accept                  : sbf    = out file("outputs/accept.out").
 
 defs
 r (
-    # Echo checks for audit/debug
-    (o_burn_in_range_ok[t]    = i_burn_in_range_ok[t]) &&
-    (o_auction_in_range_ok[t] = i_auction_in_range_ok[t]) &&
-    (o_drip_in_range_ok[t]    = i_drip_in_range_ok[t]) &&
-    (o_burn_step_ok[t]        = i_burn_step_ok[t]) &&
-    (o_auction_step_ok[t]     = i_auction_step_ok[t]) &&
-    (o_drip_step_ok[t]        = i_drip_step_ok[t]) &&
-    (o_split_ok[t]            = i_split_ok[t]) &&
+    # Bounds checks.
+    (
+        ((i_new_burn_surplus_bps[t] >= i_min_burn_bps[t]) &&
+         (i_new_burn_surplus_bps[t] <= i_max_burn_bps[t]))
+        ? (o_burn_in_range_ok[t] = 1:sbf)
+        : (o_burn_in_range_ok[t] = 0:sbf)
+    ) &&
+    (
+        ((i_new_auction_surplus_bps[t] >= i_min_auction_bps[t]) &&
+         (i_new_auction_surplus_bps[t] <= i_max_auction_bps[t]))
+        ? (o_auction_in_range_ok[t] = 1:sbf)
+        : (o_auction_in_range_ok[t] = 0:sbf)
+    ) &&
+    (
+        ((i_new_drip_rate_bps[t] >= i_min_drip_bps[t]) &&
+         (i_new_drip_rate_bps[t] <= i_max_drip_bps[t]))
+        ? (o_drip_in_range_ok[t] = 1:sbf)
+        : (o_drip_in_range_ok[t] = 0:sbf)
+    ) &&
+
+    # Step checks: |new-old| <= step.
+    (
+        (i_new_burn_surplus_bps[t] >= i_old_burn_surplus_bps[t])
+        ?
+            (((i_new_burn_surplus_bps[t] - i_old_burn_surplus_bps[t]) <= i_step_burn_bps[t])
+                ? (o_burn_step_ok[t] = 1:sbf)
+                : (o_burn_step_ok[t] = 0:sbf))
+        :
+            (((i_old_burn_surplus_bps[t] - i_new_burn_surplus_bps[t]) <= i_step_burn_bps[t])
+                ? (o_burn_step_ok[t] = 1:sbf)
+                : (o_burn_step_ok[t] = 0:sbf))
+    ) &&
+    (
+        (i_new_auction_surplus_bps[t] >= i_old_auction_surplus_bps[t])
+        ?
+            (((i_new_auction_surplus_bps[t] - i_old_auction_surplus_bps[t]) <= i_step_auction_bps[t])
+                ? (o_auction_step_ok[t] = 1:sbf)
+                : (o_auction_step_ok[t] = 0:sbf))
+        :
+            (((i_old_auction_surplus_bps[t] - i_new_auction_surplus_bps[t]) <= i_step_auction_bps[t])
+                ? (o_auction_step_ok[t] = 1:sbf)
+                : (o_auction_step_ok[t] = 0:sbf))
+    ) &&
+    (
+        (i_new_drip_rate_bps[t] >= i_old_drip_rate_bps[t])
+        ?
+            (((i_new_drip_rate_bps[t] - i_old_drip_rate_bps[t]) <= i_step_drip_bps[t])
+                ? (o_drip_step_ok[t] = 1:sbf)
+                : (o_drip_step_ok[t] = 0:sbf))
+        :
+            (((i_old_drip_rate_bps[t] - i_new_drip_rate_bps[t]) <= i_step_drip_bps[t])
+                ? (o_drip_step_ok[t] = 1:sbf)
+                : (o_drip_step_ok[t] = 0:sbf))
+    ) &&
+
+    # Split cap. Range checks above keep the addition inside bv[16] for bps values.
+    (
+        ((i_new_burn_surplus_bps[t] + i_new_auction_surplus_bps[t]) <= {10000}:bv[16])
+        ? (o_split_ok[t] = 1:sbf)
+        : (o_split_ok[t] = 0:sbf)
+    ) &&
     (o_params_version_ok[t]   = i_params_version_ok[t]) &&
     (o_update_window_ok[t]    = i_update_window_ok[t]) &&
 
     (o_all_checks_ok[t] =
-        i_burn_in_range_ok[t]
-        & i_auction_in_range_ok[t]
-        & i_drip_in_range_ok[t]
-        & i_burn_step_ok[t]
-        & i_auction_step_ok[t]
-        & i_drip_step_ok[t]
-        & i_split_ok[t]
+        o_burn_in_range_ok[t]
+        & o_auction_in_range_ok[t]
+        & o_drip_in_range_ok[t]
+        & o_burn_step_ok[t]
+        & o_auction_step_ok[t]
+        & o_drip_step_ok[t]
+        & o_split_ok[t]
+        & o_params_version_ok[t]
+        & o_update_window_ok[t]
     ) &&
 
-    # Final acceptance: link + auth + versioning + update window + all parameter checks
+    # Final acceptance: link + auth + all derived parameter/version/window checks.
     (o_accept[t] =
         i_link_ok[t]
         & i_control_auth_ok[t]
-        & i_params_version_ok[t]
-        & i_update_window_ok[t]
         & o_all_checks_ok[t]
     )
 )

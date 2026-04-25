@@ -1363,6 +1363,89 @@ fn robust_private_verifier_rejects_tampered_encrypted_state() {
 }
 
 #[test]
+fn robust_private_verifier_rejects_tampered_revealed_fields() {
+    if should_skip_due_to_missing_risc0_methods() {
+        return;
+    }
+
+    let mut image_id = [0u8; 32];
+    for (i, word) in MPRD_GUEST_ID.iter().enumerate() {
+        image_id[i * 4..(i + 1) * 4].copy_from_slice(&word.to_le_bytes());
+    }
+
+    let config = ModeConfig::mode_c(image_id, "test-key");
+    let encryption_config = mprd_zk::modes_v2::EncryptionConfig {
+        master_key: Some([42u8; 32]),
+        revealed_fields: vec!["public_counter".into()],
+        encrypted_fields: vec!["secret_value".into()],
+        ..Default::default()
+    };
+    let attestor = RobustPrivateAttestor::new(config.clone(), encryption_config)
+        .expect("Private attestor should be created");
+    let verifier =
+        RobustPrivateVerifier::new(config.clone()).expect("Private verifier should be created");
+
+    let state = StateSnapshot {
+        fields: HashMap::from([
+            ("public_counter".into(), Value::UInt(7)),
+            ("secret_value".into(), Value::UInt(99)),
+        ]),
+        policy_inputs: HashMap::new(),
+        state_hash: dummy_hash(1),
+        state_ref: mprd_core::StateRef::unknown(),
+    };
+
+    let chosen_action = CandidateAction {
+        action_type: "TEST".into(),
+        params: HashMap::new(),
+        score: mprd_core::Score(10),
+        candidate_hash: dummy_hash(2),
+    };
+
+    let candidates = vec![chosen_action.clone()];
+
+    let decision = mprd_core::Decision {
+        chosen_index: 0,
+        chosen_action,
+        policy_hash: dummy_hash(3),
+        decision_commitment: dummy_hash(4),
+    };
+
+    let token = mprd_core::DecisionToken {
+        policy_hash: decision.policy_hash,
+        policy_ref: dummy_policy_ref(),
+        state_hash: state.state_hash,
+        state_ref: state.state_ref.clone(),
+        chosen_action_hash: decision.chosen_action.candidate_hash,
+        nonce_or_tx_hash: dummy_hash(5),
+        timestamp_ms: 0,
+        signature: vec![],
+    };
+
+    let mut proof = match attestor.attest(&token, &decision, &state, &candidates) {
+        Ok(p) => p,
+        Err(e) => {
+            if should_skip_due_to_r0vm_mismatch(&e) {
+                return;
+            }
+            panic!("Mode C attestation should succeed: {e}");
+        }
+    };
+
+    if let Some(enc_json) = proof.attestation_metadata.get_mut("encrypted_state") {
+        let mut parsed: mprd_zk::EncryptedState = serde_json::from_str(enc_json)
+            .expect("encrypted_state should be valid JSON before tampering");
+        parsed
+            .revealed_fields
+            .insert("public_counter".into(), Value::UInt(999));
+        *enc_json = serde_json::to_string(&parsed).expect("re-serialization should succeed");
+    }
+
+    let status = verifier.verify(&token, &proof);
+    assert!(matches!(status, VerificationStatus::Failure(_)));
+}
+
+#[test]
 fn mode_properties() {
     // Mode A: No ZK, no encryption
     assert!(!DeploymentMode::LocalTrusted.requires_zk());
