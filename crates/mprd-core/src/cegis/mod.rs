@@ -28,12 +28,29 @@ impl State {
     ///
     /// `state_hash` is derived from `signals` using a canonical encoding.
     pub fn new(timestamp_epoch: EpochId, signals: BTreeMap<String, bool>) -> Self {
+        Self::try_new(timestamp_epoch, signals)
+            .expect("CEGIS State::new received reserved state signal")
+    }
+
+    /// Construct a deterministic CEGIS state from untrusted signals.
+    ///
+    /// Reserved `action_*` atoms are derived from the candidate action and cannot be supplied by
+    /// state. Rejecting them at construction time keeps witness spaces unambiguous for callers
+    /// that build CEGIS states from external snapshots.
+    pub fn try_new(timestamp_epoch: EpochId, signals: BTreeMap<String, bool>) -> Result<Self> {
+        for key in signals.keys() {
+            if is_reserved_state_signal(key) {
+                return Err(MprdError::InvalidInput(format!(
+                    "reserved CEGIS state signal: {key}"
+                )));
+            }
+        }
         let state_hash = hash_cegis_state_v1(&signals);
-        Self {
+        Ok(Self {
             state_hash,
             timestamp_epoch,
             signals,
-        }
+        })
     }
 
     pub fn state_hash(&self) -> Hash32 {
@@ -47,6 +64,13 @@ impl State {
     pub fn signals(&self) -> &BTreeMap<String, bool> {
         &self.signals
     }
+}
+
+fn is_reserved_state_signal(key: &str) -> bool {
+    key == "action_noop"
+        || key.starts_with("action_db_")
+        || key.starts_with("action_da_")
+        || key.starts_with("action_dd_")
 }
 
 /// Canonical hashing for `State` signals.
@@ -575,7 +599,9 @@ mod tests {
 
         let mut signals = BTreeMap::new();
         signals.insert("action_db_pos".to_string(), false);
-        let state = State::new(EpochId(3), signals);
+        assert!(State::try_new(EpochId(3), signals).is_err());
+
+        let state = State::new(EpochId(3), BTreeMap::new());
         let denied_action = ActionId::from_delta(&crate::tokenomics_v6::types::Delta {
             db: Step::Pos,
             da: Step::Zero,

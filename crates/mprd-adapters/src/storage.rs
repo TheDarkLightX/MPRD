@@ -58,6 +58,8 @@ pub struct LocalPolicyStorage {
     cache: Arc<RwLock<HashMap<PolicyHash, Vec<u8>>>>,
 }
 
+const MAX_LOCAL_POLICY_BYTES: u64 = 1024 * 1024;
+
 impl LocalPolicyStorage {
     /// Create a new local storage at the given directory.
     pub fn new(base_dir: impl Into<PathBuf>) -> Result<Self> {
@@ -81,6 +83,39 @@ impl LocalPolicyStorage {
     fn compute_hash(bytes: &[u8]) -> PolicyHash {
         mprd_core::hash::sha256_domain(mprd_core::hash::POLICY_TAU_DOMAIN_V1, bytes)
     }
+
+    fn read_policy_file_bounded(&self, path: &PathBuf) -> Result<Vec<u8>> {
+        let meta = fs::symlink_metadata(path)
+            .map_err(|e| MprdError::ConfigError(format!("Failed to stat policy file: {}", e)))?;
+        if !meta.file_type().is_file() {
+            return Err(MprdError::ConfigError(
+                "Refusing to read non-regular policy file".into(),
+            ));
+        }
+        if meta.len() > MAX_LOCAL_POLICY_BYTES {
+            return Err(MprdError::ConfigError(format!(
+                "Policy file exceeds maximum size: {} > {}",
+                meta.len(),
+                MAX_LOCAL_POLICY_BYTES
+            )));
+        }
+
+        let file = File::open(path)
+            .map_err(|e| MprdError::ConfigError(format!("Failed to open policy file: {}", e)))?;
+        let mut limited = file.take(MAX_LOCAL_POLICY_BYTES.saturating_add(1));
+        let mut bytes = Vec::with_capacity(meta.len() as usize);
+        limited
+            .read_to_end(&mut bytes)
+            .map_err(|e| MprdError::ConfigError(format!("Failed to read policy: {}", e)))?;
+        if (bytes.len() as u64) > MAX_LOCAL_POLICY_BYTES {
+            return Err(MprdError::ConfigError(format!(
+                "Policy file exceeds maximum size: {} > {}",
+                bytes.len(),
+                MAX_LOCAL_POLICY_BYTES
+            )));
+        }
+        Ok(bytes)
+    }
 }
 
 fn verify_policy_hash_matches_expected(expected: &PolicyHash, policy_bytes: &[u8]) -> Result<()> {
@@ -97,12 +132,39 @@ fn verify_policy_hash_matches_expected(expected: &PolicyHash, policy_bytes: &[u8
 
 impl PolicyStorage for LocalPolicyStorage {
     fn store(&self, policy_bytes: &[u8]) -> Result<PolicyHash> {
+        if (policy_bytes.len() as u64) > MAX_LOCAL_POLICY_BYTES {
+            return Err(MprdError::ConfigError(format!(
+                "Policy exceeds maximum size: {} > {}",
+                policy_bytes.len(),
+                MAX_LOCAL_POLICY_BYTES
+            )));
+        }
         let hash = Self::compute_hash(policy_bytes);
         let path = self.path_for(&hash);
 
         // Skip if already exists (content-addressed dedup)
-        if path.exists() {
-            return Ok(hash);
+        match fs::symlink_metadata(&path) {
+            Ok(meta) => {
+                if !meta.file_type().is_file() {
+                    return Err(MprdError::ConfigError(
+                        "Refusing to reuse non-regular policy file".into(),
+                    ));
+                }
+                let existing = self.read_policy_file_bounded(&path)?;
+                if existing != policy_bytes {
+                    return Err(MprdError::ConfigError(
+                        "Existing policy file content does not match requested content".into(),
+                    ));
+                }
+                return Ok(hash);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(MprdError::ConfigError(format!(
+                    "Failed to stat policy file: {}",
+                    e
+                )))
+            }
         }
 
         // Write to file
@@ -134,12 +196,7 @@ impl PolicyStorage for LocalPolicyStorage {
             return Ok(None);
         }
 
-        let mut file = File::open(&path)
-            .map_err(|e| MprdError::ConfigError(format!("Failed to open policy file: {}", e)))?;
-
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
-            .map_err(|e| MprdError::ConfigError(format!("Failed to read policy: {}", e)))?;
+        let bytes = self.read_policy_file_bounded(&path)?;
 
         // Verify hash
         let computed = Self::compute_hash(&bytes);
@@ -160,7 +217,14 @@ impl PolicyStorage for LocalPolicyStorage {
     }
 
     fn exists(&self, hash: &PolicyHash) -> Result<bool> {
-        Ok(self.path_for(hash).exists())
+        match fs::symlink_metadata(self.path_for(hash)) {
+            Ok(meta) => Ok(meta.file_type().is_file()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(MprdError::ConfigError(format!(
+                "Failed to stat policy file: {}",
+                e
+            ))),
+        }
     }
 
     fn list(&self) -> Result<Vec<PolicyHash>> {
@@ -506,5 +570,94 @@ mod tests {
         let hash_a = LocalPolicyStorage::compute_hash(policy_a);
         let result = verify_policy_hash_matches_expected(&hash_a, policy_b);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn local_storage_rejects_oversized_policy_file_before_hashing() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("mprd_storage_oversize_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let storage = LocalPolicyStorage::new(&temp_dir).unwrap();
+        let hash = Hash32([7u8; 32]);
+        let path = storage.path_for(&hash);
+        std::fs::write(&path, vec![0u8; (MAX_LOCAL_POLICY_BYTES + 1) as usize]).unwrap();
+
+        let err = storage
+            .retrieve(&hash)
+            .expect_err("oversized policy must be rejected");
+        assert!(
+            err.to_string().contains("exceeds maximum size"),
+            "unexpected error: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn local_storage_rejects_oversized_policy_input() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "mprd_storage_oversize_input_test_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let storage = LocalPolicyStorage::new(&temp_dir).unwrap();
+
+        let err = storage
+            .store(&vec![0u8; (MAX_LOCAL_POLICY_BYTES + 1) as usize])
+            .expect_err("oversized policy input must be rejected");
+        assert!(
+            err.to_string().contains("exceeds maximum size"),
+            "unexpected error: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_storage_rejects_symlinked_policy_file() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("mprd_storage_symlink_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let storage = LocalPolicyStorage::new(&temp_dir).unwrap();
+        let hash = Hash32([8u8; 32]);
+        std::os::unix::fs::symlink("/dev/null", storage.path_for(&hash)).unwrap();
+
+        let err = storage
+            .retrieve(&hash)
+            .expect_err("symlinked policy must be rejected");
+        assert!(
+            err.to_string().contains("non-regular policy file"),
+            "unexpected error: {err}"
+        );
+        assert!(!storage
+            .exists(&hash)
+            .expect("symlink stat should be handled"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_storage_store_rejects_existing_symlink_path() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "mprd_storage_store_symlink_test_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let storage = LocalPolicyStorage::new(&temp_dir).unwrap();
+        let policy = b"policy";
+        let hash = LocalPolicyStorage::compute_hash(policy);
+        std::os::unix::fs::symlink("/dev/null", storage.path_for(&hash)).unwrap();
+
+        let err = storage
+            .store(policy)
+            .expect_err("existing symlink path must be rejected");
+        assert!(
+            err.to_string().contains("non-regular policy file"),
+            "unexpected error: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

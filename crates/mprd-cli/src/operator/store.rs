@@ -9,6 +9,7 @@ use mprd_zk::bounded_deser::MAX_RECEIPT_BYTES;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -296,11 +297,19 @@ impl OperatorStore {
     const MAX_LIMITS_BYTES: u64 = 4 * 1024;
     const MAX_CHOSEN_ACTION_PREIMAGE_BYTES: u64 =
         mprd_core::validation::MAX_CANDIDATE_PREIMAGE_BYTES_V1 as u64;
+    const MAX_OPERATOR_RECORD_BYTES: u64 = 1024 * 1024;
+    const MAX_OPERATOR_STATUS_BYTES: u64 = 16 * 1024;
+    const MAX_OPERATOR_SETTINGS_BYTES: u64 = 16 * 1024;
+    const MAX_OPERATOR_AUTOPILOT_STATE_BYTES: u64 = 16 * 1024;
+    const MAX_OPERATOR_AUTOPILOT_ACTIONS_BYTES: u64 = 256 * 1024;
+    const MAX_OPERATOR_ALERT_STATE_BYTES: u64 = 128 * 1024;
 
-    fn read_bounded_file(path: &Path, max_payload_bytes: u64) -> anyhow::Result<Vec<u8>> {
-        let max_total_bytes = max_payload_bytes.saturating_add(wire::MAX_HEADER_BYTES as u64);
-        let meta =
-            fs::metadata(path).with_context(|| format!("failed to stat {}", path.display()))?;
+    fn read_regular_file_bounded(path: &Path, max_total_bytes: u64) -> anyhow::Result<Vec<u8>> {
+        let meta = fs::symlink_metadata(path)
+            .with_context(|| format!("failed to stat {}", path.display()))?;
+        if !meta.file_type().is_file() {
+            anyhow::bail!("refusing to read non-regular file {}", path.display());
+        }
         let len = meta.len();
         if len > max_total_bytes {
             anyhow::bail!(
@@ -311,7 +320,13 @@ impl OperatorStore {
             );
         }
 
-        let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+        let file =
+            fs::File::open(path).with_context(|| format!("failed to read {}", path.display()))?;
+        let mut limited = file.take(max_total_bytes.saturating_add(1));
+        let mut bytes = Vec::with_capacity(len as usize);
+        limited
+            .read_to_end(&mut bytes)
+            .with_context(|| format!("failed to read {}", path.display()))?;
         if (bytes.len() as u64) > max_total_bytes {
             anyhow::bail!(
                 "refusing to read {} ({} bytes exceeds max {} bytes)",
@@ -321,6 +336,37 @@ impl OperatorStore {
             );
         }
         Ok(bytes)
+    }
+
+    fn read_optional_regular_file_bounded(
+        path: &Path,
+        max_total_bytes: u64,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        match fs::symlink_metadata(path) {
+            Ok(_) => Self::read_regular_file_bounded(path, max_total_bytes).map(Some),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => {
+                Err(anyhow::Error::new(e).context(format!("failed to stat {}", path.display())))
+            }
+        }
+    }
+
+    fn read_optional_json_file<T: serde::de::DeserializeOwned>(
+        path: &Path,
+        max_total_bytes: u64,
+        label: &str,
+    ) -> anyhow::Result<Option<T>> {
+        let Some(bytes) = Self::read_optional_regular_file_bounded(path, max_total_bytes)? else {
+            return Ok(None);
+        };
+        let decoded = serde_json::from_slice(&bytes)
+            .with_context(|| format!("failed to parse {label} JSON at {}", path.display()))?;
+        Ok(Some(decoded))
+    }
+
+    fn read_bounded_file(path: &Path, max_payload_bytes: u64) -> anyhow::Result<Vec<u8>> {
+        let max_total_bytes = max_payload_bytes.saturating_add(wire::MAX_HEADER_BYTES as u64);
+        Self::read_regular_file_bounded(path, max_total_bytes)
     }
 
     fn derive_chosen_action_preimage_from_receipt_bytes(
@@ -425,21 +471,25 @@ impl OperatorStore {
         root: &std::path::Path,
     ) -> anyhow::Result<Option<OperatorRetentionSettingsV1>> {
         let path = Self::retention_settings_path(root);
-        let bytes = match fs::read(&path) {
-            Ok(b) => b,
-            Err(_) => return Ok(None),
-        };
-        let settings: OperatorRetentionSettingsV1 = match serde_json::from_slice(&bytes) {
-            Ok(s) => s,
-            Err(_) => return Ok(None),
+        let Some(settings) = Self::read_optional_json_file::<OperatorRetentionSettingsV1>(
+            &path,
+            Self::MAX_OPERATOR_SETTINGS_BYTES,
+            "operator retention settings",
+        )?
+        else {
+            return Ok(None);
         };
         if settings.version != SETTINGS_VERSION_V1 {
-            return Ok(None);
+            anyhow::bail!(
+                "unsupported operator retention settings version {} at {}",
+                settings.version,
+                path.display()
+            );
         }
         if normalize_retention_days(settings.decision_retention_days).is_err()
             || normalize_max_decisions(settings.decision_max).is_err()
         {
-            return Ok(None);
+            anyhow::bail!("invalid operator retention settings at {}", path.display());
         }
         Ok(Some(settings))
     }
@@ -496,17 +546,20 @@ impl OperatorStore {
         root: &std::path::Path,
     ) -> anyhow::Result<Option<AutopilotStateFileV1>> {
         let path = Self::autopilot_state_path(root);
-        let bytes = match fs::read(&path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(e.into()),
-        };
-
-        let Ok(state) = serde_json::from_slice::<AutopilotStateFileV1>(&bytes) else {
+        let Some(state) = Self::read_optional_json_file::<AutopilotStateFileV1>(
+            &path,
+            Self::MAX_OPERATOR_AUTOPILOT_STATE_BYTES,
+            "operator autopilot state",
+        )?
+        else {
             return Ok(None);
         };
         if state.version != AUTOPILOT_STATE_VERSION_V1 {
-            return Ok(None);
+            anyhow::bail!(
+                "unsupported operator autopilot state version {} at {}",
+                state.version,
+                path.display()
+            );
         }
         Ok(Some(state))
     }
@@ -556,12 +609,12 @@ impl OperatorStore {
     ) -> anyhow::Result<Vec<api::AutoAction>> {
         let limit = limit.clamp(1, 200);
         let path = Self::autopilot_actions_path(&self.root);
-        let bytes = match fs::read(&path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e.into()),
-        };
-        let mut items: Vec<api::AutoAction> = serde_json::from_slice(&bytes).unwrap_or_default();
+        let mut items: Vec<api::AutoAction> = Self::read_optional_json_file(
+            &path,
+            Self::MAX_OPERATOR_AUTOPILOT_ACTIONS_BYTES,
+            "operator autopilot actions",
+        )?
+        .unwrap_or_default();
         if items.len() > limit {
             items.truncate(limit);
         }
@@ -570,10 +623,12 @@ impl OperatorStore {
 
     pub(crate) fn append_autopilot_action(&self, action: api::AutoAction) -> anyhow::Result<()> {
         let path = Self::autopilot_actions_path(&self.root);
-        let mut items: Vec<api::AutoAction> = match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-            Err(_) => Vec::new(),
-        };
+        let mut items: Vec<api::AutoAction> = Self::read_optional_json_file(
+            &path,
+            Self::MAX_OPERATOR_AUTOPILOT_ACTIONS_BYTES,
+            "operator autopilot actions",
+        )?
+        .unwrap_or_default();
         items.insert(0, action);
         if items.len() > 200 {
             items.truncate(200);
@@ -908,7 +963,10 @@ impl OperatorStore {
     }
 
     pub fn read_record(&self, decision_id_hex: &str) -> anyhow::Result<OperatorDecisionRecordV1> {
-        let bytes = fs::read(self.decision_dir(decision_id_hex).join("record.json"))?;
+        let bytes = Self::read_regular_file_bounded(
+            &self.decision_dir(decision_id_hex).join("record.json"),
+            Self::MAX_OPERATOR_RECORD_BYTES,
+        )?;
         let mut record: OperatorDecisionRecordV1 = serde_json::from_slice(&bytes)?;
         if record.proof.chosen_action_preimage_storage_mode.is_none() {
             record.proof.chosen_action_preimage_storage_mode =
@@ -916,34 +974,43 @@ impl OperatorStore {
                     &record.proof.chosen_action_preimage_path,
                 ));
         }
-        self.apply_status_updates(decision_id_hex, &mut record);
+        self.apply_status_updates(decision_id_hex, &mut record)?;
         Ok(record)
     }
 
-    fn apply_status_updates(&self, decision_id_hex: &str, record: &mut OperatorDecisionRecordV1) {
-        if let Ok(bytes) = fs::read(self.proof_status_path(decision_id_hex)) {
-            if let Ok(update) = serde_json::from_slice::<OperatorProofStatusUpdateV1>(&bytes) {
-                record.summary.proof_status = update.proof_status;
-                record.proof.verified_at_ms = update.verified_at_ms;
-            }
+    fn apply_status_updates(
+        &self,
+        decision_id_hex: &str,
+        record: &mut OperatorDecisionRecordV1,
+    ) -> anyhow::Result<()> {
+        if let Some(update) = Self::read_optional_json_file::<OperatorProofStatusUpdateV1>(
+            &self.proof_status_path(decision_id_hex),
+            Self::MAX_OPERATOR_STATUS_BYTES,
+            "operator proof status update",
+        )? {
+            record.summary.proof_status = update.proof_status;
+            record.proof.verified_at_ms = update.verified_at_ms;
         }
 
-        if let Ok(bytes) = fs::read(self.execution_path(decision_id_hex)) {
-            if let Ok(update) = serde_json::from_slice::<OperatorExecutionUpdateV1>(&bytes) {
-                record.execution = Some(OperatorExecutionV1 {
-                    success: update.success,
-                    message: update.message,
-                    executor: update.executor,
-                    duration_ms: update.duration_ms,
-                });
-                record.summary.execution_status =
-                    if record.execution.as_ref().is_some_and(|e| e.success) {
-                        api::ExecutionStatus::Success
-                    } else {
-                        api::ExecutionStatus::Failed
-                    };
-            }
+        if let Some(update) = Self::read_optional_json_file::<OperatorExecutionUpdateV1>(
+            &self.execution_path(decision_id_hex),
+            Self::MAX_OPERATOR_STATUS_BYTES,
+            "operator execution status update",
+        )? {
+            record.execution = Some(OperatorExecutionV1 {
+                success: update.success,
+                message: update.message,
+                executor: update.executor,
+                duration_ms: update.duration_ms,
+            });
+            record.summary.execution_status =
+                if record.execution.as_ref().is_some_and(|e| e.success) {
+                    api::ExecutionStatus::Success
+                } else {
+                    api::ExecutionStatus::Failed
+                };
         }
+        Ok(())
     }
 
     pub fn list_summaries(
@@ -1030,9 +1097,12 @@ impl OperatorStore {
             }
             let id = entry.file_name().to_string_lossy().to_string();
             let record_path = entry.path().join("record.json");
-            let ts = match fs::read(&record_path)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<OperatorDecisionRecordV1>(&bytes).ok())
+            let ts = match Self::read_regular_file_bounded(
+                &record_path,
+                Self::MAX_OPERATOR_RECORD_BYTES,
+            )
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<OperatorDecisionRecordV1>(&bytes).ok())
             {
                 Some(record) => record.token.timestamp_ms,
                 None => record_path
@@ -1093,13 +1163,13 @@ impl OperatorStore {
 
     fn prune_alert_acknowledgements(&self, keep_decisions: &HashSet<String>) -> anyhow::Result<()> {
         let path = self.alert_ack_path();
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(_) => return Ok(()),
-        };
-        let mut acks: HashMap<String, i64> = match serde_json::from_slice(&bytes) {
-            Ok(v) => v,
-            Err(_) => return Ok(()),
+        let Some(mut acks) = Self::read_optional_json_file::<HashMap<String, i64>>(
+            &path,
+            Self::MAX_OPERATOR_ALERT_STATE_BYTES,
+            "operator alert acknowledgements",
+        )?
+        else {
+            return Ok(());
         };
         let before = acks.len();
         acks.retain(|id, _| {
@@ -1121,13 +1191,13 @@ impl OperatorStore {
 
     fn prune_incident_snoozes(&self) -> anyhow::Result<()> {
         let path = self.incident_snooze_path();
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(_) => return Ok(()),
-        };
-        let mut snoozes: HashMap<String, i64> = match serde_json::from_slice(&bytes) {
-            Ok(v) => v,
-            Err(_) => return Ok(()),
+        let Some(mut snoozes) = Self::read_optional_json_file::<HashMap<String, i64>>(
+            &path,
+            Self::MAX_OPERATOR_ALERT_STATE_BYTES,
+            "operator incident snoozes",
+        )?
+        else {
+            return Ok(());
         };
         let before = snoozes.len();
         let now = now_ms();
@@ -1176,10 +1246,12 @@ impl OperatorStore {
 
     pub fn snooze_incident(&self, incident_id: &str, snoozed_until_ms: i64) -> anyhow::Result<()> {
         let path = self.incident_snooze_path();
-        let mut snoozes: HashMap<String, i64> = match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-            Err(_) => HashMap::new(),
-        };
+        let mut snoozes: HashMap<String, i64> = Self::read_optional_json_file(
+            &path,
+            Self::MAX_OPERATOR_ALERT_STATE_BYTES,
+            "operator incident snoozes",
+        )?
+        .unwrap_or_default();
         snoozes.insert(incident_id.to_string(), snoozed_until_ms);
         let bytes = serde_json::to_vec_pretty(&snoozes)?;
         atomic_write(&path, &bytes)?;
@@ -1188,10 +1260,12 @@ impl OperatorStore {
 
     pub fn clear_incident_snooze(&self, incident_id: &str) -> anyhow::Result<()> {
         let path = self.incident_snooze_path();
-        let mut snoozes: HashMap<String, i64> = match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-            Err(_) => HashMap::new(),
-        };
+        let mut snoozes: HashMap<String, i64> = Self::read_optional_json_file(
+            &path,
+            Self::MAX_OPERATOR_ALERT_STATE_BYTES,
+            "operator incident snoozes",
+        )?
+        .unwrap_or_default();
         if snoozes.remove(incident_id).is_some() {
             let bytes = serde_json::to_vec_pretty(&snoozes)?;
             atomic_write(&path, &bytes)?;
@@ -1201,21 +1275,24 @@ impl OperatorStore {
 
     pub fn incident_snoozed_until(&self, incident_id: &str) -> Option<i64> {
         let path = self.incident_snooze_path();
-        let Ok(bytes) = fs::read(&path) else {
-            return None;
-        };
-        let Ok(snoozes) = serde_json::from_slice::<HashMap<String, i64>>(&bytes) else {
-            return None;
-        };
+        let snoozes = Self::read_optional_json_file::<HashMap<String, i64>>(
+            &path,
+            Self::MAX_OPERATOR_ALERT_STATE_BYTES,
+            "operator incident snoozes",
+        )
+        .ok()
+        .flatten()?;
         snoozes.get(incident_id).copied()
     }
 
     pub fn acknowledge_alert(&self, id: &str) -> anyhow::Result<()> {
         let path = self.alert_ack_path();
-        let mut acks: HashMap<String, i64> = match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-            Err(_) => HashMap::new(),
-        };
+        let mut acks: HashMap<String, i64> = Self::read_optional_json_file(
+            &path,
+            Self::MAX_OPERATOR_ALERT_STATE_BYTES,
+            "operator alert acknowledgements",
+        )?
+        .unwrap_or_default();
         acks.insert(id.to_string(), now_ms());
         let bytes = serde_json::to_vec_pretty(&acks)?;
         atomic_write(&path, &bytes)?;
@@ -1224,10 +1301,13 @@ impl OperatorStore {
 
     pub fn is_alert_acknowledged(&self, id: &str) -> bool {
         let path = self.alert_ack_path();
-        let Ok(bytes) = fs::read(&path) else {
-            return false;
-        };
-        let Ok(acks) = serde_json::from_slice::<HashMap<String, i64>>(&bytes) else {
+        let Some(acks) = Self::read_optional_json_file::<HashMap<String, i64>>(
+            &path,
+            Self::MAX_OPERATOR_ALERT_STATE_BYTES,
+            "operator alert acknowledgements",
+        )
+        .ok()
+        .flatten() else {
             return false;
         };
         acks.contains_key(id)
@@ -1409,6 +1489,87 @@ mod tests {
         (token, proof, state, candidates, verdicts, decision)
     }
 
+    fn sample_auto_action() -> op_api::AutoAction {
+        op_api::AutoAction {
+            id: "auto-1".into(),
+            action_type: op_api::AutoActionType::AutoDismiss,
+            target: "incident-1".into(),
+            timestamp: 1,
+            explanation: op_api::Explanation {
+                summary: "test".into(),
+                evidence: "test".into(),
+                confidence: 1.0,
+                counterfactual: "none".into(),
+                audit_id: "audit-1".into(),
+                timestamp: 1,
+                operator_can_override: true,
+            },
+            reversible: true,
+        }
+    }
+
+    #[test]
+    fn corrupt_operator_ack_state_is_not_silently_overwritten() {
+        let tmp = TempDir::new().expect("tempdir");
+        let store = OperatorStore::new(tmp.path()).expect("store");
+        let path = tmp.path().join("alerts").join("ack.json");
+        std::fs::write(&path, b"{not-json").expect("write corrupt ack state");
+
+        let err = store
+            .acknowledge_alert("verification_failure:abc")
+            .expect_err("corrupt ack state must fail closed");
+
+        assert!(
+            err.to_string()
+                .contains("failed to parse operator alert acknowledgements JSON"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(std::fs::read(&path).expect("read ack state"), b"{not-json");
+    }
+
+    #[test]
+    fn corrupt_autopilot_actions_are_not_silently_reset() {
+        let tmp = TempDir::new().expect("tempdir");
+        let store = OperatorStore::new(tmp.path()).expect("store");
+        let path = tmp.path().join("autopilot").join("actions.json");
+        std::fs::write(&path, b"{not-json").expect("write corrupt actions");
+
+        let err = store
+            .append_autopilot_action(sample_auto_action())
+            .expect_err("corrupt autopilot actions must fail closed");
+
+        assert!(
+            err.to_string()
+                .contains("failed to parse operator autopilot actions JSON"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(std::fs::read(&path).expect("read actions"), b"{not-json");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proof_blob_reader_rejects_symlinked_receipt() {
+        let tmp = TempDir::new().expect("tempdir");
+        let store = OperatorStore::new(tmp.path()).expect("store");
+        let (token, proof, state, candidates, verdicts, decision) = sample_decision_inputs(true);
+        let id = store
+            .write_verified_decision(&token, &proof, &state, &candidates, &verdicts, &decision)
+            .expect("write decision");
+        let record = store.read_record(&id).expect("read record");
+        let receipt_path = store.decision_dir(&id).join("receipt.bin");
+        std::fs::remove_file(&receipt_path).expect("remove receipt");
+        std::os::unix::fs::symlink("/dev/null", &receipt_path).expect("symlink receipt");
+
+        let err = store
+            .blobs_for_proof(&id, &record)
+            .expect_err("symlinked receipt must be rejected");
+
+        assert!(
+            err.to_string().contains("non-regular file"),
+            "unexpected error: {err}"
+        );
+    }
+
     fn rewrite_receipt_as_mpb_lite_v2_compat(store: &OperatorStore, id: &str, proof: &ProofBundle) {
         let artifact =
             mprd_zk::mpb_lite::deserialize_artifact(&proof.risc0_receipt).expect("decode artifact");
@@ -1459,15 +1620,22 @@ mod tests {
     }
 
     #[test]
-    fn incident_snooze_recovers_from_corrupt_json() {
+    fn incident_snooze_fails_closed_on_corrupt_json() {
         let tmp = TempDir::new().expect("tempdir");
         let store = OperatorStore::new(tmp.path()).expect("store");
 
         let path = tmp.path().join("incidents").join("snooze.json");
         std::fs::write(&path, b"not-json").expect("write corrupt");
 
-        store.snooze_incident("inc_2", 999).expect("snooze");
-        assert_eq!(store.incident_snoozed_until("inc_2"), Some(999));
+        let err = store
+            .snooze_incident("inc_2", 999)
+            .expect_err("corrupt snooze state must fail closed");
+        assert!(
+            err.to_string()
+                .contains("failed to parse operator incident snoozes JSON"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(std::fs::read(&path).expect("read corrupt"), b"not-json");
     }
 
     #[test]
@@ -1508,7 +1676,7 @@ mod tests {
     }
 
     #[test]
-    fn autopilot_state_persists_and_recovers_from_corrupt_json() {
+    fn autopilot_state_persists_and_fails_closed_on_corrupt_json() {
         let tmp = TempDir::new().expect("tempdir");
         let store = OperatorStore::new(tmp.path()).expect("store");
 
@@ -1526,10 +1694,16 @@ mod tests {
         std::fs::write(&path, b"not-json").expect("write corrupt");
 
         drop(store2);
-        let store3 = OperatorStore::new(tmp.path()).expect("store3");
-        let s3 = store3.read_autopilot_state();
-        assert!(matches!(s3.mode, op_api::AutopilotMode::Manual));
-        assert!(s3.last_human_ack > 0);
+        let err = match OperatorStore::new(tmp.path()) {
+            Ok(_) => panic!("corrupt autopilot state must fail closed at startup"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string()
+                .contains("failed to parse operator autopilot state JSON"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(std::fs::read(&path).expect("read corrupt"), b"not-json");
     }
 
     #[test]

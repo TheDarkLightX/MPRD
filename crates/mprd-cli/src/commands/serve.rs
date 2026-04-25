@@ -2,8 +2,9 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
+use std::io::Read;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -35,6 +36,49 @@ use mprd_core::orchestrator::{self};
 use mprd_core::{DefaultSelector, PolicyEngine, PolicyHash, RuleVerdict, StateSnapshot, Value};
 
 type CoreResult<T> = mprd_core::Result<T>;
+
+const MAX_SERVE_JSON_FILE_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_OPERATOR_POLICY_TEXT_BYTES: u64 = 1024 * 1024;
+
+fn read_regular_file_bounded(path: &FsPath, max_total_bytes: u64) -> anyhow::Result<Vec<u8>> {
+    let meta = std::fs::symlink_metadata(path)
+        .map_err(|e| anyhow::anyhow!("failed to stat {}: {e}", path.display()))?;
+    if !meta.file_type().is_file() {
+        anyhow::bail!("refusing to read non-regular file {}", path.display());
+    }
+    let len = meta.len();
+    if len > max_total_bytes {
+        anyhow::bail!(
+            "refusing to read {} ({} bytes exceeds max {} bytes)",
+            path.display(),
+            len,
+            max_total_bytes
+        );
+    }
+
+    let file = std::fs::File::open(path)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+    let mut limited = file.take(max_total_bytes.saturating_add(1));
+    let mut bytes = Vec::with_capacity(len as usize);
+    limited
+        .read_to_end(&mut bytes)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+    if (bytes.len() as u64) > max_total_bytes {
+        anyhow::bail!(
+            "refusing to read {} ({} bytes exceeds max {} bytes)",
+            path.display(),
+            bytes.len(),
+            max_total_bytes
+        );
+    }
+    Ok(bytes)
+}
+
+fn read_regular_utf8_file_bounded(path: &FsPath, max_total_bytes: u64) -> anyhow::Result<String> {
+    let bytes = read_regular_file_bounded(path, max_total_bytes)?;
+    String::from_utf8(bytes)
+        .map_err(|e| anyhow::anyhow!("{} is not valid UTF-8: {e}", path.display()))
+}
 
 mod events;
 mod http_middleware;
@@ -280,9 +324,13 @@ fn load_signed_state_provider_from_config(
 
     let state_vk = TokenVerifyingKey::from_hex(state_key_hex)
         .map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
-    let json = std::fs::read_to_string(snapshot_path).map_err(|e| {
-        mprd_core::MprdError::ExecutionError(format!("Failed to read signed state snapshot: {}", e))
-    })?;
+    let json =
+        read_regular_utf8_file_bounded(snapshot_path, MAX_SERVE_JSON_FILE_BYTES).map_err(|e| {
+            mprd_core::MprdError::ExecutionError(format!(
+                "Failed to read signed state snapshot: {}",
+                e
+            ))
+        })?;
     let signed: SignedStateSnapshotV1 = serde_json::from_str(&json).map_err(|e| {
         mprd_core::MprdError::ExecutionError(format!("Invalid signed state snapshot JSON: {}", e))
     })?;
@@ -523,7 +571,7 @@ async fn run_handler(
             let signing_key = TokenSigningKey::from_hex(&signing_key_hex).map_err(|e| mprd_core::MprdError::ExecutionError(e.to_string()))?;
 
             // 2. Load Registry State
-            let json = std::fs::read_to_string(&registry_path).map_err(|e| mprd_core::MprdError::ExecutionError(format!("Failed to read registry state: {}", e)))?;
+            let json = read_regular_utf8_file_bounded(&registry_path, MAX_SERVE_JSON_FILE_BYTES).map_err(|e| mprd_core::MprdError::ExecutionError(format!("Failed to read registry state: {}", e)))?;
             let signed_registry: SignedRegistryStateV1 = serde_json::from_str(&json).map_err(|e| mprd_core::MprdError::ExecutionError(format!("Invalid registry state JSON: {}", e)))?;
 
             // 3. Setup Policy/State Provider (Registry Bound)
@@ -1730,7 +1778,7 @@ fn validate_serve_startup_config(
             .as_deref()
             .expect("checked above"),
     )?;
-    let registry_json = std::fs::read_to_string(registry_path)?;
+    let registry_json = read_regular_utf8_file_bounded(registry_path, MAX_SERVE_JSON_FILE_BYTES)?;
     let signed_registry: SignedRegistryStateV1 = serde_json::from_str(&registry_json)?;
     let registry_provider: Arc<dyn RegistryStateProvider> = Arc::new(
         SignedStaticRegistryStateProvider::new(signed_registry.clone(), registry_vk.clone()),
@@ -1843,6 +1891,29 @@ fn validate_serve_startup_config(
             &registry_vk,
             &registry_vk,
         )?;
+    }
+
+    Ok(())
+}
+
+fn validate_operator_api_auth_startup(
+    config: &super::MprdConfigFile,
+    insecure_demo: bool,
+) -> anyhow::Result<()> {
+    if insecure_demo {
+        return Ok(());
+    }
+
+    let mode = config.mode.trim().to_ascii_lowercase();
+    let production = mode == "trustless" || mode == "private";
+    if !production {
+        return Ok(());
+    }
+
+    if operator::auth::api_key_from_env().api_key.is_none() {
+        anyhow::bail!(
+            "production serve requires MPRD_OPERATOR_API_KEY for operator API authentication"
+        );
     }
 
     Ok(())
@@ -2736,17 +2807,13 @@ async fn api_decision_blob(
 
     fn read_bounded(path: &std::path::Path, max_payload_bytes: u64) -> Result<Vec<u8>, StatusCode> {
         let max_total = max_payload_bytes.saturating_add(mprd_core::wire::MAX_HEADER_BYTES as u64);
-        let len = std::fs::metadata(path)
-            .map_err(|_| StatusCode::NOT_FOUND)?
-            .len();
-        if len > max_total {
-            return Err(StatusCode::PAYLOAD_TOO_LARGE);
-        }
-        let bytes = std::fs::read(path).map_err(|_| StatusCode::NOT_FOUND)?;
-        if (bytes.len() as u64) > max_total {
-            return Err(StatusCode::PAYLOAD_TOO_LARGE);
-        }
-        Ok(bytes)
+        read_regular_file_bounded(path, max_total).map_err(|e| {
+            if e.to_string().contains("exceeds max") {
+                StatusCode::PAYLOAD_TOO_LARGE
+            } else {
+                StatusCode::NOT_FOUND
+            }
+        })
     }
 
     const MAX_LIMITS_BYTES: u64 = 4 * 1024;
@@ -2935,7 +3002,8 @@ async fn api_policy_detail(
     }
 
     let path = state.policy_dir.join(format!("{hash}.policy"));
-    let bytes = std::fs::read(&path).map_err(|_| StatusCode::NOT_FOUND)?;
+    let bytes = read_regular_file_bounded(&path, MAX_OPERATOR_POLICY_TEXT_BYTES)
+        .map_err(|_| StatusCode::NOT_FOUND)?;
     let spec = String::from_utf8(bytes).ok();
 
     let usage_count = state
@@ -2986,7 +3054,8 @@ async fn api_policy_validate(
         return Err(StatusCode::BAD_REQUEST);
     }
     let path = state.policy_dir.join(format!("{hash}.policy"));
-    let bytes = std::fs::read(&path).map_err(|_| StatusCode::NOT_FOUND)?;
+    let bytes = read_regular_file_bounded(&path, MAX_OPERATOR_POLICY_TEXT_BYTES)
+        .map_err(|_| StatusCode::NOT_FOUND)?;
     let spec = String::from_utf8(bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
     Ok(Json(validate_policy_text(&spec)))
 }
@@ -3127,7 +3196,7 @@ fn verifier_from_env() -> Result<Box<dyn mprd_core::ZkLocalVerifier>, String> {
             .map_err(|e| format!("invalid manifest verifying key: {e}"))?,
     };
 
-    let json = std::fs::read_to_string(&path)
+    let json = read_regular_utf8_file_bounded(FsPath::new(&path), MAX_SERVE_JSON_FILE_BYTES)
         .map_err(|e| format!("failed to read registry_state: {e}"))?;
     let signed: mprd_zk::registry_state::SignedRegistryStateV1 =
         serde_json::from_str(&json).map_err(|e| format!("failed to parse registry_state: {e}"))?;
@@ -3317,6 +3386,7 @@ pub fn run(
     // start in a configuration that can never satisfy the live fail-closed trust-anchor boundary.
     let config = config.unwrap_or_default();
     validate_serve_startup_config(&config, insecure_demo)?;
+    validate_operator_api_auth_startup(&config, insecure_demo)?;
 
     let policy_dir = policy_dir.unwrap_or_else(|| {
         config

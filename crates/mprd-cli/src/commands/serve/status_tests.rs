@@ -1,8 +1,10 @@
 use super::{
     compute_system_status, executor_component_health, select_production_serve_policy,
-    trust_anchors_configured_with, validate_retention_update, validate_serve_startup_config,
+    trust_anchors_configured_with, validate_operator_api_auth_startup, validate_retention_update,
+    validate_serve_startup_config,
 };
 use crate::operator::api as op_api;
+use crate::test_support::EnvGuard;
 use mprd_core::crypto::TokenSigningKey;
 use mprd_core::{Hash32, Value};
 use mprd_risc0_shared::{
@@ -388,6 +390,52 @@ fn serve_startup_validation_accepts_local_mode_without_trust_anchors() {
 
     validate_serve_startup_config(&config, false)
         .expect("local mode should not require production trust anchors at startup");
+}
+
+#[test]
+fn production_api_auth_startup_rejects_trustless_without_api_key() {
+    let _env = EnvGuard::set_many(&[("MPRD_OPERATOR_API_KEY", "")]);
+    let config = super::super::MprdConfigFile {
+        mode: "trustless".into(),
+        ..super::super::MprdConfigFile::default()
+    };
+
+    let err = validate_operator_api_auth_startup(&config, false)
+        .expect_err("trustless production serve must require operator API auth");
+    assert!(
+        err.to_string().contains("requires MPRD_OPERATOR_API_KEY"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn production_api_auth_startup_accepts_trustless_with_api_key() {
+    let _env = EnvGuard::set_many(&[("MPRD_OPERATOR_API_KEY", "test-secret")]);
+    let config = super::super::MprdConfigFile {
+        mode: "trustless".into(),
+        ..super::super::MprdConfigFile::default()
+    };
+
+    validate_operator_api_auth_startup(&config, false)
+        .expect("trustless production serve should accept configured API auth");
+}
+
+#[test]
+fn production_api_auth_startup_accepts_local_or_demo_without_api_key() {
+    let _env = EnvGuard::set_many(&[("MPRD_OPERATOR_API_KEY", "")]);
+    let local = super::super::MprdConfigFile {
+        mode: "local".into(),
+        ..super::super::MprdConfigFile::default()
+    };
+    validate_operator_api_auth_startup(&local, false)
+        .expect("local serve should remain auth-tolerant");
+
+    let trustless = super::super::MprdConfigFile {
+        mode: "trustless".into(),
+        ..super::super::MprdConfigFile::default()
+    };
+    validate_operator_api_auth_startup(&trustless, true)
+        .expect("insecure demo serve should remain auth-tolerant");
 }
 
 #[test]
