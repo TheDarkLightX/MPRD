@@ -1,0 +1,2448 @@
+{
+  "atlas": "internal/assurance/sota_stack/danger_atlas.json",
+  "blocked_family_summary": {
+    "blocked_kind_count": 0,
+    "by_kind": {
+      "blocker_bypass_disaster": {
+        "mandatory_or_unknown_blocked": 0,
+        "optional_blocked": 0,
+        "reachable_witness": 0,
+        "representative_blocked_hypothesis": null,
+        "researchable": 194,
+        "total": 194
+      },
+      "chain_researchability": {
+        "mandatory_or_unknown_blocked": 0,
+        "optional_blocked": 0,
+        "reachable_witness": 0,
+        "representative_blocked_hypothesis": null,
+        "researchable": 71,
+        "total": 71
+      },
+      "chain_terminal_disaster": {
+        "mandatory_or_unknown_blocked": 0,
+        "optional_blocked": 0,
+        "reachable_witness": 0,
+        "representative_blocked_hypothesis": null,
+        "researchable": 1079,
+        "total": 1079
+      },
+      "convergence_composition_disaster": {
+        "mandatory_or_unknown_blocked": 0,
+        "optional_blocked": 0,
+        "reachable_witness": 0,
+        "representative_blocked_hypothesis": null,
+        "researchable": 299,
+        "total": 299
+      },
+      "cycle_amplification_disaster": {
+        "mandatory_or_unknown_blocked": 0,
+        "optional_blocked": 0,
+        "reachable_witness": 0,
+        "representative_blocked_hypothesis": null,
+        "researchable": 66,
+        "total": 66
+      },
+      "edge_composition_disaster": {
+        "mandatory_or_unknown_blocked": 0,
+        "optional_blocked": 0,
+        "reachable_witness": 0,
+        "representative_blocked_hypothesis": null,
+        "researchable": 196,
+        "total": 196
+      },
+      "fanout_composition_disaster": {
+        "mandatory_or_unknown_blocked": 0,
+        "optional_blocked": 0,
+        "reachable_witness": 0,
+        "representative_blocked_hypothesis": null,
+        "researchable": 64,
+        "total": 64
+      },
+      "independent_pair_coreachability": {
+        "mandatory_or_unknown_blocked": 0,
+        "optional_blocked": 0,
+        "reachable_witness": 0,
+        "representative_blocked_hypothesis": null,
+        "researchable": 1000,
+        "total": 1000
+      },
+      "independent_triple_coreachability": {
+        "mandatory_or_unknown_blocked": 0,
+        "optional_blocked": 0,
+        "reachable_witness": 0,
+        "representative_blocked_hypothesis": null,
+        "researchable": 12714,
+        "total": 12714
+      },
+      "order_inversion_disaster": {
+        "mandatory_or_unknown_blocked": 0,
+        "optional_blocked": 0,
+        "reachable_witness": 0,
+        "representative_blocked_hypothesis": null,
+        "researchable": 196,
+        "total": 196
+      },
+      "receipt_fail_open_mutation": {
+        "mandatory_or_unknown_blocked": 0,
+        "optional_blocked": 0,
+        "reachable_witness": 0,
+        "representative_blocked_hypothesis": null,
+        "researchable": 11,
+        "total": 11
+      },
+      "reentry_retry_disaster": {
+        "mandatory_or_unknown_blocked": 0,
+        "optional_blocked": 0,
+        "reachable_witness": 0,
+        "representative_blocked_hypothesis": null,
+        "researchable": 66,
+        "total": 66
+      },
+      "single_surface_disaster": {
+        "mandatory_or_unknown_blocked": 0,
+        "optional_blocked": 0,
+        "reachable_witness": 0,
+        "representative_blocked_hypothesis": null,
+        "researchable": 47,
+        "total": 47
+      }
+    }
+  },
+  "composition_edges": [
+    {
+      "dst": "policy_artifact_run_lifecycle",
+      "reason": "registry authorization controls policy artifact materialization",
+      "src": "registry_key_rotation_authorization"
+    },
+    {
+      "dst": "tau_policy_certification_boundary",
+      "reason": "authorized policy artifacts feed Tau certification",
+      "src": "policy_artifact_run_lifecycle"
+    },
+    {
+      "dst": "selector_candidate_family",
+      "reason": "certified policy semantics constrain selector admissibility",
+      "src": "tau_policy_certification_boundary"
+    },
+    {
+      "dst": "selector_candidate_family",
+      "reason": "authorized policy artifacts constrain selectable candidates",
+      "src": "policy_artifact_run_lifecycle"
+    },
+    {
+      "dst": "orchestrator_pipeline_ordering",
+      "reason": "selector output enters the orchestrator pipeline",
+      "src": "selector_candidate_family"
+    },
+    {
+      "dst": "orchestrator_pipeline_ordering",
+      "reason": "trusted state provenance gates orchestrator decisions",
+      "src": "quorum_snapshot_attestation"
+    },
+    {
+      "dst": "decision_token_proof_journal_binding",
+      "reason": "orchestrator outputs become proof/journal commitments",
+      "src": "orchestrator_pipeline_ordering"
+    },
+    {
+      "dst": "replay_nonce_claim",
+      "reason": "bound decision tokens must clear replay before side effects",
+      "src": "decision_token_proof_journal_binding"
+    },
+    {
+      "dst": "executor_side_effect_boundary",
+      "reason": "replay clearance precedes local executor side effects",
+      "src": "replay_nonce_claim"
+    },
+    {
+      "dst": "executor_transport_boundary",
+      "reason": "local execution boundary precedes network transport",
+      "src": "executor_side_effect_boundary"
+    },
+    {
+      "dst": "orchestrator_pipeline_ordering",
+      "reason": "operator control-plane state influences orchestrator behavior",
+      "src": "operator_control_lifecycle"
+    }
+  ],
+  "compressed_independent_frontier": {
+    "by_order": [
+      {
+        "mandatory_blocked": 0,
+        "optional_blocked": 0,
+        "order": 1,
+        "researchable": 47,
+        "total": 47
+      },
+      {
+        "mandatory_blocked": 0,
+        "optional_blocked": 0,
+        "order": 2,
+        "researchable": 1000,
+        "total": 1000
+      },
+      {
+        "mandatory_blocked": 0,
+        "optional_blocked": 0,
+        "order": 3,
+        "researchable": 12714,
+        "total": 12714
+      },
+      {
+        "mandatory_blocked": 0,
+        "optional_blocked": 0,
+        "order": 4,
+        "researchable": 107325,
+        "total": 107325
+      },
+      {
+        "mandatory_blocked": 0,
+        "optional_blocked": 0,
+        "order": 5,
+        "researchable": 631599,
+        "total": 631599
+      },
+      {
+        "mandatory_blocked": 0,
+        "optional_blocked": 0,
+        "order": 6,
+        "researchable": 2644058,
+        "total": 2644058
+      },
+      {
+        "mandatory_blocked": 0,
+        "optional_blocked": 0,
+        "order": 7,
+        "researchable": 7873720,
+        "total": 7873720
+      },
+      {
+        "mandatory_blocked": 0,
+        "optional_blocked": 0,
+        "order": 8,
+        "researchable": 16344896,
+        "total": 16344896
+      },
+      {
+        "mandatory_blocked": 0,
+        "optional_blocked": 0,
+        "order": 9,
+        "researchable": 22525440,
+        "total": 22525440
+      },
+      {
+        "mandatory_blocked": 0,
+        "optional_blocked": 0,
+        "order": 10,
+        "researchable": 18547200,
+        "total": 18547200
+      },
+      {
+        "mandatory_blocked": 0,
+        "optional_blocked": 0,
+        "order": 11,
+        "researchable": 6912000,
+        "total": 6912000
+      }
+    ],
+    "max_order": 11,
+    "schema": "mprd/compressed-independent-coreachability/v1",
+    "totals": {
+      "mandatory_blocked": 0,
+      "optional_blocked": 0,
+      "researchable": 75599999,
+      "total": 75599999
+    }
+  },
+  "counterfactual_unblock_summary": {
+    "applicable": false,
+    "cleared_surfaces": [],
+    "reason": "no_optional_research_blocks"
+  },
+  "current_git_head": "747bba207e8198b44787196aef25fa0a888dc561",
+  "edge_sources": {
+    "composition_edges": "atlas",
+    "reentry_edges": "atlas"
+  },
+  "frontier": {
+    "effective_max_depth": 11,
+    "max_simple_path_depth": 11,
+    "requested_max_depth": 0,
+    "simple_path_frontier_exhausted": true,
+    "surface_count": 11
+  },
+  "gate_summary": {
+    "blockers": [],
+    "bounded_frontier_exhausted": true,
+    "checker_worktree_clean": true,
+    "gate": "OPEN_FOR_BOUNDED_RESEARCH",
+    "no_reachable_disaster_witnesses": true,
+    "open_for_bounded_research": true,
+    "receipt_git_head_compatible_drifts": 12,
+    "receipt_git_head_mismatch_free": true,
+    "synthetic_fail_closed_ok": true,
+    "synthetic_optional_conflict_ok": true
+  },
+  "generated_at_utc": "2026-04-24T23:25:52Z",
+  "max_depth": 11,
+  "optional_evidence_summary": {
+    "blocked_surfaces": [],
+    "surfaces_with_optional_research_block": 0
+  },
+  "program_id": "mprd.sota_assurance.v1",
+  "receipt_provenance_summary": {
+    "compatible_git_head_drifts": [
+      {
+        "changed_paths": [
+          "tools/run_neuro_symbolic_disaster_loop.py"
+        ],
+        "channel": "mandatory",
+        "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+        "path": "internal/assurance/sota_stack/receipts/decoded_journal_metamorphic_v3_latest.json",
+        "surface_id": "decision_token_proof_journal_binding"
+      },
+      {
+        "changed_paths": [
+          "tools/run_neuro_symbolic_disaster_loop.py"
+        ],
+        "channel": "mandatory",
+        "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+        "path": "internal/assurance/sota_stack/receipts/decision_token_proof_journal_binding_guided_v1_latest.json",
+        "surface_id": "decision_token_proof_journal_binding"
+      },
+      {
+        "changed_paths": [
+          "tools/run_neuro_symbolic_disaster_loop.py"
+        ],
+        "channel": "mandatory",
+        "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+        "path": "internal/assurance/sota_stack/receipts/executor_side_effect_state_machine_latest.json",
+        "surface_id": "executor_side_effect_boundary"
+      },
+      {
+        "changed_paths": [
+          "tools/run_neuro_symbolic_disaster_loop.py"
+        ],
+        "channel": "mandatory",
+        "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+        "path": "internal/assurance/sota_stack/receipts/executor_side_effect_state_machine_guided_latest.json",
+        "surface_id": "executor_side_effect_boundary"
+      },
+      {
+        "changed_paths": [
+          "tools/run_neuro_symbolic_disaster_loop.py"
+        ],
+        "channel": "mandatory",
+        "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+        "path": "internal/assurance/sota_stack/receipts/executor_transport_state_machine_latest.json",
+        "surface_id": "executor_transport_boundary"
+      },
+      {
+        "changed_paths": [
+          "tools/run_neuro_symbolic_disaster_loop.py"
+        ],
+        "channel": "mandatory",
+        "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+        "path": "internal/assurance/sota_stack/receipts/orchestrator_state_machine_latest.json",
+        "surface_id": "orchestrator_pipeline_ordering"
+      },
+      {
+        "changed_paths": [
+          "tools/run_neuro_symbolic_disaster_loop.py"
+        ],
+        "channel": "mandatory",
+        "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+        "path": "internal/assurance/sota_stack/receipts/policy_artifact_runtime_state_machine_latest.json",
+        "surface_id": "policy_artifact_run_lifecycle"
+      },
+      {
+        "changed_paths": [
+          "tools/run_neuro_symbolic_disaster_loop.py"
+        ],
+        "channel": "mandatory",
+        "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+        "path": "internal/assurance/sota_stack/receipts/quorum_snapshot_state_machine_latest.json",
+        "surface_id": "quorum_snapshot_attestation"
+      },
+      {
+        "changed_paths": [
+          "tools/run_neuro_symbolic_disaster_loop.py"
+        ],
+        "channel": "mandatory",
+        "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+        "path": "internal/assurance/sota_stack/receipts/registry_key_rotation_state_machine_latest.json",
+        "surface_id": "registry_key_rotation_authorization"
+      },
+      {
+        "changed_paths": [
+          "tools/run_neuro_symbolic_disaster_loop.py"
+        ],
+        "channel": "mandatory",
+        "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+        "path": "internal/assurance/sota_stack/receipts/anti_replay_state_machine_latest.json",
+        "surface_id": "replay_nonce_claim"
+      },
+      {
+        "changed_paths": [
+          "tools/run_neuro_symbolic_disaster_loop.py"
+        ],
+        "channel": "mandatory",
+        "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+        "path": "internal/assurance/sota_stack/receipts/selector_candidate_family_state_machine_latest.json",
+        "surface_id": "selector_candidate_family"
+      },
+      {
+        "changed_paths": [
+          "tools/run_neuro_symbolic_disaster_loop.py"
+        ],
+        "channel": "mandatory",
+        "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+        "path": "internal/assurance/sota_stack/receipts/tau_policy_certification_state_machine_latest.json",
+        "surface_id": "tau_policy_certification_boundary"
+      }
+    ],
+    "current_git_head": "747bba207e8198b44787196aef25fa0a888dc561",
+    "has_git_head_mismatch": false,
+    "mandatory": {
+      "compatible_git_head_drift": 12,
+      "exists": 14,
+      "matching_git_head": 0,
+      "mismatched_git_head": 0,
+      "missing_git_head": 2,
+      "total": 14,
+      "with_git_head": 12
+    },
+    "mismatches": [],
+    "missing_git_head_receipts": [
+      {
+        "channel": "mandatory",
+        "path": "internal/assurance/sota_stack/receipts/operator_control_lifecycle_latest.json",
+        "schema": "mprd/operator-control-lifecycle-sequence-receipt/v4",
+        "surface_id": "operator_control_lifecycle"
+      },
+      {
+        "channel": "mandatory",
+        "path": "internal/assurance/sota_stack/receipts/orchestrator_ordering_symbolic_latest.json",
+        "schema": "mprd/sota-symbolic-receipt/v1",
+        "surface_id": "orchestrator_pipeline_ordering"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/policy_artifact_run_lifecycle_guided_compare_latest.json",
+        "schema": "mprd/sota-guided-harness-compare/v1",
+        "surface_id": "policy_artifact_run_lifecycle"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/policy_artifact_run_lifecycle_guided_seeded_long_compare_latest.json",
+        "schema": "mprd/sota-guided-harness-compare/v1",
+        "surface_id": "policy_artifact_run_lifecycle"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/policy_artifact_optional_bundle_compare_latest.json",
+        "schema": "mprd/sota-optional-expansion-compare/v1",
+        "surface_id": "policy_artifact_run_lifecycle"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/policy_artifact_optional_bundle_stability_latest.json",
+        "schema": "mprd/sota-optional-lane-stability/v1",
+        "surface_id": "policy_artifact_run_lifecycle"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/quorum_snapshot_attestation_guided_seeded_compare_latest.json",
+        "schema": "mprd/sota-guided-harness-compare/v1",
+        "surface_id": "quorum_snapshot_attestation"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/quorum_snapshot_attestation_guided_seeded_long_compare_latest.json",
+        "schema": "mprd/sota-guided-harness-compare/v1",
+        "surface_id": "quorum_snapshot_attestation"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/registry_key_rotation_authorization_guided_compare_latest.json",
+        "schema": "mprd/sota-guided-harness-compare/v1",
+        "surface_id": "registry_key_rotation_authorization"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/registry_key_rotation_authorization_guided_long_compare_latest.json",
+        "schema": "mprd/sota-guided-harness-compare/v1",
+        "surface_id": "registry_key_rotation_authorization"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/registry_optional_bundle_compare_latest.json",
+        "schema": "mprd/sota-optional-expansion-compare/v1",
+        "surface_id": "registry_key_rotation_authorization"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/registry_optional_bundle_stability_latest.json",
+        "schema": "mprd/sota-optional-lane-stability/v1",
+        "surface_id": "registry_key_rotation_authorization"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/replay_nonce_claim_guided_seeded_compare_latest.json",
+        "schema": "mprd/sota-guided-harness-compare/v1",
+        "surface_id": "replay_nonce_claim"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/replay_nonce_claim_guided_seeded_long_compare_latest.json",
+        "schema": "mprd/sota-guided-harness-compare/v1",
+        "surface_id": "replay_nonce_claim"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/selector_candidate_family_canonical_guided_compare_latest.json",
+        "schema": "mprd/sota-guided-harness-compare/v1",
+        "surface_id": "selector_candidate_family"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/selector_candidate_family_canonical_guided_long_compare_latest.json",
+        "schema": "mprd/sota-guided-harness-compare/v1",
+        "surface_id": "selector_candidate_family"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/selector_optional_bundle_compare_latest.json",
+        "schema": "mprd/sota-optional-expansion-compare/v1",
+        "surface_id": "selector_candidate_family"
+      },
+      {
+        "channel": "optional",
+        "path": "internal/assurance/sota_stack/receipts/selector_optional_bundle_stability_latest.json",
+        "schema": "mprd/sota-optional-lane-stability/v1",
+        "surface_id": "selector_candidate_family"
+      }
+    ],
+    "optional": {
+      "compatible_git_head_drift": 0,
+      "exists": 16,
+      "matching_git_head": 0,
+      "mismatched_git_head": 0,
+      "missing_git_head": 16,
+      "total": 16,
+      "with_git_head": 0
+    }
+  },
+  "reentry_edges": [
+    {
+      "dst": "replay_nonce_claim",
+      "reason": "transport retry or duplicate delivery re-presents a previously cleared claim",
+      "src": "executor_transport_boundary"
+    },
+    {
+      "dst": "replay_nonce_claim",
+      "reason": "local retry after a side-effect attempt can re-enter replay clearance",
+      "src": "executor_side_effect_boundary"
+    },
+    {
+      "dst": "orchestrator_pipeline_ordering",
+      "reason": "journal replay or audit reconstruction can re-enter orchestrator ordering",
+      "src": "decision_token_proof_journal_binding"
+    },
+    {
+      "dst": "policy_artifact_run_lifecycle",
+      "reason": "certification repair can request a new policy artifact run",
+      "src": "tau_policy_certification_boundary"
+    }
+  ],
+  "research_block_summary": {
+    "dominant_optional_block_count": 0,
+    "dominant_optional_block_surface": null,
+    "mandatory_block_counts": {},
+    "optional_block_counts": {},
+    "single_surface_optional_cut_clears_all_blocks": false
+  },
+  "result_samples": {
+    "blocked_results": [],
+    "limit": 40,
+    "reachable_results": [],
+    "synthetic_fail_closed_failures": [],
+    "synthetic_optional_conflict_failures": [],
+    "synthetic_provenance_fail_closed_failures": [],
+    "truncated": {
+      "blocked_results": 0,
+      "reachable_results": 0,
+      "synthetic_fail_closed_failures": 0,
+      "synthetic_optional_conflict_failures": 0,
+      "synthetic_provenance_fail_closed_failures": 0,
+      "unknown_results": 0
+    },
+    "unknown_results": []
+  },
+  "result_storage": {
+    "description": "Materialized result arrays are omitted; use result_digests and samples, or rerun with --full-results.",
+    "digests": {
+      "results": {
+        "count": 16003,
+        "hash": "sha256:a0351ba0ca626bdf98a8aa3a37dc8cf4e1ec4f7a5e15534182bd0a02097b014a",
+        "name": "results"
+      },
+      "synthetic_blocker_results": {
+        "count": 22,
+        "hash": "sha256:2088740cf3db32b44a80c555e49be3bf629edbee6c84ca294799f472d634eceb",
+        "name": "synthetic_blocker_results"
+      },
+      "synthetic_mutation_results": {
+        "count": 66,
+        "hash": "sha256:08bc290d61eb3b008c1e74a2528da0670e1540b6dfe5cbca9f46505c3cbc8d09",
+        "name": "synthetic_mutation_results"
+      },
+      "synthetic_optional_conflict_results": {
+        "count": 25,
+        "hash": "sha256:425133db6df25bee749a15d23793fc43a7a173ca9c6a73555501bc24855d5441",
+        "name": "synthetic_optional_conflict_results"
+      },
+      "synthetic_provenance_results": {
+        "count": 16,
+        "hash": "sha256:8b1af963fa8531d46174bba2884337dd1d1a86c8a8a5e1cc2478ce75af901083",
+        "name": "synthetic_provenance_results"
+      }
+    },
+    "full_results_included": false,
+    "mode": "compact"
+  },
+  "results": [],
+  "schema": "mprd/neuro-symbolic-disaster-loop/v1",
+  "stable_receipt_hash": "sha256:b83ee1178c4bea460b9c7e3c67d5ccf1d7ac330e017746236fcfc7274c459561",
+  "summary": {
+    "bounded_no_witness": 16003,
+    "hypotheses": 16003,
+    "kind_counts": {
+      "blocker_bypass_disaster": 194,
+      "chain_researchability": 71,
+      "chain_terminal_disaster": 1079,
+      "convergence_composition_disaster": 299,
+      "cycle_amplification_disaster": 66,
+      "edge_composition_disaster": 196,
+      "fanout_composition_disaster": 64,
+      "independent_pair_coreachability": 1000,
+      "independent_triple_coreachability": 12714,
+      "order_inversion_disaster": 196,
+      "receipt_fail_open_mutation": 11,
+      "reentry_retry_disaster": 66,
+      "single_surface_disaster": 47
+    },
+    "reachable_disaster_witnesses": 0,
+    "researchability_counts": {
+      "researchable_under_current_bounded_receipts": 16003
+    },
+    "unknown_blocked": 0,
+    "verdict_counts": {
+      "NO_REACHABLE_WITNESS_BOUNDED": 16003
+    }
+  },
+  "surface_checks": {
+    "decision_token_proof_journal_binding": {
+      "atlas_optional_status": null,
+      "blocker_summary": {
+        "blockers": [
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  82
+                ],
+                "path": "fuzz/fuzz_targets/decoded_journal_metamorphic_v3.rs"
+              },
+              {
+                "lines": [
+                  322
+                ],
+                "path": "fuzz/fuzz_targets/decision_token_proof_journal_binding_guided_v1.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "decoded_journal_metamorphic_v3",
+              "decision_token_proof_journal_binding_guided_v1"
+            ],
+            "source_lines": [
+              1095
+            ],
+            "source_path": "crates/mprd-zk/src/risc0_host.rs",
+            "source_present": true,
+            "symbol": "verify_decoded_journal_fuzz"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  7,
+                  78
+                ],
+                "path": "fuzz/fuzz_targets/decoded_journal_metamorphic_v3.rs"
+              },
+              {
+                "lines": [
+                  8,
+                  150,
+                  285,
+                  315
+                ],
+                "path": "fuzz/fuzz_targets/decision_token_proof_journal_binding_guided_v1.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "decoded_journal_metamorphic_v3",
+              "decision_token_proof_journal_binding_guided_v1"
+            ],
+            "source_lines": [
+              1064,
+              1671,
+              1672,
+              1715,
+              1912,
+              1935
+            ],
+            "source_path": "crates/mprd-risc0-shared/src/lib.rs",
+            "source_present": true,
+            "symbol": "compute_decision_commitment_v3"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  9,
+                  162,
+                  302,
+                  305
+                ],
+                "path": "fuzz/fuzz_targets/decision_token_proof_journal_binding_guided_v1.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "decision_token_proof_journal_binding_guided_v1"
+            ],
+            "source_lines": [
+              256
+            ],
+            "source_path": "crates/mprd-risc0-shared/src/lib.rs",
+            "source_present": true,
+            "symbol": "limits_hash_mpb_v1"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  6,
+                  37
+                ],
+                "path": "fuzz/fuzz_targets/decoded_journal_metamorphic_v3.rs"
+              },
+              {
+                "lines": [
+                  6,
+                  343
+                ],
+                "path": "fuzz/fuzz_targets/decision_token_proof_journal_binding_guided_v1.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "decoded_journal_metamorphic_v3",
+              "decision_token_proof_journal_binding_guided_v1"
+            ],
+            "source_lines": [
+              87
+            ],
+            "source_path": "crates/mprd-generators/src/lib.rs",
+            "source_present": true,
+            "symbol": "decoded_mpb_v1_fixture"
+          }
+        ],
+        "blockers_present": 4,
+        "blockers_referenced": 4,
+        "blockers_tracked": 4
+      },
+      "has_stable_optional_receipt": false,
+      "mandatory_ok": true,
+      "optional_receipts": [],
+      "optional_research_block": false,
+      "optional_research_blockers": [],
+      "optional_status": null,
+      "problems": [],
+      "receipts": [
+        {
+          "exists": true,
+          "generated_at_utc": null,
+          "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+          "ok": true,
+          "path": "internal/assurance/sota_stack/receipts/decoded_journal_metamorphic_v3_latest.json",
+          "reasons": [],
+          "schema": "mprd/stateful-fuzz-campaign-summary/v1",
+          "started_at_utc": "2026-04-24T23:07:33Z"
+        },
+        {
+          "exists": true,
+          "generated_at_utc": null,
+          "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+          "ok": true,
+          "path": "internal/assurance/sota_stack/receipts/decision_token_proof_journal_binding_guided_v1_latest.json",
+          "reasons": [],
+          "schema": "mprd/stateful-fuzz-campaign-summary/v1",
+          "started_at_utc": "2026-04-24T23:09:06Z"
+        }
+      ],
+      "surface_id": "decision_token_proof_journal_binding"
+    },
+    "executor_side_effect_boundary": {
+      "atlas_optional_status": null,
+      "blocker_summary": {
+        "blockers": [
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  7,
+                  501
+                ],
+                "path": "fuzz/fuzz_targets/executor_side_effect_state_machine.rs"
+              },
+              {
+                "lines": [
+                  7,
+                  557
+                ],
+                "path": "fuzz/fuzz_targets/executor_side_effect_state_machine_guided.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "executor_side_effect_state_machine",
+              "executor_side_effect_state_machine_guided"
+            ],
+            "source_lines": [
+              582,
+              618
+            ],
+            "source_path": "crates/mprd-core/src/lib.rs",
+            "source_present": true,
+            "symbol": "execution_boundary_witness_v1"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  4,
+                  5,
+                  144,
+                  145,
+                  166,
+                  167,
+                  169,
+                  171,
+                  174,
+                  176
+                ],
+                "path": "fuzz/fuzz_targets/executor_side_effect_state_machine.rs"
+              },
+              {
+                "lines": [
+                  4,
+                  5,
+                  153,
+                  154,
+                  175,
+                  176,
+                  178,
+                  180,
+                  183,
+                  185
+                ],
+                "path": "fuzz/fuzz_targets/executor_side_effect_state_machine_guided.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "executor_side_effect_state_machine",
+              "executor_side_effect_state_machine_guided"
+            ],
+            "source_lines": [
+              358
+            ],
+            "source_path": "crates/mprd-adapters/src/executors.rs",
+            "source_present": true,
+            "symbol": "FileExecutor"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  5,
+                  145,
+                  167
+                ],
+                "path": "fuzz/fuzz_targets/executor_side_effect_state_machine.rs"
+              },
+              {
+                "lines": [
+                  5,
+                  154,
+                  176
+                ],
+                "path": "fuzz/fuzz_targets/executor_side_effect_state_machine_guided.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "executor_side_effect_state_machine",
+              "executor_side_effect_state_machine_guided"
+            ],
+            "source_lines": [
+              444
+            ],
+            "source_path": "crates/mprd-adapters/src/executors.rs",
+            "source_present": true,
+            "symbol": "IdempotentFileExecutor"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  4,
+                  146,
+                  147,
+                  168,
+                  173
+                ],
+                "path": "fuzz/fuzz_targets/executor_side_effect_state_machine.rs"
+              },
+              {
+                "lines": [
+                  4,
+                  155,
+                  156,
+                  177,
+                  182
+                ],
+                "path": "fuzz/fuzz_targets/executor_side_effect_state_machine_guided.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "executor_side_effect_state_machine",
+              "executor_side_effect_state_machine_guided"
+            ],
+            "source_lines": [
+              527
+            ],
+            "source_path": "crates/mprd-adapters/src/executors.rs",
+            "source_present": true,
+            "symbol": "CompositeExecutor"
+          }
+        ],
+        "blockers_present": 4,
+        "blockers_referenced": 4,
+        "blockers_tracked": 4
+      },
+      "has_stable_optional_receipt": false,
+      "mandatory_ok": true,
+      "optional_receipts": [],
+      "optional_research_block": false,
+      "optional_research_blockers": [],
+      "optional_status": null,
+      "problems": [],
+      "receipts": [
+        {
+          "exists": true,
+          "generated_at_utc": null,
+          "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+          "ok": true,
+          "path": "internal/assurance/sota_stack/receipts/executor_side_effect_state_machine_latest.json",
+          "reasons": [],
+          "schema": "mprd/stateful-fuzz-campaign-summary/v1",
+          "started_at_utc": "2026-04-24T23:10:36Z"
+        },
+        {
+          "exists": true,
+          "generated_at_utc": null,
+          "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+          "ok": true,
+          "path": "internal/assurance/sota_stack/receipts/executor_side_effect_state_machine_guided_latest.json",
+          "reasons": [],
+          "schema": "mprd/stateful-fuzz-campaign-summary/v1",
+          "started_at_utc": "2026-04-24T23:10:47Z"
+        }
+      ],
+      "surface_id": "executor_side_effect_boundary"
+    },
+    "executor_transport_boundary": {
+      "atlas_optional_status": null,
+      "blocker_summary": {
+        "blockers": [
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  6,
+                  743
+                ],
+                "path": "fuzz/fuzz_targets/executor_transport_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "executor_transport_state_machine"
+            ],
+            "source_lines": [
+              582,
+              618
+            ],
+            "source_path": "crates/mprd-core/src/lib.rs",
+            "source_present": true,
+            "symbol": "execution_boundary_witness_v1"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  4,
+                  665,
+                  671,
+                  677,
+                  683,
+                  690
+                ],
+                "path": "fuzz/fuzz_targets/executor_transport_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "executor_transport_state_machine"
+            ],
+            "source_lines": [
+              52,
+              81
+            ],
+            "source_path": "crates/mprd-adapters/src/executors.rs",
+            "source_present": true,
+            "symbol": "HttpExecutor"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  690
+                ],
+                "path": "fuzz/fuzz_targets/executor_transport_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "executor_transport_state_machine"
+            ],
+            "source_lines": [
+              88
+            ],
+            "source_path": "crates/mprd-adapters/src/executors.rs",
+            "source_present": true,
+            "symbol": "HttpExecutor::new"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  4,
+                  701
+                ],
+                "path": "fuzz/fuzz_targets/executor_transport_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "executor_transport_state_machine"
+            ],
+            "source_lines": [
+              282
+            ],
+            "source_path": "crates/mprd-adapters/src/executors.rs",
+            "source_present": true,
+            "symbol": "WebhookExecutor"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  701
+                ],
+                "path": "fuzz/fuzz_targets/executor_transport_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "executor_transport_state_machine"
+            ],
+            "source_lines": [
+              289
+            ],
+            "source_path": "crates/mprd-adapters/src/executors.rs",
+            "source_present": true,
+            "symbol": "WebhookExecutor::new"
+          }
+        ],
+        "blockers_present": 5,
+        "blockers_referenced": 5,
+        "blockers_tracked": 5
+      },
+      "has_stable_optional_receipt": false,
+      "mandatory_ok": true,
+      "optional_receipts": [],
+      "optional_research_block": false,
+      "optional_research_blockers": [],
+      "optional_status": null,
+      "problems": [],
+      "receipts": [
+        {
+          "exists": true,
+          "generated_at_utc": null,
+          "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+          "ok": true,
+          "path": "internal/assurance/sota_stack/receipts/executor_transport_state_machine_latest.json",
+          "reasons": [],
+          "schema": "mprd/stateful-fuzz-campaign-summary/v1",
+          "started_at_utc": "2026-04-24T23:10:58Z"
+        }
+      ],
+      "surface_id": "executor_transport_boundary"
+    },
+    "operator_control_lifecycle": {
+      "atlas_optional_status": null,
+      "blocker_summary": {
+        "blockers": [
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  194
+                ],
+                "path": "internal/experiments/concolic_20260405/src/bin/operator-control-lifecycle.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "operator_control_lifecycle"
+            ],
+            "source_lines": [
+              97
+            ],
+            "source_path": "crates/mprd-cli/src/operator/store_control.rs",
+            "source_present": true,
+            "symbol": "set_autopilot_mode"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  199
+                ],
+                "path": "internal/experiments/concolic_20260405/src/bin/operator-control-lifecycle.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "operator_control_lifecycle"
+            ],
+            "source_lines": [
+              108
+            ],
+            "source_path": "crates/mprd-cli/src/operator/store_control.rs",
+            "source_present": true,
+            "symbol": "autopilot_ack"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  204
+                ],
+                "path": "internal/experiments/concolic_20260405/src/bin/operator-control-lifecycle.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "operator_control_lifecycle"
+            ],
+            "source_lines": [
+              160
+            ],
+            "source_path": "crates/mprd-cli/src/operator/store_control.rs",
+            "source_present": true,
+            "symbol": "acknowledge_alert"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  208
+                ],
+                "path": "internal/experiments/concolic_20260405/src/bin/operator-control-lifecycle.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "operator_control_lifecycle"
+            ],
+            "source_lines": [
+              131
+            ],
+            "source_path": "crates/mprd-cli/src/operator/store_control.rs",
+            "source_present": true,
+            "symbol": "snooze_incident"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  213
+                ],
+                "path": "internal/experiments/concolic_20260405/src/bin/operator-control-lifecycle.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "operator_control_lifecycle"
+            ],
+            "source_lines": [
+              147
+            ],
+            "source_path": "crates/mprd-cli/src/operator/store_control.rs",
+            "source_present": true,
+            "symbol": "clear_incident_snooze"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  217
+                ],
+                "path": "internal/experiments/concolic_20260405/src/bin/operator-control-lifecycle.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "operator_control_lifecycle"
+            ],
+            "source_lines": [
+              79
+            ],
+            "source_path": "crates/mprd-cli/src/operator/store_control.rs",
+            "source_present": true,
+            "symbol": "update_retention_settings"
+          }
+        ],
+        "blockers_present": 6,
+        "blockers_referenced": 6,
+        "blockers_tracked": 6
+      },
+      "has_stable_optional_receipt": false,
+      "mandatory_ok": true,
+      "optional_receipts": [],
+      "optional_research_block": false,
+      "optional_research_blockers": [],
+      "optional_status": null,
+      "problems": [],
+      "receipts": [
+        {
+          "exists": true,
+          "generated_at_utc": "2026-04-24T23:01:39Z",
+          "git_head": null,
+          "ok": true,
+          "path": "internal/assurance/sota_stack/receipts/operator_control_lifecycle_latest.json",
+          "reasons": [],
+          "schema": "mprd/operator-control-lifecycle-sequence-receipt/v4",
+          "started_at_utc": "2026-04-24T23:00:41Z"
+        }
+      ],
+      "surface_id": "operator_control_lifecycle"
+    },
+    "orchestrator_pipeline_ordering": {
+      "atlas_optional_status": null,
+      "blocker_summary": {
+        "blockers": [
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  580
+                ],
+                "path": "fuzz/fuzz_targets/orchestrator_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "orchestrator_state_machine"
+            ],
+            "source_lines": [
+              107,
+              110,
+              119,
+              398,
+              411,
+              415,
+              428,
+              1140,
+              1155,
+              1170,
+              1177,
+              1192,
+              1207,
+              1214,
+              1232,
+              1253,
+              1273,
+              1291,
+              1299,
+              1351,
+              1374,
+              1404,
+              1430,
+              1454,
+              1480,
+              1508,
+              1534,
+              1562,
+              1585,
+              1613,
+              1636,
+              1670,
+              1693,
+              1728,
+              1751,
+              1795,
+              1818,
+              1853,
+              1878,
+              1913,
+              1941,
+              1976,
+              2004,
+              2039,
+              2067,
+              2102,
+              2130,
+              2165,
+              2193,
+              2250,
+              2278,
+              2313,
+              2351,
+              2386,
+              2600,
+              2605,
+              2731,
+              2749,
+              2770,
+              2788,
+              2809,
+              2827,
+              2848,
+              2866
+            ],
+            "source_path": "crates/mprd-core/src/orchestrator.rs",
+            "source_present": true,
+            "symbol": "run_once"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  550
+                ],
+                "path": "fuzz/fuzz_targets/orchestrator_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "orchestrator_state_machine"
+            ],
+            "source_lines": [
+              415,
+              1253,
+              1273,
+              1291,
+              2313,
+              2386,
+              2600
+            ],
+            "source_path": "crates/mprd-core/src/orchestrator.rs",
+            "source_present": true,
+            "symbol": "run_once_with_recorder"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  88,
+                  106
+                ],
+                "path": "internal/experiments/concolic_20260405/src/bin/orchestrator-ordering-kani.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "orchestrator_ordering_symbolic"
+            ],
+            "source_lines": [
+              79,
+              100,
+              101,
+              248,
+              257
+            ],
+            "source_path": "crates/mprd-core/src/orchestrator_ordering.rs",
+            "source_present": true,
+            "symbol": "pipeline_spec"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  104
+                ],
+                "path": "internal/experiments/concolic_20260405/src/bin/orchestrator-ordering-kani.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "orchestrator_ordering_symbolic"
+            ],
+            "source_lines": [
+              108,
+              224
+            ],
+            "source_path": "crates/mprd-core/src/orchestrator_ordering.rs",
+            "source_present": true,
+            "symbol": "step"
+          }
+        ],
+        "blockers_present": 4,
+        "blockers_referenced": 4,
+        "blockers_tracked": 4
+      },
+      "has_stable_optional_receipt": false,
+      "mandatory_ok": true,
+      "optional_receipts": [],
+      "optional_research_block": false,
+      "optional_research_blockers": [],
+      "optional_status": null,
+      "problems": [],
+      "receipts": [
+        {
+          "exists": true,
+          "generated_at_utc": null,
+          "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+          "ok": true,
+          "path": "internal/assurance/sota_stack/receipts/orchestrator_state_machine_latest.json",
+          "reasons": [],
+          "schema": "mprd/stateful-fuzz-campaign-summary/v1",
+          "started_at_utc": "2026-04-24T22:58:45Z"
+        },
+        {
+          "exists": true,
+          "generated_at_utc": "2026-04-07T14:17:53Z",
+          "git_head": null,
+          "ok": true,
+          "path": "internal/assurance/sota_stack/receipts/orchestrator_ordering_symbolic_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-symbolic-receipt/v1",
+          "started_at_utc": null
+        }
+      ],
+      "surface_id": "orchestrator_pipeline_ordering"
+    },
+    "policy_artifact_run_lifecycle": {
+      "atlas_optional_status": "stable_optional_lane",
+      "blocker_summary": {
+        "blockers": [
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  13,
+                  309
+                ],
+                "path": "fuzz/fuzz_targets/policy_artifact_runtime_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "policy_artifact_runtime_state_machine"
+            ],
+            "source_lines": [
+              786,
+              792,
+              810,
+              1551,
+              1581,
+              1634,
+              1692,
+              1744,
+              1806,
+              1871,
+              1936,
+              2000
+            ],
+            "source_path": "crates/mprd-zk/src/registry_state.rs",
+            "source_present": true,
+            "symbol": "RegistryStatePolicyAuthorizationProvider"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  267
+                ],
+                "path": "fuzz/fuzz_targets/policy_artifact_runtime_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "policy_artifact_runtime_state_machine"
+            ],
+            "source_lines": [
+              104,
+              834,
+              947,
+              1140,
+              1168,
+              1196
+            ],
+            "source_path": "crates/mprd-zk/src/registry_state.rs",
+            "source_present": true,
+            "symbol": "policy_source_mapping_present"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  271
+                ],
+                "path": "fuzz/fuzz_targets/policy_artifact_runtime_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "policy_artifact_runtime_state_machine"
+            ],
+            "source_lines": [
+              98,
+              151
+            ],
+            "source_path": "crates/mprd-zk/src/manifest.rs",
+            "source_present": true,
+            "symbol": "image_id_for"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  10,
+                  292
+                ],
+                "path": "fuzz/fuzz_targets/policy_artifact_runtime_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "policy_artifact_runtime_state_machine"
+            ],
+            "source_lines": [
+              21,
+              137,
+              144,
+              155
+            ],
+            "source_path": "crates/mprd-zk/src/policy_artifacts.rs",
+            "source_present": true,
+            "symbol": "decode_mpb_policy_artifact_bytes_v1"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  83,
+                  300
+                ],
+                "path": "fuzz/fuzz_targets/policy_artifact_runtime_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "policy_artifact_runtime_state_machine"
+            ],
+            "source_lines": [
+              432,
+              625,
+              626
+            ],
+            "source_path": "crates/mprd-mpb/src/lib.rs",
+            "source_present": true,
+            "symbol": "policy_hash_v1"
+          }
+        ],
+        "blockers_present": 5,
+        "blockers_referenced": 5,
+        "blockers_tracked": 5
+      },
+      "has_stable_optional_receipt": true,
+      "mandatory_ok": true,
+      "optional_receipts": [
+        {
+          "blocking": false,
+          "decision": "keep_parallel_guided_lane_not_replacement",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": null,
+          "path": "internal/assurance/sota_stack/receipts/policy_artifact_run_lifecycle_guided_compare_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-guided-harness-compare/v1",
+          "stabilizes_optional_lane": false
+        },
+        {
+          "blocking": false,
+          "decision": "promote_parallel_guided_lane",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": null,
+          "path": "internal/assurance/sota_stack/receipts/policy_artifact_run_lifecycle_guided_seeded_long_compare_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-guided-harness-compare/v1",
+          "stabilizes_optional_lane": false
+        },
+        {
+          "blocking": false,
+          "decision": "promote_optional_parallel_lane_under_same_flag",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": null,
+          "path": "internal/assurance/sota_stack/receipts/policy_artifact_optional_bundle_compare_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-optional-expansion-compare/v1",
+          "stabilizes_optional_lane": false
+        },
+        {
+          "blocking": false,
+          "decision": "stable_optional_lane",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": "proceed_next_guided_candidate_evaluation",
+          "path": "internal/assurance/sota_stack/receipts/policy_artifact_optional_bundle_stability_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-optional-lane-stability/v1",
+          "stabilizes_optional_lane": true
+        }
+      ],
+      "optional_research_block": false,
+      "optional_research_blockers": [],
+      "optional_status": "stable_optional_lane",
+      "problems": [],
+      "receipts": [
+        {
+          "exists": true,
+          "generated_at_utc": null,
+          "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+          "ok": true,
+          "path": "internal/assurance/sota_stack/receipts/policy_artifact_runtime_state_machine_latest.json",
+          "reasons": [],
+          "schema": "mprd/stateful-fuzz-campaign-summary/v1",
+          "started_at_utc": "2026-04-24T22:59:08Z"
+        }
+      ],
+      "surface_id": "policy_artifact_run_lifecycle"
+    },
+    "quorum_snapshot_attestation": {
+      "atlas_optional_status": "promoted_parallel_guided_lane",
+      "blocker_summary": {
+        "blockers": [
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  235
+                ],
+                "path": "fuzz/fuzz_targets/quorum_snapshot_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "quorum_snapshot_state_machine"
+            ],
+            "source_lines": [
+              333,
+              771,
+              814,
+              848,
+              907,
+              920,
+              933,
+              956,
+              998,
+              1014,
+              1030,
+              1046,
+              1117
+            ],
+            "source_path": "crates/mprd-core/src/state_provenance.rs",
+            "source_present": true,
+            "symbol": "sign_contribution"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  186
+                ],
+                "path": "fuzz/fuzz_targets/quorum_snapshot_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "quorum_snapshot_state_machine"
+            ],
+            "source_lines": [
+              294,
+              382,
+              783,
+              794,
+              825,
+              860,
+              1130
+            ],
+            "source_path": "crates/mprd-core/src/state_provenance.rs",
+            "source_present": true,
+            "symbol": "verify_with_trusted_attestors"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  198,
+                  201,
+                  216
+                ],
+                "path": "fuzz/fuzz_targets/quorum_snapshot_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "quorum_snapshot_state_machine"
+            ],
+            "source_lines": [
+              178,
+              381,
+              461,
+              485,
+              514,
+              533,
+              744,
+              881,
+              882
+            ],
+            "source_path": "crates/mprd-core/src/state_provenance.rs",
+            "source_present": true,
+            "symbol": "to_state_snapshot"
+          }
+        ],
+        "blockers_present": 3,
+        "blockers_referenced": 3,
+        "blockers_tracked": 3
+      },
+      "has_stable_optional_receipt": false,
+      "mandatory_ok": true,
+      "optional_receipts": [
+        {
+          "blocking": false,
+          "decision": "keep_parallel_guided_lane_not_replacement",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": null,
+          "path": "internal/assurance/sota_stack/receipts/quorum_snapshot_attestation_guided_seeded_compare_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-guided-harness-compare/v1",
+          "stabilizes_optional_lane": false
+        },
+        {
+          "blocking": false,
+          "decision": "promote_parallel_guided_lane",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": null,
+          "path": "internal/assurance/sota_stack/receipts/quorum_snapshot_attestation_guided_seeded_long_compare_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-guided-harness-compare/v1",
+          "stabilizes_optional_lane": false
+        }
+      ],
+      "optional_research_block": false,
+      "optional_research_blockers": [],
+      "optional_status": "promoted_parallel_guided_lane",
+      "problems": [],
+      "receipts": [
+        {
+          "exists": true,
+          "generated_at_utc": null,
+          "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+          "ok": true,
+          "path": "internal/assurance/sota_stack/receipts/quorum_snapshot_state_machine_latest.json",
+          "reasons": [],
+          "schema": "mprd/stateful-fuzz-campaign-summary/v1",
+          "started_at_utc": "2026-04-24T22:58:36Z"
+        }
+      ],
+      "surface_id": "quorum_snapshot_attestation"
+    },
+    "registry_key_rotation_authorization": {
+      "atlas_optional_status": "mixed_optional_lane",
+      "blocker_summary": {
+        "blockers": [
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  175
+                ],
+                "path": "fuzz/fuzz_targets/registry_key_rotation_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "registry_key_rotation_state_machine"
+            ],
+            "source_lines": [
+              437,
+              621,
+              1313,
+              1315,
+              1349,
+              1383,
+              1385,
+              1417,
+              1419,
+              1455,
+              1457,
+              1486,
+              1512,
+              1801,
+              1802,
+              1867,
+              1929,
+              1931,
+              1995,
+              2053,
+              2062
+            ],
+            "source_path": "crates/mprd-zk/src/registry_state.rs",
+            "source_present": true,
+            "symbol": "sign_contribution"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  214
+                ],
+                "path": "fuzz/fuzz_targets/registry_key_rotation_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "registry_key_rotation_state_machine"
+            ],
+            "source_lines": [
+              391,
+              729,
+              1323,
+              1355,
+              1397,
+              1426,
+              2056,
+              2065
+            ],
+            "source_path": "crates/mprd-zk/src/registry_state.rs",
+            "source_present": true,
+            "symbol": "verify_with_trusted_signers"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  215
+                ],
+                "path": "fuzz/fuzz_targets/registry_key_rotation_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "registry_key_rotation_state_machine"
+            ],
+            "source_lines": [
+              699,
+              733,
+              739,
+              817,
+              930
+            ],
+            "source_path": "crates/mprd-zk/src/registry_state.rs",
+            "source_present": true,
+            "symbol": "verify_manifest"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  296
+                ],
+                "path": "fuzz/fuzz_targets/registry_key_rotation_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "registry_key_rotation_state_machine"
+            ],
+            "source_lines": [
+              769,
+              811
+            ],
+            "source_path": "crates/mprd-zk/src/registry_state.rs",
+            "source_present": true,
+            "symbol": "resolve"
+          }
+        ],
+        "blockers_present": 4,
+        "blockers_referenced": 4,
+        "blockers_tracked": 4
+      },
+      "has_stable_optional_receipt": true,
+      "mandatory_ok": true,
+      "optional_receipts": [
+        {
+          "blocking": false,
+          "decision": "keep_parallel_guided_lane_not_replacement",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": null,
+          "path": "internal/assurance/sota_stack/receipts/registry_key_rotation_authorization_guided_compare_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-guided-harness-compare/v1",
+          "stabilizes_optional_lane": false
+        },
+        {
+          "blocking": false,
+          "decision": "promote_parallel_guided_lane",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": null,
+          "path": "internal/assurance/sota_stack/receipts/registry_key_rotation_authorization_guided_long_compare_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-guided-harness-compare/v1",
+          "stabilizes_optional_lane": false
+        },
+        {
+          "blocking": false,
+          "decision": "promote_optional_parallel_lane_under_same_flag",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": null,
+          "path": "internal/assurance/sota_stack/receipts/registry_optional_bundle_compare_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-optional-expansion-compare/v1",
+          "stabilizes_optional_lane": false
+        },
+        {
+          "blocking": false,
+          "decision": "stable_optional_lane",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": "proceed_next_guided_candidate_evaluation",
+          "path": "internal/assurance/sota_stack/receipts/registry_optional_bundle_stability_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-optional-lane-stability/v1",
+          "stabilizes_optional_lane": true
+        }
+      ],
+      "optional_research_block": false,
+      "optional_research_blockers": [],
+      "optional_status": "stable_optional_lane",
+      "problems": [],
+      "receipts": [
+        {
+          "exists": true,
+          "generated_at_utc": null,
+          "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+          "ok": true,
+          "path": "internal/assurance/sota_stack/receipts/registry_key_rotation_state_machine_latest.json",
+          "reasons": [],
+          "schema": "mprd/stateful-fuzz-campaign-summary/v1",
+          "started_at_utc": "2026-04-24T23:11:09Z"
+        }
+      ],
+      "surface_id": "registry_key_rotation_authorization"
+    },
+    "replay_nonce_claim": {
+      "atlas_optional_status": "promoted_parallel_guided_lane",
+      "blocker_summary": {
+        "blockers": [
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  10,
+                  215,
+                  261
+                ],
+                "path": "fuzz/fuzz_targets/anti_replay_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "anti_replay_state_machine"
+            ],
+            "source_lines": [
+              570
+            ],
+            "source_path": "crates/mprd-core/src/lib.rs",
+            "source_present": true,
+            "symbol": "verify_for_execution"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  5,
+                  172,
+                  179
+                ],
+                "path": "fuzz/fuzz_targets/anti_replay_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "anti_replay_state_machine"
+            ],
+            "source_lines": [
+              172,
+              1694,
+              1709
+            ],
+            "source_path": "crates/mprd-core/src/anti_replay.rs",
+            "source_present": true,
+            "symbol": "replay_clearance_witness_v1"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  5,
+                  177
+                ],
+                "path": "fuzz/fuzz_targets/anti_replay_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "anti_replay_state_machine"
+            ],
+            "source_lines": [
+              183,
+              1699,
+              1711
+            ],
+            "source_path": "crates/mprd-core/src/anti_replay.rs",
+            "source_present": true,
+            "symbol": "finalize_replay_clearance_v1"
+          }
+        ],
+        "blockers_present": 3,
+        "blockers_referenced": 3,
+        "blockers_tracked": 3
+      },
+      "has_stable_optional_receipt": false,
+      "mandatory_ok": true,
+      "optional_receipts": [
+        {
+          "blocking": false,
+          "decision": "keep_parallel_guided_lane_not_replacement",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": null,
+          "path": "internal/assurance/sota_stack/receipts/replay_nonce_claim_guided_seeded_compare_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-guided-harness-compare/v1",
+          "stabilizes_optional_lane": false
+        },
+        {
+          "blocking": false,
+          "decision": "promote_parallel_guided_lane",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": null,
+          "path": "internal/assurance/sota_stack/receipts/replay_nonce_claim_guided_seeded_long_compare_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-guided-harness-compare/v1",
+          "stabilizes_optional_lane": false
+        }
+      ],
+      "optional_research_block": false,
+      "optional_research_blockers": [],
+      "optional_status": "promoted_parallel_guided_lane",
+      "problems": [],
+      "receipts": [
+        {
+          "exists": true,
+          "generated_at_utc": null,
+          "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+          "ok": true,
+          "path": "internal/assurance/sota_stack/receipts/anti_replay_state_machine_latest.json",
+          "reasons": [],
+          "schema": "mprd/stateful-fuzz-campaign-summary/v1",
+          "started_at_utc": "2026-04-24T22:57:13Z"
+        }
+      ],
+      "surface_id": "replay_nonce_claim"
+    },
+    "selector_candidate_family": {
+      "atlas_optional_status": null,
+      "blocker_summary": {
+        "blockers": [
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  6,
+                  119
+                ],
+                "path": "fuzz/fuzz_targets/selector_candidate_family_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "selector_candidate_family_state_machine"
+            ],
+            "source_lines": [
+              309,
+              337,
+              371,
+              484
+            ],
+            "source_path": "crates/mprd-core/src/validation.rs",
+            "source_present": true,
+            "symbol": "canonicalize_candidates_v1"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  5,
+                  127
+                ],
+                "path": "fuzz/fuzz_targets/selector_candidate_family_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "selector_candidate_family_state_machine"
+            ],
+            "source_lines": [
+              14,
+              151,
+              156,
+              173,
+              468,
+              490,
+              679
+            ],
+            "source_path": "crates/mprd-core/src/selectors.rs",
+            "source_present": true,
+            "symbol": "EpsilonConstraintSelector"
+          }
+        ],
+        "blockers_present": 2,
+        "blockers_referenced": 2,
+        "blockers_tracked": 2
+      },
+      "has_stable_optional_receipt": true,
+      "mandatory_ok": true,
+      "optional_receipts": [
+        {
+          "blocking": false,
+          "decision": "keep_parallel_guided_lane_not_replacement",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": null,
+          "path": "internal/assurance/sota_stack/receipts/selector_candidate_family_canonical_guided_compare_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-guided-harness-compare/v1",
+          "stabilizes_optional_lane": false
+        },
+        {
+          "blocking": false,
+          "decision": "promote_parallel_guided_lane",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": null,
+          "path": "internal/assurance/sota_stack/receipts/selector_candidate_family_canonical_guided_long_compare_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-guided-harness-compare/v1",
+          "stabilizes_optional_lane": false
+        },
+        {
+          "blocking": false,
+          "decision": "promote_optional_parallel_lane_under_same_flag",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": null,
+          "path": "internal/assurance/sota_stack/receipts/selector_optional_bundle_compare_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-optional-expansion-compare/v1",
+          "stabilizes_optional_lane": false
+        },
+        {
+          "blocking": false,
+          "decision": "stable_optional_lane",
+          "exists": true,
+          "git_head": null,
+          "next_guidance_decision": "proceed_next_guided_candidate_evaluation",
+          "path": "internal/assurance/sota_stack/receipts/selector_optional_bundle_stability_latest.json",
+          "reasons": [],
+          "schema": "mprd/sota-optional-lane-stability/v1",
+          "stabilizes_optional_lane": true
+        }
+      ],
+      "optional_research_block": false,
+      "optional_research_blockers": [],
+      "optional_status": null,
+      "problems": [],
+      "receipts": [
+        {
+          "exists": true,
+          "generated_at_utc": null,
+          "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+          "ok": true,
+          "path": "internal/assurance/sota_stack/receipts/selector_candidate_family_state_machine_latest.json",
+          "reasons": [],
+          "schema": "mprd/stateful-fuzz-campaign-summary/v1",
+          "started_at_utc": "2026-04-24T22:58:57Z"
+        }
+      ],
+      "surface_id": "selector_candidate_family"
+    },
+    "tau_policy_certification_boundary": {
+      "atlas_optional_status": null,
+      "blocker_summary": {
+        "blockers": [
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  5,
+                  229
+                ],
+                "path": "fuzz/fuzz_targets/tau_policy_certification_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "tau_policy_certification_state_machine"
+            ],
+            "source_lines": [
+              104,
+              378
+            ],
+            "source_path": "crates/mprd-core/src/policy_algebra/tau_emit.rs",
+            "source_present": true,
+            "symbol": "emit_tau_gate_v2"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  5,
+                  235
+                ],
+                "path": "fuzz/fuzz_targets/tau_policy_certification_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "tau_policy_certification_state_machine"
+            ],
+            "source_lines": [
+              34,
+              345,
+              375,
+              383,
+              395,
+              401
+            ],
+            "source_path": "crates/mprd-core/src/policy_algebra/tau_sbf_parse.rs",
+            "source_present": true,
+            "symbol": "parse_emitted_tau_gate_allow_expr_v1"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  6,
+                  239
+                ],
+                "path": "fuzz/fuzz_targets/tau_policy_certification_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "tau_policy_certification_state_machine"
+            ],
+            "source_lines": [
+              623
+            ],
+            "source_path": "crates/mprd-core/src/policy_algebra/bdd.rs",
+            "source_present": true,
+            "symbol": "policy_equiv_robdd_policy_vs_tau_bits"
+          },
+          {
+            "harness_hits": [
+              {
+                "lines": [
+                  6,
+                  98,
+                  121
+                ],
+                "path": "fuzz/fuzz_targets/tau_policy_certification_state_machine.rs"
+              }
+            ],
+            "referenced": true,
+            "referenced_by": [
+              "tau_policy_certification_state_machine"
+            ],
+            "source_lines": [
+              494,
+              522
+            ],
+            "source_path": "crates/mprd-core/src/policy_algebra/menu.rs",
+            "source_present": true,
+            "symbol": "policy_menu_entries_v1"
+          }
+        ],
+        "blockers_present": 4,
+        "blockers_referenced": 4,
+        "blockers_tracked": 4
+      },
+      "has_stable_optional_receipt": false,
+      "mandatory_ok": true,
+      "optional_receipts": [],
+      "optional_research_block": false,
+      "optional_research_blockers": [],
+      "optional_status": null,
+      "problems": [],
+      "receipts": [
+        {
+          "exists": true,
+          "generated_at_utc": null,
+          "git_head": "80cfe7fb9d52085b8683687eea24ba5f426962dc",
+          "ok": true,
+          "path": "internal/assurance/sota_stack/receipts/tau_policy_certification_state_machine_latest.json",
+          "reasons": [],
+          "schema": "mprd/stateful-fuzz-campaign-summary/v1",
+          "started_at_utc": "2026-04-24T23:12:49Z"
+        }
+      ],
+      "surface_id": "tau_policy_certification_boundary"
+    }
+  },
+  "surface_count": 11,
+  "synthetic_blocker_results": [],
+  "synthetic_blocker_summary": {
+    "bounded_no_witness": 0,
+    "fail_closed_failures": 0,
+    "fail_closed_observed": 22,
+    "failure_ids": [],
+    "hypotheses": 22,
+    "kind_counts": {
+      "synthetic_blocker_state_mutation": 22
+    },
+    "reachable_disaster_witnesses": 0,
+    "researchability_counts": {
+      "blocked_missing_or_failed_receipt": 22
+    },
+    "unknown_blocked": 22,
+    "verdict_counts": {
+      "UNKNOWN_BLOCKED": 22
+    }
+  },
+  "synthetic_mutation_results": [],
+  "synthetic_mutation_summary": {
+    "bounded_no_witness": 11,
+    "fail_closed_failures": 0,
+    "fail_closed_observed": 66,
+    "failure_ids": [],
+    "hypotheses": 66,
+    "kind_counts": {
+      "synthetic_receipt_state_mutation": 66
+    },
+    "reachable_disaster_witnesses": 0,
+    "researchability_counts": {
+      "blocked_for_promotion_due_optional_instability": 11,
+      "blocked_missing_or_failed_receipt": 55
+    },
+    "unknown_blocked": 55,
+    "verdict_counts": {
+      "NO_REACHABLE_WITNESS_BOUNDED": 11,
+      "UNKNOWN_BLOCKED": 55
+    }
+  },
+  "synthetic_optional_conflict_results": [],
+  "synthetic_optional_conflict_summary": {
+    "bounded_no_witness": 25,
+    "expectation_failures": 0,
+    "expected_outcome_observed": 25,
+    "expected_researchability_counts": {
+      "blocked_for_promotion_due_optional_instability": 20,
+      "researchable_under_current_bounded_receipts": 5
+    },
+    "failure_ids": [],
+    "hypotheses": 25,
+    "kind_counts": {
+      "synthetic_optional_conflict_state_mutation": 25
+    },
+    "reachable_disaster_witnesses": 0,
+    "researchability_counts": {
+      "blocked_for_promotion_due_optional_instability": 20,
+      "researchable_under_current_bounded_receipts": 5
+    },
+    "unknown_blocked": 0,
+    "verdict_counts": {
+      "NO_REACHABLE_WITNESS_BOUNDED": 25
+    }
+  },
+  "synthetic_provenance_results": [],
+  "synthetic_provenance_summary": {
+    "by_channel": {
+      "mandatory": 11,
+      "optional": 5
+    },
+    "fail_closed_failures": 0,
+    "fail_closed_observed": 16,
+    "failure_ids": [],
+    "hypotheses": 16
+  },
+  "worktree_summary": {
+    "checked_paths": [
+      "tools/run_neuro_symbolic_disaster_loop.py"
+    ],
+    "dirty": false,
+    "dirty_entries": []
+  }
+}

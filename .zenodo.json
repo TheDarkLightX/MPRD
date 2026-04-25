@@ -1,0 +1,35 @@
+{
+  "title": "What-If Witness Spaces: A Neuro-Symbolic Disaster Loop for Fail-Closed Software Hardening",
+  "upload_type": "publication",
+  "publication_type": "preprint",
+  "version": "1.0",
+  "publication_date": "2026-04-25",
+  "creators": [
+    {
+      "name": "Edwards, Dana",
+      "affiliation": "Independent Researcher",
+      "orcid": "0009-0001-1177-4752"
+    }
+  ],
+  "description": "This preprint presents what-if witness spaces: a bounded neuro-symbolic method where creative hypothesis generation is paired with deterministic, receipt-backed, fail-closed checking of compositional disaster states. MPRD is included as a case-study artifact and replication target.",
+  "access_right": "open",
+  "license": "cc-by-4.0",
+  "keywords": [
+    "software assurance",
+    "formal methods",
+    "neuro-symbolic systems",
+    "stateful fuzzing",
+    "fail-closed verification",
+    "witness spaces",
+    "what-if witness spaces",
+    "compositional hardening",
+    "MPRD"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/TheDarkLightX/MPRD",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ]
+}

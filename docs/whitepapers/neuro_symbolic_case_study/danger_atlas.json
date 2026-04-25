@@ -1,0 +1,624 @@
+{
+  "schema": "mprd/danger-atlas/v2",
+  "program_id": "mprd.sota_assurance.v1",
+  "updated_at": "2026-04-08T07:14:36.446389Z",
+  "composition_edges": [
+    {
+      "src": "registry_key_rotation_authorization",
+      "dst": "policy_artifact_run_lifecycle",
+      "reason": "registry authorization controls policy artifact materialization"
+    },
+    {
+      "src": "policy_artifact_run_lifecycle",
+      "dst": "tau_policy_certification_boundary",
+      "reason": "authorized policy artifacts feed Tau certification"
+    },
+    {
+      "src": "tau_policy_certification_boundary",
+      "dst": "selector_candidate_family",
+      "reason": "certified policy semantics constrain selector admissibility"
+    },
+    {
+      "src": "policy_artifact_run_lifecycle",
+      "dst": "selector_candidate_family",
+      "reason": "authorized policy artifacts constrain selectable candidates"
+    },
+    {
+      "src": "selector_candidate_family",
+      "dst": "orchestrator_pipeline_ordering",
+      "reason": "selector output enters the orchestrator pipeline"
+    },
+    {
+      "src": "quorum_snapshot_attestation",
+      "dst": "orchestrator_pipeline_ordering",
+      "reason": "trusted state provenance gates orchestrator decisions"
+    },
+    {
+      "src": "orchestrator_pipeline_ordering",
+      "dst": "decision_token_proof_journal_binding",
+      "reason": "orchestrator outputs become proof/journal commitments"
+    },
+    {
+      "src": "decision_token_proof_journal_binding",
+      "dst": "replay_nonce_claim",
+      "reason": "bound decision tokens must clear replay before side effects"
+    },
+    {
+      "src": "replay_nonce_claim",
+      "dst": "executor_side_effect_boundary",
+      "reason": "replay clearance precedes local executor side effects"
+    },
+    {
+      "src": "executor_side_effect_boundary",
+      "dst": "executor_transport_boundary",
+      "reason": "local execution boundary precedes network transport"
+    },
+    {
+      "src": "operator_control_lifecycle",
+      "dst": "orchestrator_pipeline_ordering",
+      "reason": "operator control-plane state influences orchestrator behavior"
+    }
+  ],
+  "reentry_edges": [
+    {
+      "src": "executor_transport_boundary",
+      "dst": "replay_nonce_claim",
+      "reason": "transport retry or duplicate delivery re-presents a previously cleared claim"
+    },
+    {
+      "src": "executor_side_effect_boundary",
+      "dst": "replay_nonce_claim",
+      "reason": "local retry after a side-effect attempt can re-enter replay clearance"
+    },
+    {
+      "src": "decision_token_proof_journal_binding",
+      "dst": "orchestrator_pipeline_ordering",
+      "reason": "journal replay or audit reconstruction can re-enter orchestrator ordering"
+    },
+    {
+      "src": "tau_policy_certification_boundary",
+      "dst": "policy_artifact_run_lifecycle",
+      "reason": "certification repair can request a new policy artifact run"
+    }
+  ],
+  "surfaces": [
+    {
+      "surface_id": "replay_nonce_claim",
+      "module": "crates/mprd-core/src/anti_replay.rs",
+      "danger_states": [
+        "duplicate_side_effect_after_claim",
+        "claimed_nonce_reaches_success_again",
+        "distributed_claim_race_executes_twice"
+      ],
+      "harnesses": [
+        "anti_replay_state_machine"
+      ],
+      "campaign_receipts": [
+        "internal/assurance/sota_stack/receipts/anti_replay_state_machine_latest.json"
+      ],
+      "missing": [],
+      "coverage_status": "covered",
+      "blocker_functions": [
+        {
+          "symbol": "verify_for_execution",
+          "source_path": "crates/mprd-core/src/lib.rs",
+          "source_match": "verify_for_execution",
+          "harness_match": "verify_for_execution"
+        },
+        {
+          "symbol": "replay_clearance_witness_v1",
+          "source_path": "crates/mprd-core/src/anti_replay.rs",
+          "source_match": "replay_clearance_witness_v1",
+          "harness_match": "replay_clearance_witness_v1"
+        },
+        {
+          "symbol": "finalize_replay_clearance_v1",
+          "source_path": "crates/mprd-core/src/anti_replay.rs",
+          "source_match": "finalize_replay_clearance_v1",
+          "harness_match": "finalize_replay_clearance_v1"
+        }
+      ],
+      "optional_parallel_harnesses": [
+        "anti_replay_state_machine_guided"
+      ],
+      "optional_parallel_receipts": [
+        "internal/assurance/sota_stack/receipts/replay_nonce_claim_guided_seeded_compare_latest.json",
+        "internal/assurance/sota_stack/receipts/replay_nonce_claim_guided_seeded_long_compare_latest.json"
+      ],
+      "optional_parallel_status": "promoted_parallel_guided_lane"
+    },
+    {
+      "surface_id": "quorum_snapshot_attestation",
+      "module": "crates/mprd-core/src/state_provenance.rs",
+      "danger_states": [
+        "untrusted_signers_satisfy_threshold",
+        "duplicate_signer_counts_twice",
+        "tampered_or_drifted_snapshot_materializes"
+      ],
+      "harnesses": [
+        "quorum_snapshot_state_machine"
+      ],
+      "campaign_receipts": [
+        "internal/assurance/sota_stack/receipts/quorum_snapshot_state_machine_latest.json"
+      ],
+      "missing": [],
+      "coverage_status": "covered",
+      "blocker_functions": [
+        {
+          "symbol": "sign_contribution",
+          "source_path": "crates/mprd-core/src/state_provenance.rs",
+          "source_match": "sign_contribution",
+          "harness_match": "sign_contribution"
+        },
+        {
+          "symbol": "verify_with_trusted_attestors",
+          "source_path": "crates/mprd-core/src/state_provenance.rs",
+          "source_match": "verify_with_trusted_attestors",
+          "harness_match": "verify_with_trusted_attestors"
+        },
+        {
+          "symbol": "to_state_snapshot",
+          "source_path": "crates/mprd-core/src/state_provenance.rs",
+          "source_match": "to_state_snapshot",
+          "harness_match": "to_state_snapshot"
+        }
+      ],
+      "optional_parallel_harnesses": [
+        "quorum_snapshot_state_machine_guided"
+      ],
+      "optional_parallel_receipts": [
+        "internal/assurance/sota_stack/receipts/quorum_snapshot_attestation_guided_seeded_compare_latest.json",
+        "internal/assurance/sota_stack/receipts/quorum_snapshot_attestation_guided_seeded_long_compare_latest.json"
+      ],
+      "optional_parallel_status": "promoted_parallel_guided_lane"
+    },
+    {
+      "surface_id": "orchestrator_pipeline_ordering",
+      "module": "crates/mprd-core/src/orchestrator.rs",
+      "danger_states": [
+        "verify_fail_but_execute",
+        "verify_fail_but_record",
+        "record_before_verify_ok",
+        "duplicate_executable_payload_accepted",
+        "selector_contract_broken_but_execution_reached"
+      ],
+      "harnesses": [
+        "orchestrator_state_machine",
+        "orchestrator_ordering_symbolic"
+      ],
+      "campaign_receipts": [
+        "internal/assurance/sota_stack/receipts/orchestrator_state_machine_latest.json",
+        "internal/assurance/sota_stack/receipts/orchestrator_ordering_symbolic_latest.json"
+      ],
+      "missing": [],
+      "coverage_status": "covered",
+      "blocker_functions": [
+        {
+          "symbol": "run_once",
+          "source_path": "crates/mprd-core/src/orchestrator.rs",
+          "source_match": "run_once",
+          "harness_match": "run_once("
+        },
+        {
+          "symbol": "run_once_with_recorder",
+          "source_path": "crates/mprd-core/src/orchestrator.rs",
+          "source_match": "run_once_with_recorder",
+          "harness_match": "run_once_with_recorder("
+        },
+        {
+          "symbol": "pipeline_spec",
+          "source_path": "crates/mprd-core/src/orchestrator_ordering.rs",
+          "source_match": "pipeline_spec",
+          "harness_match": "pipeline_spec"
+        },
+        {
+          "symbol": "step",
+          "source_path": "crates/mprd-core/src/orchestrator_ordering.rs",
+          "source_match": "pub fn step",
+          "harness_match": "orchestrator_ordering::step"
+        }
+      ]
+    },
+    {
+      "surface_id": "selector_candidate_family",
+      "module": "crates/mprd-core/src/selectors.rs",
+      "danger_states": [
+        "noncanonical_family_accepted",
+        "out_of_bounds_selection_admitted",
+        "disallowed_action_selected",
+        "hash_mismatch_selection_admitted"
+      ],
+      "harnesses": [
+        "selector_candidate_family_state_machine"
+      ],
+      "campaign_receipts": [
+        "internal/assurance/sota_stack/receipts/selector_candidate_family_state_machine_latest.json"
+      ],
+      "missing": [],
+      "coverage_status": "covered",
+      "blocker_functions": [
+        {
+          "symbol": "canonicalize_candidates_v1",
+          "source_path": "crates/mprd-core/src/validation.rs",
+          "source_match": "canonicalize_candidates_v1",
+          "harness_match": "canonicalize_candidates_v1"
+        },
+        {
+          "symbol": "EpsilonConstraintSelector",
+          "source_path": "crates/mprd-core/src/selectors.rs",
+          "source_match": "EpsilonConstraintSelector",
+          "harness_match": "EpsilonConstraintSelector"
+        }
+      ],
+      "optional_parallel_harnesses": [
+        "selector_candidate_family_state_machine_guided"
+      ],
+      "optional_parallel_receipts": [
+        "internal/assurance/sota_stack/receipts/selector_candidate_family_canonical_guided_compare_latest.json",
+        "internal/assurance/sota_stack/receipts/selector_candidate_family_canonical_guided_long_compare_latest.json",
+        "internal/assurance/sota_stack/receipts/selector_optional_bundle_compare_latest.json",
+        "internal/assurance/sota_stack/receipts/selector_optional_bundle_stability_latest.json"
+      ]
+    },
+    {
+      "surface_id": "operator_control_lifecycle",
+      "module": "crates/mprd-cli/src/operator/store_control.rs",
+      "danger_states": [
+        "invalid_retention_update_mutates_state",
+        "autopilot_ack_regresses_timestamp",
+        "alert_ack_missing_after_ack_action",
+        "incident_snooze_clear_drift",
+        "mode_transition_write_drift"
+      ],
+      "harnesses": [
+        "operator_control_lifecycle"
+      ],
+      "campaign_receipts": [
+        "internal/assurance/sota_stack/receipts/operator_control_lifecycle_latest.json"
+      ],
+      "missing": [],
+      "coverage_status": "covered",
+      "blocker_functions": [
+        {
+          "symbol": "set_autopilot_mode",
+          "source_path": "crates/mprd-cli/src/operator/store_control.rs",
+          "source_match": "set_autopilot_mode",
+          "harness_match": "set_autopilot_mode"
+        },
+        {
+          "symbol": "autopilot_ack",
+          "source_path": "crates/mprd-cli/src/operator/store_control.rs",
+          "source_match": "autopilot_ack",
+          "harness_match": "autopilot_ack"
+        },
+        {
+          "symbol": "acknowledge_alert",
+          "source_path": "crates/mprd-cli/src/operator/store_control.rs",
+          "source_match": "acknowledge_alert",
+          "harness_match": "acknowledge_alert"
+        },
+        {
+          "symbol": "snooze_incident",
+          "source_path": "crates/mprd-cli/src/operator/store_control.rs",
+          "source_match": "snooze_incident",
+          "harness_match": "snooze_incident"
+        },
+        {
+          "symbol": "clear_incident_snooze",
+          "source_path": "crates/mprd-cli/src/operator/store_control.rs",
+          "source_match": "clear_incident_snooze",
+          "harness_match": "clear_incident_snooze"
+        },
+        {
+          "symbol": "update_retention_settings",
+          "source_path": "crates/mprd-cli/src/operator/store_control.rs",
+          "source_match": "update_retention_settings",
+          "harness_match": "update_retention_settings"
+        }
+      ]
+    },
+    {
+      "surface_id": "decision_token_proof_journal_binding",
+      "module": "crates/mprd-zk/src/risc0_host.rs",
+      "danger_states": [
+        "drifted_decision_commitment_materializes",
+        "journal_policy_or_state_drift_materializes",
+        "candidate_or_limits_binding_drift_materializes",
+        "selector_reject_state_materializes"
+      ],
+      "harnesses": [
+        "decoded_journal_metamorphic_v3",
+        "decision_token_proof_journal_binding_guided_v1"
+      ],
+      "campaign_receipts": [
+        "internal/assurance/sota_stack/receipts/decoded_journal_metamorphic_v3_latest.json",
+        "internal/assurance/sota_stack/receipts/decision_token_proof_journal_binding_guided_v1_latest.json"
+      ],
+      "missing": [],
+      "coverage_status": "covered",
+      "blocker_functions": [
+        {
+          "symbol": "verify_decoded_journal_fuzz",
+          "source_path": "crates/mprd-zk/src/risc0_host.rs",
+          "source_match": "verify_decoded_journal_fuzz",
+          "harness_match": "verify_decoded_journal_fuzz"
+        },
+        {
+          "symbol": "compute_decision_commitment_v3",
+          "source_path": "crates/mprd-risc0-shared/src/lib.rs",
+          "source_match": "compute_decision_commitment_v3",
+          "harness_match": "compute_decision_commitment_v3"
+        },
+        {
+          "symbol": "limits_hash_mpb_v1",
+          "source_path": "crates/mprd-risc0-shared/src/lib.rs",
+          "source_match": "limits_hash_mpb_v1",
+          "harness_match": "limits_hash_mpb_v1"
+        },
+        {
+          "symbol": "decoded_mpb_v1_fixture",
+          "source_path": "crates/mprd-generators/src/lib.rs",
+          "source_match": "decoded_mpb_v1_fixture",
+          "harness_match": "decoded_mpb_v1_fixture"
+        }
+      ]
+    },
+    {
+      "surface_id": "policy_artifact_run_lifecycle",
+      "module": "crates/mprd-zk/src/policy_fetch.rs",
+      "danger_states": [
+        "unauthorized_policy_artifact_materializes",
+        "missing_policy_source_mapping_materializes",
+        "artifact_tamper_materializes",
+        "epoch_or_registry_root_drift_materializes"
+      ],
+      "harnesses": [
+        "policy_artifact_runtime_state_machine"
+      ],
+      "campaign_receipts": [
+        "internal/assurance/sota_stack/receipts/policy_artifact_runtime_state_machine_latest.json"
+      ],
+      "missing": [],
+      "coverage_status": "covered",
+      "blocker_functions": [
+        {
+          "symbol": "RegistryStatePolicyAuthorizationProvider",
+          "source_path": "crates/mprd-zk/src/registry_state.rs",
+          "source_match": "RegistryStatePolicyAuthorizationProvider",
+          "harness_match": "RegistryStatePolicyAuthorizationProvider"
+        },
+        {
+          "symbol": "policy_source_mapping_present",
+          "source_path": "crates/mprd-zk/src/registry_state.rs",
+          "source_match": "policy_source_mapping_present",
+          "harness_match": "policy_source_mapping_present"
+        },
+        {
+          "symbol": "image_id_for",
+          "source_path": "crates/mprd-zk/src/manifest.rs",
+          "source_match": "image_id_for",
+          "harness_match": "image_id_for"
+        },
+        {
+          "symbol": "decode_mpb_policy_artifact_bytes_v1",
+          "source_path": "crates/mprd-zk/src/policy_artifacts.rs",
+          "source_match": "decode_mpb_policy_artifact_bytes_v1",
+          "harness_match": "decode_mpb_policy_artifact_bytes_v1"
+        },
+        {
+          "symbol": "policy_hash_v1",
+          "source_path": "crates/mprd-mpb/src/lib.rs",
+          "source_match": "policy_hash_v1",
+          "harness_match": "policy_hash_v1"
+        }
+      ],
+      "optional_parallel_harnesses": [
+        "policy_artifact_runtime_state_machine_guided"
+      ],
+      "optional_parallel_receipts": [
+        "internal/assurance/sota_stack/receipts/policy_artifact_run_lifecycle_guided_compare_latest.json",
+        "internal/assurance/sota_stack/receipts/policy_artifact_run_lifecycle_guided_seeded_long_compare_latest.json",
+        "internal/assurance/sota_stack/receipts/policy_artifact_optional_bundle_compare_latest.json",
+        "internal/assurance/sota_stack/receipts/policy_artifact_optional_bundle_stability_latest.json"
+      ],
+      "optional_parallel_status": "stable_optional_lane"
+    },
+    {
+      "surface_id": "registry_key_rotation_authorization",
+      "module": "crates/mprd-zk/src/registry_state.rs",
+      "danger_states": [
+        "insufficient_quorum_registry_materializes",
+        "rotated_manifest_key_still_authorizes",
+        "epoch_or_root_drift_still_authorizes",
+        "missing_source_mapping_still_authorizes",
+        "duplicate_registry_signer_counts_twice"
+      ],
+      "harnesses": [
+        "registry_key_rotation_state_machine"
+      ],
+      "campaign_receipts": [
+        "internal/assurance/sota_stack/receipts/registry_key_rotation_state_machine_latest.json"
+      ],
+      "missing": [],
+      "coverage_status": "covered",
+      "blocker_functions": [
+        {
+          "symbol": "sign_contribution",
+          "source_path": "crates/mprd-zk/src/registry_state.rs",
+          "source_match": "sign_contribution",
+          "harness_match": "sign_contribution"
+        },
+        {
+          "symbol": "verify_with_trusted_signers",
+          "source_path": "crates/mprd-zk/src/registry_state.rs",
+          "source_match": "verify_with_trusted_signers",
+          "harness_match": "verify_with_trusted_signers"
+        },
+        {
+          "symbol": "verify_manifest",
+          "source_path": "crates/mprd-zk/src/registry_state.rs",
+          "source_match": "verify_manifest",
+          "harness_match": "verify_manifest"
+        },
+        {
+          "symbol": "resolve",
+          "source_path": "crates/mprd-zk/src/registry_state.rs",
+          "source_match": "fn resolve(",
+          "harness_match": "provider.resolve"
+        }
+      ],
+      "optional_parallel_harnesses": [
+        "registry_key_rotation_state_machine_guided"
+      ],
+      "optional_parallel_receipts": [
+        "internal/assurance/sota_stack/receipts/registry_key_rotation_authorization_guided_compare_latest.json",
+        "internal/assurance/sota_stack/receipts/registry_key_rotation_authorization_guided_long_compare_latest.json",
+        "internal/assurance/sota_stack/receipts/registry_optional_bundle_compare_latest.json",
+        "internal/assurance/sota_stack/receipts/registry_optional_bundle_stability_latest.json"
+      ],
+      "optional_parallel_status": "mixed_optional_lane"
+    },
+    {
+      "surface_id": "tau_policy_certification_boundary",
+      "module": "crates/mprd-core/src/policy_algebra/tau_emit.rs",
+      "danger_states": [
+        "unsupported_policy_emits_fail_open",
+        "wrong_output_name_still_certifies",
+        "tampered_tau_still_certifies",
+        "non_bit_tau_boundary_still_certifies"
+      ],
+      "harnesses": [
+        "tau_policy_certification_state_machine"
+      ],
+      "campaign_receipts": [
+        "internal/assurance/sota_stack/receipts/tau_policy_certification_state_machine_latest.json"
+      ],
+      "missing": [],
+      "coverage_status": "covered",
+      "blocker_functions": [
+        {
+          "symbol": "emit_tau_gate_v2",
+          "source_path": "crates/mprd-core/src/policy_algebra/tau_emit.rs",
+          "source_match": "emit_tau_gate_v2",
+          "harness_match": "emit_tau_gate_v2"
+        },
+        {
+          "symbol": "parse_emitted_tau_gate_allow_expr_v1",
+          "source_path": "crates/mprd-core/src/policy_algebra/tau_sbf_parse.rs",
+          "source_match": "parse_emitted_tau_gate_allow_expr_v1",
+          "harness_match": "parse_emitted_tau_gate_allow_expr_v1"
+        },
+        {
+          "symbol": "policy_equiv_robdd_policy_vs_tau_bits",
+          "source_path": "crates/mprd-core/src/policy_algebra/bdd.rs",
+          "source_match": "policy_equiv_robdd_policy_vs_tau_bits",
+          "harness_match": "policy_equiv_robdd_policy_vs_tau_bits"
+        },
+        {
+          "symbol": "policy_menu_entries_v1",
+          "source_path": "crates/mprd-core/src/policy_algebra/menu.rs",
+          "source_match": "policy_menu_entries_v1",
+          "harness_match": "policy_menu_entries_v1"
+        }
+      ]
+    },
+    {
+      "surface_id": "executor_side_effect_boundary",
+      "module": "crates/mprd-adapters/src/executors.rs",
+      "danger_states": [
+        "invalid_boundary_bundle_reaches_side_effect",
+        "idempotent_nonce_rewrites_audit_record",
+        "strict_composite_continues_after_failure",
+        "best_effort_invalid_boundary_materializes_side_effect"
+      ],
+      "harnesses": [
+        "executor_side_effect_state_machine",
+        "executor_side_effect_state_machine_guided"
+      ],
+      "campaign_receipts": [
+        "internal/assurance/sota_stack/receipts/executor_side_effect_state_machine_latest.json",
+        "internal/assurance/sota_stack/receipts/executor_side_effect_state_machine_guided_latest.json"
+      ],
+      "missing": [],
+      "coverage_status": "covered",
+      "blocker_functions": [
+        {
+          "symbol": "execution_boundary_witness_v1",
+          "source_path": "crates/mprd-core/src/lib.rs",
+          "source_match": "execution_boundary_witness_v1",
+          "harness_match": "execution_boundary_witness_v1"
+        },
+        {
+          "symbol": "FileExecutor",
+          "source_path": "crates/mprd-adapters/src/executors.rs",
+          "source_match": "pub struct FileExecutor",
+          "harness_match": "FileExecutor"
+        },
+        {
+          "symbol": "IdempotentFileExecutor",
+          "source_path": "crates/mprd-adapters/src/executors.rs",
+          "source_match": "pub struct IdempotentFileExecutor",
+          "harness_match": "IdempotentFileExecutor"
+        },
+        {
+          "symbol": "CompositeExecutor",
+          "source_path": "crates/mprd-adapters/src/executors.rs",
+          "source_match": "pub struct CompositeExecutor",
+          "harness_match": "CompositeExecutor"
+        }
+      ]
+    },
+    {
+      "surface_id": "executor_transport_boundary",
+      "module": "crates/mprd-adapters/src/executors.rs",
+      "danger_states": [
+        "invalid_boundary_bundle_reaches_network",
+        "invalid_transport_config_accepts_remote_http",
+        "non_retryable_http_client_error_retries",
+        "retry_budget_exceeded_on_http_server_error",
+        "http_request_missing_idempotency_key",
+        "webhook_acceptance_or_rejection_drift"
+      ],
+      "harnesses": [
+        "executor_transport_state_machine"
+      ],
+      "campaign_receipts": [
+        "internal/assurance/sota_stack/receipts/executor_transport_state_machine_latest.json"
+      ],
+      "missing": [],
+      "coverage_status": "covered",
+      "blocker_functions": [
+        {
+          "symbol": "execution_boundary_witness_v1",
+          "source_path": "crates/mprd-core/src/lib.rs",
+          "source_match": "execution_boundary_witness_v1",
+          "harness_match": "execution_boundary_witness_v1"
+        },
+        {
+          "symbol": "HttpExecutor",
+          "source_path": "crates/mprd-adapters/src/executors.rs",
+          "source_match": "pub struct HttpExecutor",
+          "harness_match": "HttpExecutor"
+        },
+        {
+          "symbol": "HttpExecutor::new",
+          "source_path": "crates/mprd-adapters/src/executors.rs",
+          "source_match": "pub fn new(config: HttpExecutorConfig)",
+          "harness_match": "HttpExecutor::new"
+        },
+        {
+          "symbol": "WebhookExecutor",
+          "source_path": "crates/mprd-adapters/src/executors.rs",
+          "source_match": "pub struct WebhookExecutor",
+          "harness_match": "WebhookExecutor"
+        },
+        {
+          "symbol": "WebhookExecutor::new",
+          "source_path": "crates/mprd-adapters/src/executors.rs",
+          "source_match": "pub fn new(webhook_url: impl Into<String>, timeout_ms: u64)",
+          "harness_match": "WebhookExecutor::new"
+        }
+      ]
+    }
+  ]
+}

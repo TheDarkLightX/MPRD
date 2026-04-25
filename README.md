@@ -1,5 +1,7 @@
 # MPRD: Model Proposes, Rules Decide
 
+[![DOI](https://zenodo.org/badge/1113028896.svg)](https://zenodo.org/badge/latestdoi/1113028896)
+
 **MPRD is FCIS (Formal Correctness by Construction) applied to AI.**
 
 MPRD is a blueprint for turning raw intelligence into lawful power without ever needing to understand or trust the intelligence itself. It operates on a simple, invariant-preserving principle:
@@ -51,6 +53,8 @@ This isn't a goal. It's a guarantee. The architecture enforces it:
 
 - Lean 4 proof bundle (fast to build): `proofs/lean/` (run `cd proofs/lean && lake build`)
 - Policy Algebra (ROBDD certification rail): semantic hashes/diffs + Tau-gate equivalence checks (see `docs/POLICY_CERTIFICATION.md`).
+- Neuro-symbolic disaster-loop preprint: `docs/whitepapers/NEURO_SYMBOLIC_DISASTER_LOOP.pdf`
+  (source and case-study bundle live beside the PDF).
 
 ### The Proof-Carrying “Codec”
 

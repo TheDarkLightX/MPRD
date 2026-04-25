@@ -1,126 +1,475 @@
-# What-If Witness Spaces
+# What-If Witness Spaces: A Neuro-Symbolic Disaster Loop for Fail-Closed Software Hardening
 
-## A Neuro-Symbolic Disaster Loop for Fail-Closed Software Hardening
+Dana Edwards
+Independent Researcher
+ORCID: [https://orcid.org/0009-0001-1177-4752](https://orcid.org/0009-0001-1177-4752)
 
-Date: 2026-04-24
+Preprint, version 1.0
+Date: 2026-04-25
+DOI: Zenodo DOI pending first release
+Repository DOI badge URL:
+[https://zenodo.org/badge/latestdoi/1113028896](https://zenodo.org/badge/latestdoi/1113028896)
 
-Project: MPRD
+Technique: What-if witness spaces and neuro-symbolic disaster loops
+Case-study artifact: MPRD
+License: CC BY 4.0
 
-Primary implementation: `tools/run_neuro_symbolic_disaster_loop.py`
+Reference implementation:
+`tools/run_neuro_symbolic_disaster_loop.py`
 
-Primary receipt:
-`internal/assurance/sota_stack/receipts/neuro_symbolic_disaster_loop_latest.json`
+Case-study receipt:
+`docs/whitepapers/neuro_symbolic_case_study/neuro_symbolic_disaster_loop_latest.json`
 
-Latest receipt hash at time of writing:
+Latest case-study receipt hash at time of writing:
 `sha256:b83ee1178c4bea460b9c7e3c67d5ccf1d7ac330e017746236fcfc7274c459561`
+
+Recommended citation before Zenodo DOI minting:
+Edwards, Dana. 2026. "What-If Witness Spaces: A Neuro-Symbolic Disaster Loop
+for Fail-Closed Software Hardening." Preprint, version 1.0. Zenodo DOI pending.
 
 ## Abstract
 
-Modern software assurance still fails most often at composition boundaries. A
-single parser, proof, test, or fuzz target may look safe in isolation, while the
-system can still fail when a stale receipt, optional feature lane, retry path,
-registry update, proof journal, selector decision, or executor boundary is
-combined with another valid-looking state. The hard problem is not just "can this
-function reject bad input?" but "what disaster states become reachable when safe
-subsystems are wired together, evidence is stale, and the system is asked to
-research or promote a new lane?"
+Modern assurance fails most often at composition boundaries. A parser, proof,
+fuzz target, or model checker may be correct in isolation while the larger
+workflow still reaches a disaster state through stale evidence, retry paths,
+optional features, provenance drift, proof-journal mismatch, or promotion from an
+unsafe research state. This paper introduces **what-if witness spaces**: a
+general neuro-symbolic technique in which a creative proposer generates explicit
+disaster hypotheses and a deterministic symbolic checker decides whether each
+hypothesis is blocked, refuted, or reachable under replayable evidence.
 
-The MPRD neuro-symbolic disaster loop is a bounded answer to that problem. The
-"neuro" part proposes structured "what if?" hypotheses over a danger atlas:
-single-surface disasters, composition edges, order inversions, re-entry paths,
-fan-out, convergence, cycles, evidence failures, provenance drift, and optional
-source-of-truth conflicts. The symbolic part is deterministic: it evaluates those
-hypotheses against replayable receipts, checker references, git provenance,
-synthetic fault mutations, and a fail-closed research gate.
+The method generalizes counterexample-guided reasoning from local program inputs
+to the assurance workflow itself. The neural side is an existential generator:
+it asks "what if?" over surfaces, graph edges, evidence states, and fault
+mutations. The symbolic side is a universal gate: it checks every generated
+witness in a bounded language, rejects unknown or stale evidence fail-closed, and
+opens research only when all obligations are discharged. The mathematical core
+comes from witness-space factorization, quantifier factoring, Galois-style
+obligation carving, verifier-compiler loops, and loop-space geometry.
 
-The result is not a proof of global safety. It is a proof-shaped bounded
-assurance artifact: for the current atlas, receipts, checker, and generated
-witness space, the loop can state exactly what it checked, which states remain
-researchable, which states are blocked, which evidence failures are rejected, and
-which claims are outside scope. In the latest MPRD run, the gate checked 16,003
-materialized what-ifs plus a compressed 75,599,999-combination independent
-frontier, found 0 reachable disaster witnesses, observed 0 fail-closed failures
-across receipt, blocker, provenance, and optional-conflict mutations, and opened
-the bounded research gate.
+The paper's case study is MPRD, where the loop checked 16,003 materialized
+what-ifs plus a compressed 75,599,999-combination independent frontier, found 0
+reachable disaster witnesses, observed 0 fail-closed failures across receipt,
+blocker, provenance, and optional-conflict mutations, and opened the bounded
+research gate. The claim is intentionally bounded: it proves no global software
+safety theorem. It proves a replayable no-witness result for a named witness
+language, atlas, receipt set, checker, and depth.
 
-## 1. The Problem
+## The Assurance Gap
 
-Most security hardening workflows are organized around local artifacts:
+Most software hardening workflows are organized around local artifacts:
 
 - unit tests for local invariants,
 - fuzz targets for parsers and state machines,
-- symbolic checks for extracted helpers,
+- concolic or symbolic checks for branchy code,
 - proof files for selected mathematical claims,
 - CI gates for regressions.
 
-These are necessary, but they leave a gap. Real failures often occur in the
-space between artifacts. A receipt can be stale. A guided fuzz lane can be
-unstable. A registry update can authorize a policy artifact that later changes a
-selector decision. A proof journal can be valid for one candidate but replayed
-against another. A retry can re-enter replay clearance after side effects have
-already occurred. A checker can be edited locally after a receipt was generated.
+These are necessary, but they do not fully model the composed assurance process.
+Real failures often arise between artifacts:
 
-Those are not just bugs in code paths. They are disaster states in a composed
-research process. They answer questions like:
+- a receipt is valid for an old checker but reused after the checker changes,
+- a proof journal is replayed against a different decision token,
+- a retry path re-enters replay clearance after side effects,
+- a stable optional-lane receipt disagrees with the atlas,
+- a promotion gate treats "no bug found" as "safe to research."
 
-- What if a policy artifact is authorized by a stale registry root?
-- What if selector admissibility is checked before certification drift is caught?
-- What if replay clearance is correct locally, but transport retry re-presents
-  the same claim?
-- What if a stability receipt says a lane is stable while the atlas still says
-  it is mixed?
-- What if the checker that interprets the receipts is itself dirty?
+These are not only code bugs. They are **disaster states** in the process that
+decides which states may be explored, optimized, or promoted. The key question is
+therefore:
 
-Traditional test plans often handle these cases as ad hoc follow-up work. The
-MPRD disaster loop makes them first-class objects.
+$$
+\text{Which bad composed states are reachable under the current evidence state?}
+$$
 
-## 2. Core Idea
+The answer should not depend on whether a language model is confident. It should
+depend on a finite, reproducible witness space and a deterministic checker.
 
-The core idea is to treat hardening as bounded exploration of a witness space.
+## The Technique
 
-A witness space is a set of concrete or symbolic "what if?" hypotheses. Each
-hypothesis names:
+A **what-if witness space** is a finite or compressed symbolic family of
+hypotheses. A hypothesis names:
 
 - the surfaces involved,
 - the disaster state being tested,
-- the kind of composition or evidence fault,
+- the composition, ordering, re-entry, or evidence-fault pattern,
 - the receipt or checker evidence required to decide it.
 
 The loop has two roles:
 
-1. Hypothesis generation asks the creative questions. This is the neuro-symbolic
-   role normally supplied by an LLM, a human reviewer, a tactic database, or a
-   search policy. It is allowed to be creative. It is not trusted.
-2. Deterministic checking decides whether the hypothesis is researchable,
-   blocked, or a reachable disaster witness. This is the symbolic role. It is the
-   only promotion authority.
+1. The proposer generates hypotheses. This can be an LLM, a human reviewer, a
+   grammar, a fuzzer, or another search policy. It is creative, but not trusted.
+2. The checker classifies hypotheses. It is deterministic, receipt-backed, and
+   fail-closed. It owns promotion authority.
 
-This separation is the central safety property of the method. The LLM can ask
-"what if?" but it cannot declare the system safe. The checker can reject,
-summarize, and gate. Promotion depends on replayable evidence, not on plausibility.
+The operational rule is:
 
-## 3. MPRD Implementation
+$$
+\text{Creativity belongs on the existential side; trust belongs on the
+universal side.}
+$$
 
-The current implementation is `tools/run_neuro_symbolic_disaster_loop.py`.
+The proposer searches for possible witnesses. The checker decides which
+witnesses are valid, blocked, or refuted. If the checker returns `UNKNOWN`,
+`TIMEOUT`, `INCONCLUSIVE`, malformed input, stale evidence, or missing evidence,
+the gate rejects.
 
-Inputs:
+## Mathematical Foundations
 
-- `internal/assurance/sota_stack/danger_atlas.json`
-- mandatory campaign receipts under `internal/assurance/sota_stack/receipts/`
-- optional lane compare and stability receipts,
-- blocker and harness source references,
-- current git head and checker worktree state.
+This section distills the mathematical machinery developed in the Formal Methods
+Philosophy tutorial sequence on neuro-symbolic witness spaces, quantifier
+factoring, Galois loops, verifier-compiler loops, loop-space geometry,
+counterexample-guided requirements discovery, grammar-based fuzzing, and
+concolic branch exploration.
 
-Outputs:
+### Witness Spaces
 
-- a JSON receipt,
-- a Markdown receipt,
-- stable timestamp-free hashes,
-- compact result digests by default,
-- optional full materialized results with `--full-results`,
-- a strict gate via `tools/test.sh disaster-gate`.
+Let $x$ be an assurance state. It contains code, specifications, receipts,
+provenance, optional guidance, checker state, and a bounded search depth. Let
+$L$ be a witness language and $z$ a concrete witness object generated by that
+language. A local witnessability target is:
 
-The loop currently covers 11 surfaces:
+$$
+\mathrm{Good}(x)\;\Longleftrightarrow\;\exists z\;\mathrm{Proves}_{L}(z,x).
+$$
+
+For hardening, the more useful dual is a no-bad-witness target:
+
+$$
+\mathrm{NoBadWitness}(x,L)
+\;\Longleftrightarrow\;
+\neg\exists z\in L(x)\;\mathrm{Bad}(z,x).
+$$
+
+The technique does not search the full semantic universe. It searches $L(x)$,
+the bounded witness language currently declared by the artifact. A no-witness
+result is therefore:
+
+$$
+\neg\exists z\in L_d(x)\;\mathrm{ReachableDisaster}(z,x),
+$$
+
+where $d$ is the configured depth. This is meaningful because $L_d$ is explicit
+and replayable, not because it is universal.
+
+### Neuro-Symbolic Filtering
+
+Let $q_N(z\mid x)$ be the proposer's distribution over candidate witnesses, and
+let $\chi_S(z,x)$ be the symbolic admissibility predicate:
+
+$$
+\chi_S(z,x)=
+\begin{cases}
+1 & \text{if the checker accepts } z \text{ for } x,\\
+0 & \text{otherwise.}
+\end{cases}
+$$
+
+The neuro-symbolic distribution is:
+
+$$
+q_{NS}(z\mid x)\propto q_N(z\mid x)\cdot \chi_S(z,x).
+$$
+
+This equation captures the division of labor. The proposer concentrates search
+mass. The checker zeros out semantically invalid mass. The combined loop searches
+the admissible overlap. If the admissible mass is zero, the distribution is not
+renormalized into a pass; the gate reports that no admissible candidate was
+found.
+
+### Quantifier Factoring
+
+Many assurance goals have the form:
+
+$$
+\exists a\;\forall e\;\mathrm{Spec}(a,e),
+$$
+
+where $a$ is a design, repair, policy, invariant, or research state, and $e$ is
+an environment move, attack, execution, input, or evidence perturbation. The
+central factoring move is:
+
+$$
+\forall e\;\mathrm{Spec}(a,e)
+\;\Longleftrightarrow\;
+\neg\exists e\;\neg\mathrm{Spec}(a,e).
+$$
+
+Thus acceptance is operationalized as failed counterexample search:
+
+$$
+\mathrm{Good}(a) := \forall e\;\mathrm{Spec}(a,e).
+$$
+
+$$
+\mathrm{Accept}(a)
+\;\Longleftrightarrow\;
+\neg\exists e\;\mathrm{EmitCE}(a,e).
+$$
+
+Counterexample soundness is:
+
+$$
+\forall a,e\;(\mathrm{EmitCE}(a,e)\rightarrow\neg\mathrm{Spec}(a,e)).
+$$
+
+Counterexample completeness is:
+
+$$
+\forall a\;(\neg\mathrm{Good}(a)\rightarrow\exists e\;\mathrm{EmitCE}(a,e)).
+$$
+
+Only with both soundness and completeness does acceptance equal goodness. In
+bounded engineering artifacts, completeness is usually limited to the declared
+frontier. Therefore the honest claim is bounded acceptance, not global safety.
+
+### Galois-Style Obligation Carving
+
+The loop can be expressed as a Galois connection between candidate states and
+obligations. Let $X$ be candidate states and $Y$ be obligations, and let
+$\mathrm{Spec}:X\times Y\to\{\mathrm{true},\mathrm{false}\}$ be the Boolean
+incidence relation. For $B\subseteq Y$ and $C\subseteq X$, define:
+
+$$
+\Phi(B)=\{x\in X\mid \forall b\in B,\;\mathrm{Spec}(x,b)\},
+$$
+
+$$
+\Psi(C)=\{y\in Y\mid \forall x\in C,\;\mathrm{Spec}(x,y)\}.
+$$
+
+Then:
+
+$$
+C\subseteq \Phi(B)\quad\Longleftrightarrow\quad B\subseteq\Psi(C).
+$$
+
+This means candidate-space reasoning and obligation-space reasoning are dual.
+The closure operators are:
+
+$$
+\mathrm{cl}_X(C)=\Phi(\Psi(C)),
+\qquad
+\mathrm{cl}_Y(B)=\Psi(\Phi(B)).
+$$
+
+A fail-closed assurance loop maintains surviving candidates $C_t$, uncovered
+obligations $U_t$, and discharged obligations $D_t=Y\setminus U_t$ with the
+invariant:
+
+$$
+D_t\subseteq\Psi(C_t).
+$$
+
+Every discharged obligation must be satisfied by every surviving candidate. A
+new bad witness shrinks $C_t$. A new region certificate shrinks $U_t$. A missing
+receipt or inconclusive verifier result does not shrink the obligation set; it
+keeps the gate closed.
+
+### Obligation-Targeted Witness Routing
+
+A stronger version of the loop is not "the proposer guesses an answer and the
+checker attacks it." This architecture lets the symbolic side choose the
+highest-value unresolved obligation, then asks the existential side to route the
+search toward a witness that exposes it.
+
+For an uncovered obligation $y$, define:
+
+$$
+W(C,y)=\{x\in C\mid \neg\mathrm{Spec}(x,y)\}.
+$$
+
+If $y\notin\Psi(C)$, then $W(C,y)$ is nonempty. A closure-gain score is:
+
+$$
+\Delta_\Psi(y\mid C)
+=
+\left|\Psi(C\cap\Phi(\{y\}))\right|
+-
+\left|\Psi(C)\right|.
+$$
+
+A live-burden score is:
+
+$$
+L(C)=|C|+|Y\setminus\Psi(C)|.
+$$
+
+On finite bounded domains, an obligation-targeted controller can choose $y$ by
+maximizing closure gain or minimizing live burden, then require the proposer to
+synthesize an exposing witness in $W(C,y)$. This is a deeper neuro-symbolic
+loop: the formal side chooses the leverage-bearing question, and the creative
+side supplies a concrete route to it.
+
+### Verifier-Compiler View
+
+Let $L^\star:X\to\Lambda$ be an exact verifier label function over a bounded
+domain. A verifier-compiler loop searches for a quotient:
+
+$$
+q:X\to Q
+$$
+
+such that:
+
+$$
+\forall x,x'\in X,\;q(x)=q(x')\rightarrow L^\star(x)=L^\star(x').
+$$
+
+If this holds, there exists a compiled controller on the image of $q$:
+
+$$
+C:q(X)\to\Lambda
+$$
+
+with:
+
+$$
+\forall x\in X,\;C(q(x))=L^\star(x).
+$$
+
+If $q$ is too coarse, the loop adds a repair coordinate $r:X\to R$ and checks:
+
+$$
+(q(x),r(x))=(q(x'),r(x'))\rightarrow L^\star(x)=L^\star(x').
+$$
+
+The disaster loop uses this idea at the assurance level. It does not need every
+byte of the repository. It needs a quotient that preserves the gate-relevant
+observations: surfaces, edges, receipts, optional status, blocker references,
+provenance, checker cleanliness, and depth.
+
+### Loop-Space Geometry
+
+The loop-space geometry view treats the assurance workflow as a state machine.
+A state contains code, receipts, checker logic, provenance, optional guidance,
+and gate decisions. A transition is an edit, rerun, receipt mutation, synthetic
+fault, or witness-space expansion.
+
+For a witness library $W$ and hidden target $M$, define the observation map:
+
+$$
+O_W(M)=\{S\in W\mid S\subseteq M\}.
+$$
+
+Two targets are indistinguishable to the current loop when:
+
+$$
+M\sim_W M'\quad\Longleftrightarrow\quad O_W(M)=O_W(M').
+$$
+
+A stronger loop changes this quotient. It collects witnesses, stores the right
+state, collapses ambiguity classes, asks only the residual questions that still
+matter, and compiles the surviving structure into a small controller or gate.
+
+For hardening, a disaster loop is a cycle:
+
+$$
+x_0\to x_1\to\cdots\to x_k
+\quad\wedge\quad
+x_k\sim_{\mathrm{visible}}x_0
+\quad\wedge\quad
+\mathrm{ObligationLost}(x_0,x_k).
+$$
+
+The method blocks such loops by making obligations visible. A stale receipt,
+dirty checker, failed optional lane, or missing blocker changes the quotient and
+therefore cannot silently return to the same researchable state.
+
+## Generic Algorithm
+
+The method can be implemented with the following abstract interface.
+
+```text
+input:
+  surfaces S
+  composition edges E
+  re-entry edges Q
+  disaster predicates D
+  mandatory evidence Rm
+  optional evidence Ro
+  blocker references B
+  provenance state P
+  depth d
+
+generate:
+  W_mat:
+    single-surface disasters
+    evidence fail-open mutations
+    blocker bypasses
+    edge compositions
+    order inversions
+    bounded chains
+    terminal chain disasters
+    fan-out and convergence cases
+    re-entry and cycle amplification cases
+    independent co-reachability cases
+
+  W_cmp:
+    compressed independent frontier above the materialized order
+
+mutate:
+  receipt-state faults
+  blocker-state faults
+  provenance faults
+  optional source-of-truth conflicts
+
+classify:
+  for every w in W_mat:
+    REACHABLE_DISASTER_WITNESS
+    UNKNOWN_BLOCKED
+    NO_REACHABLE_WITNESS_BOUNDED
+
+gate:
+  open only if:
+    no reachable disaster witnesses
+    no unknown mandatory blockers
+    no optional research blockers
+    graph frontier exhausted
+    synthetic fault checks reject fail-closed
+    receipt provenance has no hard mismatch
+    gate-critical checker state is clean
+```
+
+The generic gate can be written:
+
+$$
+\begin{aligned}
+\mathrm{Open}(A,\varepsilon,d)\Longleftrightarrow\;&
+\forall w\in W_{\mathrm{mat}}(A,d)\;.\;\rho(w,\varepsilon)\\
+&\wedge\;\mathrm{CompressedFrontierOK}(W_{\mathrm{cmp}},\varepsilon)\\
+&\wedge\;\mathrm{DepthExhausted}(A,d)\\
+&\wedge\;\forall m\in M\;.\;\mathrm{Reject}(m(\varepsilon)).
+\end{aligned}
+$$
+
+Here $A$ is the atlas, $\varepsilon$ is the evidence state, $\rho$ is the
+researchability predicate, and $M$ is the synthetic mutation suite.
+
+## Case Study: MPRD
+
+MPRD is used here as a case study, not as the definition of the technique. In
+the case study, the atlas is:
+
+$$
+A=(S,E,Q,D),
+$$
+
+where $S$ is the finite set of surfaces, $E\subseteq S\times S$ is the
+composition graph, $Q\subseteq S\times S$ is the re-entry graph, and $D(s)$ is
+the finite set of named disaster states attached to surface $s$.
+
+The evidence state is:
+
+$$
+\varepsilon=(R_m,R_o,B,H,g,\Delta),
+$$
+
+where $R_m$ is the mandatory receipt set, $R_o$ is the optional receipt set,
+$B$ is the blocker-source relation, $H$ is the harness-reference relation, $g$
+is the current git head, and $\Delta$ is checker worktree/provenance status.
+
+The current case-study atlas covers 11 surfaces:
 
 | Surface | Example disaster states |
 | --- | --- |
@@ -136,17 +485,47 @@ The loop currently covers 11 surfaces:
 | `executor_side_effect_boundary` | invalid boundary reaches side effect, idempotency drift |
 | `executor_transport_boundary` | invalid boundary reaches network, retry budget drift |
 
-The atlas owns the composition graph. At the latest run, the frontier was
-exhausted through depth 11, which equals the number of surfaces. The graph
-includes forward composition edges such as registry-to-policy-artifact,
-policy-artifact-to-Tau-certification, selector-to-orchestrator, orchestrator-to
-journal binding, replay-to-executor-side-effect, and side-effect-to-transport.
-It also includes re-entry edges such as transport retry back into replay and
-journal replay back into orchestrator ordering.
+The materialized case-study witness language is:
 
-## 4. Hypothesis Families
+$$
+\begin{aligned}
+W_{\mathrm{mat}}(A,d)=&
+W_{\mathrm{single}}\cup W_{\mathrm{receipt}}\cup W_{\mathrm{blocker}}
+\cup W_{\mathrm{edge}}\cup W_{\mathrm{order}}\\
+&\cup W_{\mathrm{chain}}\cup W_{\mathrm{fan}}\cup W_{\mathrm{conv}}
+\cup W_{\mathrm{reentry}}\cup W_{\mathrm{cycle}}
+\cup W_{\mathrm{independent}}^{\le 3}.
+\end{aligned}
+$$
 
-The latest materialized witness space contains 16,003 hypotheses:
+The compressed frontier is:
+
+$$
+W_{\mathrm{cmp}}(A,d)=
+\{I\subseteq S\mid 4\le |I|\le d,\; I
+\text{ is independent under the atlas relations}\}.
+$$
+
+## Case-Study Results
+
+At the latest recorded MPRD case-study run:
+
+- gate: `OPEN_FOR_BOUNDED_RESEARCH`
+- materialized hypotheses: 16,003
+- reachable disaster witnesses: 0
+- unknown mandatory blockers: 0
+- compressed independent frontier: 75,599,999 combinations
+- optional research blocks: 0
+- receipt-state synthetic checks: 66, failures 0
+- blocker-state synthetic checks: 22, failures 0
+- provenance synthetic checks: 16, failures 0
+- optional-conflict synthetic checks: 25, failures 0
+- hard receipt git mismatches: 0
+- compatible checker-only receipt drifts: 12
+- checker worktree dirty: false
+- compact/full stable hash parity: passed
+
+The materialized family counts were:
 
 | Family | Count |
 | --- | ---: |
@@ -164,333 +543,162 @@ The latest materialized witness space contains 16,003 hypotheses:
 | `independent_pair_coreachability` | 1,000 |
 | `independent_triple_coreachability` | 12,714 |
 
-The larger independent co-reachability space is represented in compressed form
-rather than materialized into a huge receipt. The latest compressed frontier
-contains 75,599,999 independent combinations through order 11. All are currently
-researchable under the current bounded receipts.
+The bounded case-study theorem is:
 
-## 5. Deterministic Classification
+$$
+\mathrm{Open}(A,\varepsilon,11)
+\Rightarrow
+\neg\exists w\in W_{\mathrm{mat}}(A,11)\;
+\mathrm{ReachableDisaster}(w,\varepsilon).
+$$
 
-For each hypothesis, the checker computes one of three relevant outcomes:
+It is not:
 
-- `REACHABLE_DISASTER_WITNESS`: the current evidence says a named disaster is
-  reachable or a receipt reports a concrete failing condition.
-- `UNKNOWN_BLOCKED`: the evidence is missing, stale, failed, unreferenced, or
-  otherwise insufficient, so the hypothesis is rejected fail-closed.
-- `NO_REACHABLE_WITNESS_BOUNDED`: the current bounded evidence contains no
-  reachable witness for that generated hypothesis.
+$$
+\neg\exists w\in W_{\infty}(A)\;
+\mathrm{ReachableDisaster}(w,\varepsilon).
+$$
 
-Researchability is a separate field:
+## Replication Protocol
 
-- `researchable_under_current_bounded_receipts`
-- `blocked_missing_or_failed_receipt`
-- `blocked_for_promotion_due_optional_instability`
-- `blocked_reachable_disaster_witness`
+The public replication path has three tiers.
 
-This distinction matters. "No witness found" is not automatically "safe to
-research." A surface can have no reachable witness and still be blocked because
-the optional lane is mixed, evidence is stale, or the checker is dirty.
+### Tier 1: Paper and Checker Availability
 
-## 6. Synthetic Fault Families
+Clone the repository archive associated with the Zenodo release:
 
-The loop does not merely classify the current happy path. It mutates the evidence
-model to ensure the gate rejects common disaster-enabling evidence faults.
-
-Latest synthetic checks:
-
-| Fault family | Count | Passing condition | Failures |
-| --- | ---: | --- | ---: |
-| receipt-state mutation | 66 | missing, failed, nonzero, artifact-drift, stale, optional-mixed evidence blocks | 0 |
-| blocker-state mutation | 22 | missing checker source or unreferenced harness blocks | 0 |
-| provenance mutation | 16 | synthetic stale git heads block | 0 |
-| optional-conflict mutation | 25 | stable-over-stale-atlas allowed; blocking receipts reject | 0 |
-
-The optional-conflict family is important because it covers a subtle research
-failure mode: two sources of truth can disagree. The gate now explicitly tests:
-
-- atlas says mixed, newest receipt says stable,
-- atlas says stable, receipt rejects,
-- receipt decision is stable, next guidance rejects,
-- one optional receipt is stable while another blocks,
-- atlas says stable, optional receipt is missing.
-
-Only the first case is researchable. The others block fail-closed.
-
-## 7. Provenance and Dirty-Checker Handling
-
-Receipts carry git provenance when the receipt schema supports it. The strict
-gate rejects hard receipt head mismatches. Under disk pressure, however, rerunning
-all fuzz receipts after every checker-only edit is wasteful and can be impossible.
-The loop therefore uses a narrow compatibility rule:
-
-- if the receipt head differs from the current head,
-- and `git diff receipt_head..current_head` touches only
-  `tools/run_neuro_symbolic_disaster_loop.py`,
-- then the receipt is recorded as compatible checker-only drift;
-- otherwise it remains a hard mismatch and the gate blocks.
-
-This is intentionally conservative. At the latest run there were 12 compatible
-checker-only drifts and 0 hard mismatches.
-
-The gate also checks the worktree state of the checker itself. If
-`tools/run_neuro_symbolic_disaster_loop.py` is dirty, the gate adds
-`checker_worktree_dirty` and blocks. This prevents an uncommitted checker edit
-from interpreting old receipts and claiming the research gate is open. Unrelated
-dirty worktree files do not block this receipt, because the repo currently has
-large unrelated local edits and the disaster gate needs a focused provenance
-boundary.
-
-## 8. Algorithm Sketch
-
-```text
-input:
-  danger atlas A
-  mandatory receipts Rm
-  optional receipts Ro
-  blocker source references B
-  harness references H
-  current git head g
-  max depth d
-
-build:
-  surfaces S from A
-  composition graph E from A
-  re-entry graph Q from A
-  surface checks C from Rm, Ro, B, H, g
-
-generate:
-  materialized hypotheses W:
-    single-surface disasters
-    receipt fail-open cases
-    blocker bypasses
-    edge compositions
-    order inversions
-    bounded chains
-    terminal chain disasters
-    fan-out and convergence cases
-    re-entry and cycle-amplification cases
-    independent pairs and triples
-
-  compressed frontier F:
-    independent combinations of order 4 through |S|
-
-mutate:
-  receipt-state faults
-  blocker-state faults
-  provenance faults
-  optional source-of-truth conflicts
-
-classify:
-  for each hypothesis w in W:
-    if mandatory evidence missing or failed:
-      UNKNOWN_BLOCKED
-    else if optional evidence blocks:
-      NO_REACHABLE_WITNESS_BOUNDED, but not researchable
-    else if a receipt records a concrete failing disaster:
-      REACHABLE_DISASTER_WITNESS
-    else:
-      NO_REACHABLE_WITNESS_BOUNDED and researchable
-
-gate:
-  open only if:
-    no reachable disaster witnesses
-    no unknown mandatory blockers
-    no optional research blockers
-    graph frontier exhausted
-    synthetic receipt, blocker, provenance, and optional-conflict checks pass
-    receipt provenance has no hard mismatch
-    gate-critical checker file is clean
-
-output:
-  compact receipt with result digests
-  optional full receipt
-  stable timestamp-free hash
+```bash
+git clone https://github.com/TheDarkLightX/MPRD.git
+cd MPRD
 ```
 
-## 9. What This Revolutionizes
+Confirm that the checker exists:
 
-The method is not revolutionary because it uses an LLM. The LLM is deliberately
-untrusted. The shift is architectural.
+```bash
+python3 tools/run_neuro_symbolic_disaster_loop.py --help
+```
 
-### 9.1 Hardening Moves From Local Coverage to Compositional Witness Closure
+Run the in-process fail-closed self-tests:
 
-Traditional hardening asks, "Did each component pass its tests?" This loop asks,
-"Which composed disaster states are reachable under current evidence, and which
-are blocked by missing or unstable evidence?"
+```bash
+python3 tools/run_neuro_symbolic_disaster_loop.py --self-test
+```
 
-That is a stronger operational question. It catches the class of failures where
-each local component appears healthy, but the research process can still promote
-or explore an unsafe composed state.
+This tier checks the public checker logic without requiring the full MPRD
+case-study evidence bundle.
 
-### 9.2 The LLM Becomes a Question Generator, Not an Authority
+### Tier 2: Case-Study Receipt Replay
 
-The LLM's strength is adversarial imagination: "what if the order is inverted?",
-"what if retry re-enters replay?", "what if a stable receipt disagrees with the
-atlas?", "what if the checker itself changed?" The method uses that strength
-without trusting it. The deterministic checker owns promotion.
+The case-study receipt is `neuro_symbolic_disaster_loop_latest.json` in
+`docs/whitepapers/neuro_symbolic_case_study/`.
 
-This creates a useful division of labor:
+When the Zenodo release includes the MPRD assurance bundle, verify the recorded
+stable hash:
 
-- neural or human creativity expands the witness space,
-- symbolic checks decide the state,
-- receipts preserve replay,
-- fail-closed gates prevent optimism from becoming policy.
+```bash
+python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path("docs/whitepapers/neuro_symbolic_case_study")
+p = p / "neuro_symbolic_disaster_loop_latest.json"
+d = json.loads(p.read_text())
+print(d["stable_receipt_hash"])
+print(json.dumps(d["summary"], indent=2, sort_keys=True))
+print(json.dumps(d["gate_summary"], indent=2, sort_keys=True))
+PY
+```
 
-### 9.3 Evidence Failures Become Test Cases
+The expected stable hash for the case-study receipt used in this paper is:
 
-Missing receipts, stale git heads, optional instability, unreferenced blocker
-symbols, and dirty checkers are usually process failures. Here they are modeled
-as explicit synthetic disaster states. The gate is tested against them on every
-run.
+```text
+b83ee1178c4bea460b9c7e3c67d5ccf1d7ac330e017746236fcfc7274c459561
+```
 
-### 9.4 "Safe to Research" Becomes a Machine-Checkable State
+### Tier 3: Full Case-Study Regeneration
 
-The loop does not merely say "no bug found." It says whether the bounded frontier
-is open for research. That difference matters. Research can be unsafe if it is
-allowed to optimize, promote, rank, or explore from stale evidence. The gate
-therefore treats `UNKNOWN`, `TIMEOUT`, `INCONCLUSIVE`, missing artifacts, stale
-receipts, and dirty checker state as reject conditions.
+To regenerate the MPRD case-study receipt from the archived evidence bundle:
 
-### 9.5 The Result Is Reproducible Under Disk Pressure
+```bash
+python3 tools/run_neuro_symbolic_disaster_loop.py \
+  --strict-research-gate \
+  --json /tmp/neuro_symbolic_disaster_loop_latest.json \
+  --md /tmp/neuro_symbolic_disaster_loop_latest.md
+```
 
-The receipt is compact by default, hash-stable, and can be replayed in full mode
-with the same stable hash. It avoids heavy fuzz rebuilds unless runtime or
-harness evidence changes. This matters in real engineering environments where
-disk, time, and toolchains are constraints.
+To materialize full per-hypothesis arrays:
 
-## 10. Current Result
+```bash
+python3 tools/run_neuro_symbolic_disaster_loop.py \
+  --strict-research-gate \
+  --full-results \
+  --json /tmp/neuro_symbolic_disaster_loop_full.json \
+  --md /tmp/neuro_symbolic_disaster_loop_full.md
+```
 
-At the latest recorded run:
+The compact and full modes should agree on the stable semantic hash. If they do
+not, the compact receipt is not acceptable evidence.
 
-- gate: `OPEN_FOR_BOUNDED_RESEARCH`
-- materialized hypotheses: 16,003
-- reachable disaster witnesses: 0
-- unknown mandatory blockers: 0
-- compressed independent frontier: 75,599,999 combinations
-- optional research blocks: 0
-- receipt-state synthetic checks: 66, failures 0
-- blocker-state synthetic checks: 22, failures 0
-- provenance synthetic checks: 16, failures 0
-- optional-conflict synthetic checks: 25, failures 0
-- hard receipt git mismatches: 0
-- compatible checker-only receipt drifts: 12
-- checker worktree dirty: false
-- compact/full stable hash parity: passed
+No private hypothesis generator is required for these replication tiers. Private
+or experimental tools may help generate new what-if candidates, but public
+claims require deterministic receipts that can be checked from the archived
+artifact set.
 
-This result is meaningful because earlier runs did not open the gate. The gate
-previously blocked on registry optional-lane instability, then on stale mandatory
-receipt provenance, then on checker provenance. Those were not cosmetic failures.
-They were exactly the kind of process-level disaster states the method is meant
-to expose.
+## What This Proves
 
-## 11. What It Proves
-
-The word "prove" must be used carefully. The loop proves bounded statements about
-the current model, not universal statements about all possible executions.
+The result proves bounded statements about a named witness language and evidence
+state.
 
 ### Claim 1: Bounded No-Witness Result
 
-Given:
+Given the current case-study atlas, receipts, checker, generated hypothesis
+family, exhausted depth-11 frontier, and strict gate conditions, the latest run
+proves that no materialized generated hypothesis has a reachable disaster witness
+under the checker.
 
-- the current danger atlas,
-- the current receipt set,
-- the current checker,
-- the generated hypothesis family,
-- the exhausted simple-path depth 11 frontier,
-- the strict gate conditions,
+### Claim 2: Fail-Closed Evidence Handling
 
-the latest run proves that no materialized generated hypothesis has a reachable
-disaster witness under the checker. It also proves that the compressed
-independent frontier is not blocked by optional or mandatory evidence under the
-current receipt model.
+The latest run proves that every implemented synthetic receipt, blocker,
+provenance, and optional-conflict mutation is handled according to the expected
+fail-closed policy. Missing mandatory evidence, failed receipts, artifact drift,
+unreferenced blocker symbols, stale hard provenance, and blocking optional
+receipts reject.
 
-This is a bounded negative result: no witness in this generated space.
+### Claim 3: Research Permission Is Conditional
 
-### Claim 2: Fail-Closed Evidence Handling for Tested Fault Classes
+Research permission is not inferred from absence of a found bug. It requires
+absence of reachable witnesses, absence of unknown mandatory blockers, absence of
+optional research blockers, exhausted graph frontier, successful synthetic
+fail-closed checks, acceptable provenance, and a clean gate-critical checker.
 
-The latest run proves that every synthetic receipt, blocker, provenance, and
-optional-conflict mutation in the implemented mutation suite is handled according
-to the expected fail-closed policy.
+### Claim 4: Compact Receipt Soundness for This Gate
 
-For example:
+The compact and full receipt modes agree on a stable timestamp-free hash for the
+same semantic content. This supports compact archival without silently dropping
+gate-relevant content.
 
-- missing mandatory receipt blocks,
-- `ok=false` blocks,
-- nonzero return code blocks,
-- artifact drift blocks,
-- missing blocker source blocks,
-- unreferenced harness blocker blocks,
-- stale synthetic git head blocks,
-- blocking optional receipt overrides atlas stability,
-- dirty checker blocks.
+## What This Does Not Prove
 
-### Claim 3: Research Permission Is Conditional, Not Assumed
-
-The gate proves that the current state is open for bounded research only because
-all gate blockers are absent. If any blocker appears, the gate moves to a blocked
-state. This was exercised in the development history: registry optional
-instability, stale receipts, and dirty checker state each blocked the gate until
-their evidence boundary was clarified.
-
-### Claim 4: Receipt Reproducibility
-
-The compact and full receipt modes produce the same stable timestamp-free hash
-for the same semantic content. This proves that compact receipt storage is not
-silently dropping safety-relevant content from the stable gate claim.
-
-## 12. What It Does Not Prove
-
-The loop does not prove global software safety.
+The method does not prove global software safety.
 
 It does not prove:
 
-- that the danger atlas contains every possible disaster state,
-- that the generated "what if?" families are complete,
-- that all real-world executions are bounded by the modeled frontier,
-- that every receipt's underlying fuzz campaign was exhaustive,
+- that the atlas contains every possible disaster state,
+- that the generated witness language is complete,
+- that all real executions are bounded by the modeled frontier,
+- that every underlying fuzz or symbolic campaign was exhaustive,
 - that every harness perfectly refines production behavior,
 - that the checker has been machine-proved correct,
-- that optional receipts without `git_head` are permanently acceptable,
 - that future code changes preserve the result,
 - that cryptographic, network, OS, compiler, or deployment assumptions hold,
-- that there are no bugs outside the named surfaces,
 - that absence of a generated witness means absence of vulnerability.
 
-It also does not give the LLM authority. The LLM can propose missing cases, but a
-case is only promotable after deterministic replay says it is promotable. A
-timeout, parse error, unknown state, missing receipt, stale receipt, or dirty
-checker is not a weak pass. It is a reject.
+It also does not give the LLM authority. The LLM or human proposer may suggest
+cases, but a case is only promotable after deterministic replay says it is
+promotable. Unknown is not a weak pass; it is a reject.
 
-## 13. Why the Boundary Is Still Valuable
+## Design Principles
 
-Bounded results are often dismissed because they are not global proofs. That is a
-mistake. Most engineering promotion decisions are bounded anyway. The difference
-is whether the boundary is explicit.
-
-The disaster loop makes the boundary explicit:
-
-- exact surfaces,
-- exact disaster states,
-- exact graph edges,
-- exact hypothesis families,
-- exact receipts,
-- exact git provenance,
-- exact synthetic fault classes,
-- exact gate blockers,
-- exact stable hash.
-
-This turns "we tested it" into a replayable claim:
-
-> Under these artifacts and this checker, this witness space contains no
-> reachable disaster witness, and these evidence-failure families reject
-> fail-closed.
-
-That is a much stronger basis for research and promotion than a checklist or a
-green CI badge alone.
-
-## 14. Design Principles
-
-The MPRD loop suggests several general principles for hardening complex systems.
+The technique suggests several reusable design principles.
 
 ### Make Disaster States Concrete
 
@@ -502,59 +710,98 @@ bug" labels. Concrete names make harnesses, receipts, and blockers auditable.
 ### Separate Witness Absence From Research Permission
 
 No witness found is not the same as safe to research. Research permission also
-requires stable optional lanes, current evidence, clean checker state, and
+requires evidence freshness, optional-lane stability, clean checker state, and
 frontier exhaustion.
 
-### Treat Evidence as Part of the State Machine
+### Treat Evidence as State
 
-Receipts, provenance, optional guidance, and checker cleanliness are not external
-bookkeeping. They are state variables in the assurance protocol.
+Receipts, provenance, optional guidance, and checker cleanliness are not
+bookkeeping outside the assurance protocol. They are state variables in the
+protocol.
 
-### Prefer Deterministic Summaries Over Large Opaque Logs
+### Compile Verifier Structure, Not Trust
 
-The compact receipt keeps stable digests for full result arrays and can be
-replayed in full mode. This preserves auditability without creating huge default
-artifacts.
+Verifier-compiler loops may produce quotients, summaries, controllers, or
+compact gates. These artifacts can reduce work, but final authority remains with
+the deterministic checker and replayable evidence.
 
-### Let Creative Search Be Untrusted
+### Keep Private Search Separate From Public Evidence
 
-The LLM, human reviewer, or search heuristic should be free to generate strange
-questions. But the promotion gate must remain deterministic and fail-closed.
+Private tools may be useful for finding ideas, but public claims must be
+reconstructible from public artifacts, standard runtimes, and deterministic
+receipts.
 
-## 15. Future Work
+## Future Work
 
-The current loop points to several next steps:
-
+- Publish a generic schema for danger atlases, receipts, and what-if witness
+  families independent of the MPRD codebase.
 - Add graph-topology mutations: missing edge, inverted edge, duplicate edge,
   re-entry promoted to composition, and self-loop-at-surface.
-- Upgrade older optional and non-fuzz receipt schemas to carry `git_head`, then
-  make missing provenance a hard gate.
-- Expand optional-conflict checks from per-surface synthetic cases to per-receipt
-  pair conflicts once optional receipts carry provenance.
-- Add content hashes for ignored internal artifacts so uncommitted atlas or
-  receipt edits cannot silently change a gate claim.
-- Connect selected claims to Lean, SMT, or ESSO obligations where the checker
-  logic is small enough to formalize.
-- Use Morph or ESSO to discover new graph edges and candidate disaster states,
-  while keeping all promotion evidence deterministic.
+- Upgrade all receipt schemas to carry provenance and content hashes.
+- Connect selected gate claims to public Lean or SMT obligations where the
+  checker logic is small enough to formalize.
 - Generate minimal counterexample packets automatically when a reachable witness
   appears.
+- Study obligation-targeted witness routing as a scheduling policy for
+  LLM-assisted security review.
 
-## 16. Conclusion
+## Code and Data Availability
 
-The neuro-symbolic disaster loop changes the shape of software hardening. It does
-not ask an LLM whether the system is safe. It asks the LLM, human, and search
-machinery to generate dangerous questions, then forces every answer through a
-deterministic, receipt-backed, fail-closed checker.
+The paper, renderer, and reference checker are part of the MPRD repository:
 
-That is the revolution: hardening becomes an adversarial witness-space discipline
-rather than a collection of disconnected tests. It can say what is researchable,
-what is blocked, what evidence failed, what the checker did, and what remains
-outside the claim.
+- Repository: [https://github.com/TheDarkLightX/MPRD](https://github.com/TheDarkLightX/MPRD)
+- Reference checker: `tools/run_neuro_symbolic_disaster_loop.py`
+- Paper source: `docs/whitepapers/NEURO_SYMBOLIC_DISASTER_LOOP.md`
+- PDF renderer: `tools/render_neuro_symbolic_paper_pdf.py`
+- Case-study receipt path:
+  `docs/whitepapers/neuro_symbolic_case_study/neuro_symbolic_disaster_loop_latest.json`
 
-For MPRD, the current bounded witness space is open for research: 16,003
-materialized what-ifs and 75,599,999 compressed independent combinations contain
-0 reachable disaster witnesses under the current receipts, with synthetic
-evidence faults rejecting fail-closed. That is not global safety. It is a precise,
-replayable, and honest safety boundary. That boundary is exactly what high-stakes
-software needs before it is allowed to learn, optimize, or promote new states.
+The Zenodo archive DOI will be minted after the first tagged release associated
+with this repository. The repository README uses Zenodo's GitHub badge endpoint
+so the badge resolves to the latest DOI once available.
+
+## Relationship to Formal Methods Philosophy Tutorials
+
+This paper packages the following tutorial ideas into a software-hardening
+method:
+
+- **Neuro-symbolic witness spaces:** LLMs and humans act as existential
+  candidate generators; symbolic systems act as semantic filters.
+- **Quantifier factoring:** universal assurance obligations become explicit
+  counterexample searches over negated specifications.
+- **Galois loops and obligation carving:** candidate spaces and obligation
+  spaces are dual; progress should be measured on both sides.
+- **Verifier-compiler loops:** repeated verifier behavior can sometimes be
+  compressed into a quotient, repair coordinate, or controller, while final
+  authority remains with the exact checker.
+- **Loop-space geometry:** strong loops reshape the remaining search problem by
+  changing witness language, stored state, ambiguity quotient, separator policy,
+  and target artifact.
+- **Counterexample-guided requirements discovery:** a counterexample may expose
+  missing requirements, not merely a local defect; the loop must turn that into a
+  new obligation rather than a false pass.
+
+Reference URLs:
+
+- [Formal Methods Philosophy tutorials index](https://thedarklightx.github.io/Formal_Methods_Philosophy/tutorials/)
+- [Neuro-symbolic reasoning and witness spaces](https://thedarklightx.github.io/Formal_Methods_Philosophy/tutorials/neuro-symbolic-witness-spaces/)
+- [Quantifier factoring and neuro-symbolic loop engineering](https://thedarklightx.github.io/Formal_Methods_Philosophy/tutorials/quantifier-factoring-and-neuro-symbolic-loops/)
+- [Galois loops and obligation carving](https://thedarklightx.github.io/Formal_Methods_Philosophy/tutorials/galois-loops-and-obligation-carving/)
+- [Verifier-compiler loops](https://thedarklightx.github.io/Formal_Methods_Philosophy/tutorials/verifier-compiler-loops/)
+- [Loop-space geometry](https://thedarklightx.github.io/Formal_Methods_Philosophy/tutorials/loop-space-geometry/)
+- [Counterexample-guided requirements discovery](https://thedarklightx.github.io/Formal_Methods_Philosophy/tutorials/counterexample-guided-requirements-discovery/)
+- [Grammar-based fuzzing and structured search](https://thedarklightx.github.io/Formal_Methods_Philosophy/tutorials/grammar-based-fuzzing-and-structured-search/)
+- [Concolic testing and branch exploration](https://thedarklightx.github.io/Formal_Methods_Philosophy/tutorials/concolic-testing-and-branch-exploration/)
+
+## Conclusion
+
+What-if witness spaces change the shape of software hardening. They do not ask
+an LLM whether a system is safe. They ask creative systems to generate dangerous
+questions, then force every answer through deterministic, receipt-backed,
+fail-closed checking.
+
+The result is a bounded but honest assurance artifact. It can say what was
+searched, what was blocked, what evidence failed, what was compressed, which
+claim is open for research, and exactly where the claim stops. That boundary is
+the useful product. It is what lets high-stakes software learn, optimize, and
+promote new states without mistaking imagination for proof.

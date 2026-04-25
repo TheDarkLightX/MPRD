@@ -1,0 +1,657 @@
+\documentclass[11pt]{article}
+\usepackage[letterpaper,margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue,pdftitle={What-If Witness Spaces: A Neuro-Symbolic Disaster Loop for Fail-Closed Software Hardening},pdfauthor={Dana Edwards},pdfsubject={Neuro-symbolic software assurance},pdfkeywords={software assurance, formal methods, neuro-symbolic systems, witness spaces, fail-closed verification}}
+\setlist{itemsep=0.25em,topsep=0.3em}
+\setlength{\parskip}{0.6em}
+\setlength{\parindent}{0pt}
+\sloppy
+\begin{document}
+\pagenumbering{gobble}
+\begin{titlepage}
+\centering
+\vspace*{0.7in}
+{\LARGE\bfseries What-If Witness Spaces: A Neuro-Symbolic Disaster Loop for Fail-Closed Software Hardening\par}
+\vspace{0.5in}
+{\large Dana Edwards\par}
+{\large Independent Researcher\par}
+{\large ORCID: \href{https://orcid.org/0009-0001-1177-4752}{https://orcid.org/0009-0001-1177-4752}\par}
+{\large Preprint, version 1.0\par}
+{\large Date: 2026-04-25\par}
+{\large DOI: Zenodo DOI pending first release\par}
+{\large Repository DOI badge URL:\par}
+{\large \href{https://zenodo.org/badge/latestdoi/1113028896}{https://zenodo.org/badge/latestdoi/1113028896}\par}
+{\large Technique: What-if witness spaces and neuro-symbolic disaster loops\par}
+{\large Case-study artifact: MPRD\par}
+{\large License: CC BY 4.0\par}
+\vspace{0.35in}
+\begin{minipage}{0.88\linewidth}
+Reference implementation: \path|tools/run_neuro_symbolic_disaster_loop.py|
+
+Case-study receipt: \path|docs/whitepapers/neuro_symbolic_case_study/neuro_symbolic_disaster_loop_latest.json|
+
+Latest case-study receipt hash at time of writing: \path|sha256:b83ee1178c4bea460b9c7e3c67d5ccf1d7ac330e017746236fcfc7274c459561|
+
+Recommended citation before Zenodo DOI minting: Edwards, Dana. 2026. "What-If Witness Spaces: A Neuro-Symbolic Disaster Loop for Fail-Closed Software Hardening." Preprint, version 1.0. Zenodo DOI pending.
+
+\end{minipage}
+\vfill
+\end{titlepage}
+\pagenumbering{roman}
+\tableofcontents
+\newpage
+\pagenumbering{arabic}
+\begin{abstract}
+Modern assurance fails most often at composition boundaries. A parser, proof, fuzz target, or model checker may be correct in isolation while the larger workflow still reaches a disaster state through stale evidence, retry paths, optional features, provenance drift, proof-journal mismatch, or promotion from an unsafe research state. This paper introduces \textbf{what-if witness spaces}: a general neuro-symbolic technique in which a creative proposer generates explicit disaster hypotheses and a deterministic symbolic checker decides whether each hypothesis is blocked, refuted, or reachable under replayable evidence.
+
+The method generalizes counterexample-guided reasoning from local program inputs to the assurance workflow itself. The neural side is an existential generator: it asks "what if?" over surfaces, graph edges, evidence states, and fault mutations. The symbolic side is a universal gate: it checks every generated witness in a bounded language, rejects unknown or stale evidence fail-closed, and opens research only when all obligations are discharged. The mathematical core comes from witness-space factorization, quantifier factoring, Galois-style obligation carving, verifier-compiler loops, and loop-space geometry.
+
+The paper's case study is MPRD, where the loop checked 16,003 materialized what-ifs plus a compressed 75,599,999-combination independent frontier, found 0 reachable disaster witnesses, observed 0 fail-closed failures across receipt, blocker, provenance, and optional-conflict mutations, and opened the bounded research gate. The claim is intentionally bounded: it proves no global software safety theorem. It proves a replayable no-witness result for a named witness language, atlas, receipt set, checker, and depth.
+
+\end{abstract}
+\section{The Assurance Gap}
+Most software hardening workflows are organized around local artifacts:
+
+\begin{itemize}
+\item unit tests for local invariants,
+\item fuzz targets for parsers and state machines,
+\item concolic or symbolic checks for branchy code,
+\item proof files for selected mathematical claims,
+\item CI gates for regressions.
+\end{itemize}
+These are necessary, but they do not fully model the composed assurance process. Real failures often arise between artifacts:
+
+\begin{itemize}
+\item a receipt is valid for an old checker but reused after the checker changes,
+\item a proof journal is replayed against a different decision token,
+\item a retry path re-enters replay clearance after side effects,
+\item a stable optional-lane receipt disagrees with the atlas,
+\item a promotion gate treats "no bug found" as "safe to research."
+\end{itemize}
+These are not only code bugs. They are \textbf{disaster states} in the process that decides which states may be explored, optimized, or promoted. The key question is therefore:
+
+\[
+\text{Which bad composed states are reachable under the current evidence state?}
+\]
+The answer should not depend on whether a language model is confident. It should depend on a finite, reproducible witness space and a deterministic checker.
+
+\section{The Technique}
+A \textbf{what-if witness space} is a finite or compressed symbolic family of hypotheses. A hypothesis names:
+
+\begin{itemize}
+\item the surfaces involved,
+\item the disaster state being tested,
+\item the composition, ordering, re-entry, or evidence-fault pattern,
+\item the receipt or checker evidence required to decide it.
+\end{itemize}
+The loop has two roles:
+
+\begin{enumerate}
+\item The proposer generates hypotheses. This can be an LLM, a human reviewer, a
+grammar, a fuzzer, or another search policy. It is creative, but not trusted.
+\item The checker classifies hypotheses. It is deterministic, receipt-backed, and
+fail-closed. It owns promotion authority.
+\end{enumerate}
+The operational rule is:
+
+\[
+\text{Creativity belongs on the existential side; trust belongs on the
+universal side.}
+\]
+The proposer searches for possible witnesses. The checker decides which witnesses are valid, blocked, or refuted. If the checker returns \texttt{UNKNOWN}, \texttt{TIMEOUT}, \texttt{INCONCLUSIVE}, malformed input, stale evidence, or missing evidence, the gate rejects.
+
+\section{Mathematical Foundations}
+This section distills the mathematical machinery developed in the Formal Methods Philosophy tutorial sequence on neuro-symbolic witness spaces, quantifier factoring, Galois loops, verifier-compiler loops, loop-space geometry, counterexample-guided requirements discovery, grammar-based fuzzing, and concolic branch exploration.
+
+\subsection{Witness Spaces}
+Let $x$ be an assurance state. It contains code, specifications, receipts, provenance, optional guidance, checker state, and a bounded search depth. Let $L$ be a witness language and $z$ a concrete witness object generated by that language. A local witnessability target is:
+
+\[
+\mathrm{Good}(x)\;\Longleftrightarrow\;\exists z\;\mathrm{Proves}_{L}(z,x).
+\]
+For hardening, the more useful dual is a no-bad-witness target:
+
+\[
+\mathrm{NoBadWitness}(x,L)
+\;\Longleftrightarrow\;
+\neg\exists z\in L(x)\;\mathrm{Bad}(z,x).
+\]
+The technique does not search the full semantic universe. It searches $L(x)$, the bounded witness language currently declared by the artifact. A no-witness result is therefore:
+
+\[
+\neg\exists z\in L_d(x)\;\mathrm{ReachableDisaster}(z,x),
+\]
+where $d$ is the configured depth. This is meaningful because $L_d$ is explicit and replayable, not because it is universal.
+
+\subsection{Neuro-Symbolic Filtering}
+Let $q_N(z\mid x)$ be the proposer's distribution over candidate witnesses, and let $\chi_S(z,x)$ be the symbolic admissibility predicate:
+
+\[
+\chi_S(z,x)=
+\begin{cases}
+1 & \text{if the checker accepts } z \text{ for } x,\\
+0 & \text{otherwise.}
+\end{cases}
+\]
+The neuro-symbolic distribution is:
+
+\[
+q_{NS}(z\mid x)\propto q_N(z\mid x)\cdot \chi_S(z,x).
+\]
+This equation captures the division of labor. The proposer concentrates search mass. The checker zeros out semantically invalid mass. The combined loop searches the admissible overlap. If the admissible mass is zero, the distribution is not renormalized into a pass; the gate reports that no admissible candidate was found.
+
+\subsection{Quantifier Factoring}
+Many assurance goals have the form:
+
+\[
+\exists a\;\forall e\;\mathrm{Spec}(a,e),
+\]
+where $a$ is a design, repair, policy, invariant, or research state, and $e$ is an environment move, attack, execution, input, or evidence perturbation. The central factoring move is:
+
+\[
+\forall e\;\mathrm{Spec}(a,e)
+\;\Longleftrightarrow\;
+\neg\exists e\;\neg\mathrm{Spec}(a,e).
+\]
+Thus acceptance is operationalized as failed counterexample search:
+
+\[
+\mathrm{Good}(a) := \forall e\;\mathrm{Spec}(a,e).
+\]
+\[
+\mathrm{Accept}(a)
+\;\Longleftrightarrow\;
+\neg\exists e\;\mathrm{EmitCE}(a,e).
+\]
+Counterexample soundness is:
+
+\[
+\forall a,e\;(\mathrm{EmitCE}(a,e)\rightarrow\neg\mathrm{Spec}(a,e)).
+\]
+Counterexample completeness is:
+
+\[
+\forall a\;(\neg\mathrm{Good}(a)\rightarrow\exists e\;\mathrm{EmitCE}(a,e)).
+\]
+Only with both soundness and completeness does acceptance equal goodness. In bounded engineering artifacts, completeness is usually limited to the declared frontier. Therefore the honest claim is bounded acceptance, not global safety.
+
+\subsection{Galois-Style Obligation Carving}
+The loop can be expressed as a Galois connection between candidate states and obligations. Let $X$ be candidate states and $Y$ be obligations, and let $\mathrm{Spec}:X\times Y\to\{\mathrm{true},\mathrm{false}\}$ be the Boolean incidence relation. For $B\subseteq Y$ and $C\subseteq X$, define:
+
+\[
+\Phi(B)=\{x\in X\mid \forall b\in B,\;\mathrm{Spec}(x,b)\},
+\]
+\[
+\Psi(C)=\{y\in Y\mid \forall x\in C,\;\mathrm{Spec}(x,y)\}.
+\]
+Then:
+
+\[
+C\subseteq \Phi(B)\quad\Longleftrightarrow\quad B\subseteq\Psi(C).
+\]
+This means candidate-space reasoning and obligation-space reasoning are dual. The closure operators are:
+
+\[
+\mathrm{cl}_X(C)=\Phi(\Psi(C)),
+\qquad
+\mathrm{cl}_Y(B)=\Psi(\Phi(B)).
+\]
+A fail-closed assurance loop maintains surviving candidates $C_t$, uncovered obligations $U_t$, and discharged obligations $D_t=Y\setminus U_t$ with the invariant:
+
+\[
+D_t\subseteq\Psi(C_t).
+\]
+Every discharged obligation must be satisfied by every surviving candidate. A new bad witness shrinks $C_t$. A new region certificate shrinks $U_t$. A missing receipt or inconclusive verifier result does not shrink the obligation set; it keeps the gate closed.
+
+\subsection{Obligation-Targeted Witness Routing}
+A stronger version of the loop is not "the proposer guesses an answer and the checker attacks it." This architecture lets the symbolic side choose the highest-value unresolved obligation, then asks the existential side to route the search toward a witness that exposes it.
+
+For an uncovered obligation $y$, define:
+
+\[
+W(C,y)=\{x\in C\mid \neg\mathrm{Spec}(x,y)\}.
+\]
+If $y\notin\Psi(C)$, then $W(C,y)$ is nonempty. A closure-gain score is:
+
+\[
+\Delta_\Psi(y\mid C)
+=
+\left|\Psi(C\cap\Phi(\{y\}))\right|
+-
+\left|\Psi(C)\right|.
+\]
+A live-burden score is:
+
+\[
+L(C)=|C|+|Y\setminus\Psi(C)|.
+\]
+On finite bounded domains, an obligation-targeted controller can choose $y$ by maximizing closure gain or minimizing live burden, then require the proposer to synthesize an exposing witness in $W(C,y)$. This is a deeper neuro-symbolic loop: the formal side chooses the leverage-bearing question, and the creative side supplies a concrete route to it.
+
+\subsection{Verifier-Compiler View}
+Let $L^\star:X\to\Lambda$ be an exact verifier label function over a bounded domain. A verifier-compiler loop searches for a quotient:
+
+\[
+q:X\to Q
+\]
+such that:
+
+\[
+\forall x,x'\in X,\;q(x)=q(x')\rightarrow L^\star(x)=L^\star(x').
+\]
+If this holds, there exists a compiled controller on the image of $q$:
+
+\[
+C:q(X)\to\Lambda
+\]
+with:
+
+\[
+\forall x\in X,\;C(q(x))=L^\star(x).
+\]
+If $q$ is too coarse, the loop adds a repair coordinate $r:X\to R$ and checks:
+
+\[
+(q(x),r(x))=(q(x'),r(x'))\rightarrow L^\star(x)=L^\star(x').
+\]
+The disaster loop uses this idea at the assurance level. It does not need every byte of the repository. It needs a quotient that preserves the gate-relevant observations: surfaces, edges, receipts, optional status, blocker references, provenance, checker cleanliness, and depth.
+
+\subsection{Loop-Space Geometry}
+The loop-space geometry view treats the assurance workflow as a state machine. A state contains code, receipts, checker logic, provenance, optional guidance, and gate decisions. A transition is an edit, rerun, receipt mutation, synthetic fault, or witness-space expansion.
+
+For a witness library $W$ and hidden target $M$, define the observation map:
+
+\[
+O_W(M)=\{S\in W\mid S\subseteq M\}.
+\]
+Two targets are indistinguishable to the current loop when:
+
+\[
+M\sim_W M'\quad\Longleftrightarrow\quad O_W(M)=O_W(M').
+\]
+A stronger loop changes this quotient. It collects witnesses, stores the right state, collapses ambiguity classes, asks only the residual questions that still matter, and compiles the surviving structure into a small controller or gate.
+
+For hardening, a disaster loop is a cycle:
+
+\[
+x_0\to x_1\to\cdots\to x_k
+\quad\wedge\quad
+x_k\sim_{\mathrm{visible}}x_0
+\quad\wedge\quad
+\mathrm{ObligationLost}(x_0,x_k).
+\]
+The method blocks such loops by making obligations visible. A stale receipt, dirty checker, failed optional lane, or missing blocker changes the quotient and therefore cannot silently return to the same researchable state.
+
+\section{Generic Algorithm}
+The method can be implemented with the following abstract interface.
+
+\begin{verbatim}
+input:
+  surfaces S
+  composition edges E
+  re-entry edges Q
+  disaster predicates D
+  mandatory evidence Rm
+  optional evidence Ro
+  blocker references B
+  provenance state P
+  depth d
+
+generate:
+  W_mat:
+    single-surface disasters
+    evidence fail-open mutations
+    blocker bypasses
+    edge compositions
+    order inversions
+    bounded chains
+    terminal chain disasters
+    fan-out and convergence cases
+    re-entry and cycle amplification cases
+    independent co-reachability cases
+
+  W_cmp:
+    compressed independent frontier above the materialized order
+
+mutate:
+  receipt-state faults
+  blocker-state faults
+  provenance faults
+  optional source-of-truth conflicts
+
+classify:
+  for every w in W_mat:
+    REACHABLE_DISASTER_WITNESS
+    UNKNOWN_BLOCKED
+    NO_REACHABLE_WITNESS_BOUNDED
+
+gate:
+  open only if:
+    no reachable disaster witnesses
+    no unknown mandatory blockers
+    no optional research blockers
+    graph frontier exhausted
+    synthetic fault checks reject fail-closed
+    receipt provenance has no hard mismatch
+    gate-critical checker state is clean
+\end{verbatim}
+The generic gate can be written:
+
+\[
+\begin{aligned}
+\mathrm{Open}(A,\varepsilon,d)\Longleftrightarrow\;&
+\forall w\in W_{\mathrm{mat}}(A,d)\;.\;\rho(w,\varepsilon)\\
+&\wedge\;\mathrm{CompressedFrontierOK}(W_{\mathrm{cmp}},\varepsilon)\\
+&\wedge\;\mathrm{DepthExhausted}(A,d)\\
+&\wedge\;\forall m\in M\;.\;\mathrm{Reject}(m(\varepsilon)).
+\end{aligned}
+\]
+Here $A$ is the atlas, $\varepsilon$ is the evidence state, $\rho$ is the researchability predicate, and $M$ is the synthetic mutation suite.
+
+\section{Case Study: MPRD}
+MPRD is used here as a case study, not as the definition of the technique. In the case study, the atlas is:
+
+\[
+A=(S,E,Q,D),
+\]
+where $S$ is the finite set of surfaces, $E\subseteq S\times S$ is the composition graph, $Q\subseteq S\times S$ is the re-entry graph, and $D(s)$ is the finite set of named disaster states attached to surface $s$.
+
+The evidence state is:
+
+\[
+\varepsilon=(R_m,R_o,B,H,g,\Delta),
+\]
+where $R_m$ is the mandatory receipt set, $R_o$ is the optional receipt set, $B$ is the blocker-source relation, $H$ is the harness-reference relation, $g$ is the current git head, and $\Delta$ is checker worktree/provenance status.
+
+The current case-study atlas covers 11 surfaces:
+
+\begin{center}
+\small
+\begin{tabular}{p{0.58\linewidth}p{0.28\linewidth}}
+\toprule
+Surface & Example disaster states \\
+\midrule
+\texttt{replay\_nonce\_claim} & duplicate side effects, nonce claimed twice, distributed claim race \\
+\texttt{quorum\_snapshot\_attestation} & untrusted threshold, duplicate signer, drifted snapshot \\
+\path|orchestrator_pipeline_ordering| & verify-fail-but-execute, record-before-verify, duplicate payload \\
+\texttt{selector\_candidate\_family} & noncanonical family, out-of-bounds selection, hash mismatch \\
+\texttt{operator\_control\_lifecycle} & invalid retention mutation, mode transition drift \\
+\path|decision_token_proof_journal_binding| & decision commitment drift, journal state drift \\
+\path|policy_artifact_run_lifecycle| & unauthorized artifact, source mapping gap, tamper \\
+\path|registry_key_rotation_authorization| & insufficient quorum, rotated key still authorizes \\
+\path|tau_policy_certification_boundary| & unsupported policy fail-open, tampered Tau certifies \\
+\path|executor_side_effect_boundary| & invalid boundary reaches side effect, idempotency drift \\
+\texttt{executor\_transport\_boundary} & invalid boundary reaches network, retry budget drift \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The materialized case-study witness language is:
+
+\[
+\begin{aligned}
+W_{\mathrm{mat}}(A,d)=&
+W_{\mathrm{single}}\cup W_{\mathrm{receipt}}\cup W_{\mathrm{blocker}}
+\cup W_{\mathrm{edge}}\cup W_{\mathrm{order}}\\
+&\cup W_{\mathrm{chain}}\cup W_{\mathrm{fan}}\cup W_{\mathrm{conv}}
+\cup W_{\mathrm{reentry}}\cup W_{\mathrm{cycle}}
+\cup W_{\mathrm{independent}}^{\le 3}.
+\end{aligned}
+\]
+The compressed frontier is:
+
+\[
+W_{\mathrm{cmp}}(A,d)=
+\{I\subseteq S\mid 4\le |I|\le d,\; I
+\text{ is independent under the atlas relations}\}.
+\]
+\section{Case-Study Results}
+At the latest recorded MPRD case-study run:
+
+\begin{itemize}
+\item gate: \texttt{OPEN\_FOR\_BOUNDED\_RESEARCH}
+\item materialized hypotheses: 16,003
+\item reachable disaster witnesses: 0
+\item unknown mandatory blockers: 0
+\item compressed independent frontier: 75,599,999 combinations
+\item optional research blocks: 0
+\item receipt-state synthetic checks: 66, failures 0
+\item blocker-state synthetic checks: 22, failures 0
+\item provenance synthetic checks: 16, failures 0
+\item optional-conflict synthetic checks: 25, failures 0
+\item hard receipt git mismatches: 0
+\item compatible checker-only receipt drifts: 12
+\item checker worktree dirty: false
+\item compact/full stable hash parity: passed
+\end{itemize}
+The materialized family counts were:
+
+\begin{center}
+\small
+\begin{tabular}{p{0.58\linewidth}p{0.28\linewidth}}
+\toprule
+Family & Count \\
+\midrule
+\texttt{single\_surface\_disaster} & 47 \\
+\texttt{receipt\_fail\_open\_mutation} & 11 \\
+\texttt{blocker\_bypass\_disaster} & 194 \\
+\texttt{edge\_composition\_disaster} & 196 \\
+\texttt{order\_inversion\_disaster} & 196 \\
+\texttt{chain\_researchability} & 71 \\
+\texttt{chain\_terminal\_disaster} & 1,079 \\
+\texttt{fanout\_composition\_disaster} & 64 \\
+\path|convergence_composition_disaster| & 299 \\
+\texttt{reentry\_retry\_disaster} & 66 \\
+\texttt{cycle\_amplification\_disaster} & 66 \\
+\path|independent_pair_coreachability| & 1,000 \\
+\path|independent_triple_coreachability| & 12,714 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The bounded case-study theorem is:
+
+\[
+\mathrm{Open}(A,\varepsilon,11)
+\Rightarrow
+\neg\exists w\in W_{\mathrm{mat}}(A,11)\;
+\mathrm{ReachableDisaster}(w,\varepsilon).
+\]
+It is not:
+
+\[
+\neg\exists w\in W_{\infty}(A)\;
+\mathrm{ReachableDisaster}(w,\varepsilon).
+\]
+\section{Replication Protocol}
+The public replication path has three tiers.
+
+\subsection{Tier 1: Paper and Checker Availability}
+Clone the repository archive associated with the Zenodo release:
+
+\begin{verbatim}
+git clone https://github.com/TheDarkLightX/MPRD.git
+cd MPRD
+\end{verbatim}
+Confirm that the checker exists:
+
+\begin{verbatim}
+python3 tools/run_neuro_symbolic_disaster_loop.py --help
+\end{verbatim}
+Run the in-process fail-closed self-tests:
+
+\begin{verbatim}
+python3 tools/run_neuro_symbolic_disaster_loop.py --self-test
+\end{verbatim}
+This tier checks the public checker logic without requiring the full MPRD case-study evidence bundle.
+
+\subsection{Tier 2: Case-Study Receipt Replay}
+The case-study receipt is \path|neuro_symbolic_disaster_loop_latest.json| in \path|docs/whitepapers/neuro_symbolic_case_study/|.
+
+When the Zenodo release includes the MPRD assurance bundle, verify the recorded stable hash:
+
+\begin{verbatim}
+python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path("docs/whitepapers/neuro_symbolic_case_study")
+p = p / "neuro_symbolic_disaster_loop_latest.json"
+d = json.loads(p.read_text())
+print(d["stable_receipt_hash"])
+print(json.dumps(d["summary"], indent=2, sort_keys=True))
+print(json.dumps(d["gate_summary"], indent=2, sort_keys=True))
+PY
+\end{verbatim}
+The expected stable hash for the case-study receipt used in this paper is:
+
+\begin{verbatim}
+b83ee1178c4bea460b9c7e3c67d5ccf1d7ac330e017746236fcfc7274c459561
+\end{verbatim}
+\subsection{Tier 3: Full Case-Study Regeneration}
+To regenerate the MPRD case-study receipt from the archived evidence bundle:
+
+\begin{verbatim}
+python3 tools/run_neuro_symbolic_disaster_loop.py \
+  --strict-research-gate \
+  --json /tmp/neuro_symbolic_disaster_loop_latest.json \
+  --md /tmp/neuro_symbolic_disaster_loop_latest.md
+\end{verbatim}
+To materialize full per-hypothesis arrays:
+
+\begin{verbatim}
+python3 tools/run_neuro_symbolic_disaster_loop.py \
+  --strict-research-gate \
+  --full-results \
+  --json /tmp/neuro_symbolic_disaster_loop_full.json \
+  --md /tmp/neuro_symbolic_disaster_loop_full.md
+\end{verbatim}
+The compact and full modes should agree on the stable semantic hash. If they do not, the compact receipt is not acceptable evidence.
+
+No private hypothesis generator is required for these replication tiers. Private or experimental tools may help generate new what-if candidates, but public claims require deterministic receipts that can be checked from the archived artifact set.
+
+\section{What This Proves}
+The result proves bounded statements about a named witness language and evidence state.
+
+\subsection{Claim 1: Bounded No-Witness Result}
+Given the current case-study atlas, receipts, checker, generated hypothesis family, exhausted depth-11 frontier, and strict gate conditions, the latest run proves that no materialized generated hypothesis has a reachable disaster witness under the checker.
+
+\subsection{Claim 2: Fail-Closed Evidence Handling}
+The latest run proves that every implemented synthetic receipt, blocker, provenance, and optional-conflict mutation is handled according to the expected fail-closed policy. Missing mandatory evidence, failed receipts, artifact drift, unreferenced blocker symbols, stale hard provenance, and blocking optional receipts reject.
+
+\subsection{Claim 3: Research Permission Is Conditional}
+Research permission is not inferred from absence of a found bug. It requires absence of reachable witnesses, absence of unknown mandatory blockers, absence of optional research blockers, exhausted graph frontier, successful synthetic fail-closed checks, acceptable provenance, and a clean gate-critical checker.
+
+\subsection{Claim 4: Compact Receipt Soundness for This Gate}
+The compact and full receipt modes agree on a stable timestamp-free hash for the same semantic content. This supports compact archival without silently dropping gate-relevant content.
+
+\section{What This Does Not Prove}
+The method does not prove global software safety.
+
+It does not prove:
+
+\begin{itemize}
+\item that the atlas contains every possible disaster state,
+\item that the generated witness language is complete,
+\item that all real executions are bounded by the modeled frontier,
+\item that every underlying fuzz or symbolic campaign was exhaustive,
+\item that every harness perfectly refines production behavior,
+\item that the checker has been machine-proved correct,
+\item that future code changes preserve the result,
+\item that cryptographic, network, OS, compiler, or deployment assumptions hold,
+\item that absence of a generated witness means absence of vulnerability.
+\end{itemize}
+It also does not give the LLM authority. The LLM or human proposer may suggest cases, but a case is only promotable after deterministic replay says it is promotable. Unknown is not a weak pass; it is a reject.
+
+\section{Design Principles}
+The technique suggests several reusable design principles.
+
+\subsection{Make Disaster States Concrete}
+Names such as \texttt{verify\_fail\_but\_execute}, \path|duplicate_side_effect_after_claim|, and \path|unauthorized_policy_artifact_materializes| are better than generic "security bug" labels. Concrete names make harnesses, receipts, and blockers auditable.
+
+\subsection{Separate Witness Absence From Research Permission}
+No witness found is not the same as safe to research. Research permission also requires evidence freshness, optional-lane stability, clean checker state, and frontier exhaustion.
+
+\subsection{Treat Evidence as State}
+Receipts, provenance, optional guidance, and checker cleanliness are not bookkeeping outside the assurance protocol. They are state variables in the protocol.
+
+\subsection{Compile Verifier Structure, Not Trust}
+Verifier-compiler loops may produce quotients, summaries, controllers, or compact gates. These artifacts can reduce work, but final authority remains with the deterministic checker and replayable evidence.
+
+\subsection{Keep Private Search Separate From Public Evidence}
+Private tools may be useful for finding ideas, but public claims must be reconstructible from public artifacts, standard runtimes, and deterministic receipts.
+
+\section{Future Work}
+\begin{itemize}
+\item Publish a generic schema for danger atlases, receipts, and what-if witness
+families independent of the MPRD codebase.
+\item Add graph-topology mutations: missing edge, inverted edge, duplicate edge,
+re-entry promoted to composition, and self-loop-at-surface.
+\item Upgrade all receipt schemas to carry provenance and content hashes.
+\item Connect selected gate claims to public Lean or SMT obligations where the
+checker logic is small enough to formalize.
+\item Generate minimal counterexample packets automatically when a reachable witness
+appears.
+\item Study obligation-targeted witness routing as a scheduling policy for
+LLM-assisted security review.
+\end{itemize}
+\section{Code and Data Availability}
+The paper, renderer, and reference checker are part of the MPRD repository:
+
+\begin{itemize}
+\item Repository: \href{https://github.com/TheDarkLightX/MPRD}{https://github.com/TheDarkLightX/MPRD}
+\item Reference checker: \path|tools/run_neuro_symbolic_disaster_loop.py|
+\item Paper source: \path|docs/whitepapers/NEURO_SYMBOLIC_DISASTER_LOOP.md|
+\item PDF renderer: \path|tools/render_neuro_symbolic_paper_pdf.py|
+\item Case-study receipt path:
+\path|docs/whitepapers/neuro_symbolic_case_study/neuro_symbolic_disaster_loop_latest.json|
+\end{itemize}
+The Zenodo archive DOI will be minted after the first tagged release associated with this repository. The repository README uses Zenodo's GitHub badge endpoint so the badge resolves to the latest DOI once available.
+
+\section{Relationship to Formal Methods Philosophy Tutorials}
+This paper packages the following tutorial ideas into a software-hardening method:
+
+\begin{itemize}
+\item \textbf{Neuro-symbolic witness spaces:} LLMs and humans act as existential
+candidate generators; symbolic systems act as semantic filters.
+\item \textbf{Quantifier factoring:} universal assurance obligations become explicit
+counterexample searches over negated specifications.
+\item \textbf{Galois loops and obligation carving:} candidate spaces and obligation
+spaces are dual; progress should be measured on both sides.
+\item \textbf{Verifier-compiler loops:} repeated verifier behavior can sometimes be
+compressed into a quotient, repair coordinate, or controller, while final
+authority remains with the exact checker.
+\item \textbf{Loop-space geometry:} strong loops reshape the remaining search problem by
+changing witness language, stored state, ambiguity quotient, separator policy,
+and target artifact.
+\item \textbf{Counterexample-guided requirements discovery:} a counterexample may expose
+missing requirements, not merely a local defect; the loop must turn that into a
+new obligation rather than a false pass.
+\end{itemize}
+Reference URLs:
+
+\begin{itemize}
+\item \href{https://thedarklightx.github.io/Formal\textbackslash{}\_Methods\textbackslash{}\_Philosophy/tutorials/}{Formal Methods Philosophy tutorials index}
+\item \href{https://thedarklightx.github.io/Formal\textbackslash{}\_Methods\textbackslash{}\_Philosophy/tutorials/neuro-symbolic-witness-spaces/}{Neuro-symbolic reasoning and witness spaces}
+\item \href{https://thedarklightx.github.io/Formal\textbackslash{}\_Methods\textbackslash{}\_Philosophy/tutorials/quantifier-factoring-and-neuro-symbolic-loops/}{Quantifier factoring and neuro-symbolic loop engineering}
+\item \href{https://thedarklightx.github.io/Formal\textbackslash{}\_Methods\textbackslash{}\_Philosophy/tutorials/galois-loops-and-obligation-carving/}{Galois loops and obligation carving}
+\item \href{https://thedarklightx.github.io/Formal\textbackslash{}\_Methods\textbackslash{}\_Philosophy/tutorials/verifier-compiler-loops/}{Verifier-compiler loops}
+\item \href{https://thedarklightx.github.io/Formal\textbackslash{}\_Methods\textbackslash{}\_Philosophy/tutorials/loop-space-geometry/}{Loop-space geometry}
+\item \href{https://thedarklightx.github.io/Formal\textbackslash{}\_Methods\textbackslash{}\_Philosophy/tutorials/counterexample-guided-requirements-discovery/}{Counterexample-guided requirements discovery}
+\item \href{https://thedarklightx.github.io/Formal\textbackslash{}\_Methods\textbackslash{}\_Philosophy/tutorials/grammar-based-fuzzing-and-structured-search/}{Grammar-based fuzzing and structured search}
+\item \href{https://thedarklightx.github.io/Formal\textbackslash{}\_Methods\textbackslash{}\_Philosophy/tutorials/concolic-testing-and-branch-exploration/}{Concolic testing and branch exploration}
+\end{itemize}
+\section{Conclusion}
+What-if witness spaces change the shape of software hardening. They do not ask an LLM whether a system is safe. They ask creative systems to generate dangerous questions, then force every answer through deterministic, receipt-backed, fail-closed checking.
+
+The result is a bounded but honest assurance artifact. It can say what was searched, what was blocked, what evidence failed, what was compressed, which claim is open for research, and exactly where the claim stops. That boundary is the useful product. It is what lets high-stakes software learn, optimize, and promote new states without mistaking imagination for proof.
+
+\end{document}
