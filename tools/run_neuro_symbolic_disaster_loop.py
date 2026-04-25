@@ -54,6 +54,7 @@ HARNESS_SOURCE_HINTS = {
         "internal/experiments/concolic_20260405/src/bin/operator-control-lifecycle.rs",
     ],
 }
+JSON_LOAD_ERROR_KEY = "__mprd_json_load_error_v1__"
 
 
 DEFAULT_COMPOSITION_EDGES: tuple[tuple[str, str, str], ...] = (
@@ -231,10 +232,45 @@ def rel(path: Path) -> str:
     return path.resolve().relative_to(ROOT).as_posix()
 
 
+def parse_json_payload(text: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return {
+            JSON_LOAD_ERROR_KEY: True,
+            "error": type(exc).__name__,
+            "message": str(exc),
+        }
+    if not isinstance(payload, dict):
+        return {
+            JSON_LOAD_ERROR_KEY: True,
+            "error": "NonObjectJson",
+            "message": "receipt JSON root must be an object",
+        }
+    return payload
+
+
 def load_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return {
+            JSON_LOAD_ERROR_KEY: True,
+            "error": type(exc).__name__,
+            "message": str(exc),
+        }
+    return parse_json_payload(text)
+
+
+def json_load_error(receipt: dict[str, Any]) -> dict[str, Any] | None:
+    if receipt.get(JSON_LOAD_ERROR_KEY) is True:
+        return {
+            "error": receipt.get("error", "JsonLoadError"),
+            "message": receipt.get("message", "failed to load JSON"),
+        }
+    return None
 
 
 def git_head() -> str:
@@ -396,6 +432,23 @@ def check_optional_receipts(surface: dict[str, Any]) -> tuple[list[dict[str, Any
                 }
             )
             continue
+        if load_error := json_load_error(receipt):
+            rel_path = rel(path)
+            blockers.append(f"optional_malformed_receipt:{rel_path}")
+            summaries.append(
+                {
+                    "path": rel_path,
+                    "exists": True,
+                    "schema": None,
+                    "git_head": None,
+                    "decision": None,
+                    "next_guidance_decision": None,
+                    "blocking": True,
+                    "reasons": ["malformed_receipt"],
+                    "load_error": load_error,
+                }
+            )
+            continue
 
         decision = receipt.get("decision")
         next_guidance = receipt.get("next_guidance_decision")
@@ -486,6 +539,22 @@ def check_surface(surface: dict[str, Any]) -> dict[str, Any]:
                     "git_head": None,
                     "started_at_utc": None,
                     "generated_at_utc": None,
+                }
+            )
+            continue
+        if load_error := json_load_error(receipt):
+            problems.append(f"malformed_receipt:{rel(path)}")
+            receipt_summaries.append(
+                {
+                    "path": rel(path),
+                    "exists": True,
+                    "ok": False,
+                    "reasons": ["malformed_receipt"],
+                    "schema": None,
+                    "git_head": None,
+                    "started_at_utc": None,
+                    "generated_at_utc": None,
+                    "load_error": load_error,
                 }
             )
             continue
@@ -1851,6 +1920,33 @@ def self_test() -> int:
             "blocker_summary": {"blockers_tracked": 0, "blockers_present": 0, "blockers_referenced": 0, "blockers": []},
         },
     }
+    malformed_checks = {
+        "malformed": {
+            "surface_id": "malformed",
+            "mandatory_ok": False,
+            "problems": ["malformed_receipt:bad_json.json"],
+            "optional_status": None,
+            "optional_research_block": False,
+            "optional_research_blockers": [],
+            "receipts": [
+                {
+                    "path": "bad_json.json",
+                    "exists": True,
+                    "ok": False,
+                    "reasons": ["malformed_receipt"],
+                }
+            ],
+            "optional_receipts": [],
+            "blocker_summary": {"blockers_tracked": 0, "blockers_present": 0, "blockers_referenced": 0, "blockers": []},
+        }
+    }
+
+    malformed = parse_json_payload("{")
+    assert_equal("malformed json marker", malformed.get(JSON_LOAD_ERROR_KEY), True)
+    assert_equal("malformed json error", json_load_error(malformed)["error"], "JSONDecodeError")
+    non_object = parse_json_payload("[1, 2, 3]")
+    assert_equal("non-object json marker", non_object.get(JSON_LOAD_ERROR_KEY), True)
+    assert_equal("non-object json error", json_load_error(non_object)["error"], "NonObjectJson")
 
     assert_equal(
         "safe researchability",
@@ -1866,6 +1962,17 @@ def self_test() -> int:
         "reachable witness classification",
         classify_surface_ids(("bad",), fake_checks)["verdict"],
         "REACHABLE_DISASTER_WITNESS",
+    )
+    malformed_classification = classify_surface_ids(("malformed",), malformed_checks)
+    assert_equal(
+        "malformed receipt classification",
+        malformed_classification["verdict"],
+        "UNKNOWN_BLOCKED",
+    )
+    assert_equal(
+        "malformed receipt researchability",
+        malformed_classification["researchability"],
+        "blocked_missing_or_failed_receipt",
     )
 
     cleared = clear_optional_research_blocks(fake_checks, {"optional"})
@@ -2028,6 +2135,7 @@ def self_test() -> int:
                     "synthetic_provenance_mutation",
                     "synthetic_optional_conflict_mutation",
                     "checker_worktree_dirty",
+                    "malformed_receipt_fail_closed",
                     "gate_status",
                     "missing_edge_fail_closed",
                 ],
