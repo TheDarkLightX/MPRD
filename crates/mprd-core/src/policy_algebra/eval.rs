@@ -188,6 +188,20 @@ pub fn evaluate(
     }
 
     // Phase 2: evaluate the policy normally, treating DenyIf as Neutral.
+    fn expr_has_missing_signal(expr: &PolicyExpr, ctx: &impl EvalContext) -> bool {
+        match expr {
+            PolicyExpr::Atom(a) | PolicyExpr::DenyIf(a) => ctx.signal(a).is_none(),
+            PolicyExpr::Not(p) => expr_has_missing_signal(p, ctx),
+            PolicyExpr::All(children) | PolicyExpr::Any(children) => {
+                children.iter().any(|ch| expr_has_missing_signal(ch, ctx))
+            }
+            PolicyExpr::Threshold { children, .. } => {
+                children.iter().any(|ch| expr_has_missing_signal(ch, ctx))
+            }
+            PolicyExpr::True | PolicyExpr::False => false,
+        }
+    }
+
     fn eval_node(
         expr: &PolicyExpr,
         ctx: &impl EvalContext,
@@ -209,11 +223,16 @@ pub fn evaluate(
             PolicyExpr::Not(p) => {
                 budget.enter_composite()?;
                 budget.charge_not()?;
-                let out = match eval_node(p, ctx, limits, trace, budget)? {
-                    PolicyOutcomeKind::Allow => PolicyOutcomeKind::DenySoft,
-                    PolicyOutcomeKind::DenySoft => PolicyOutcomeKind::Allow,
-                    PolicyOutcomeKind::DenyVeto => PolicyOutcomeKind::Allow,
-                    PolicyOutcomeKind::Neutral => PolicyOutcomeKind::Neutral,
+                let child_outcome = eval_node(p, ctx, limits, trace, budget)?;
+                let out = if expr_has_missing_signal(p, ctx) {
+                    PolicyOutcomeKind::DenySoft
+                } else {
+                    match child_outcome {
+                        PolicyOutcomeKind::Allow => PolicyOutcomeKind::DenySoft,
+                        PolicyOutcomeKind::DenySoft => PolicyOutcomeKind::Allow,
+                        PolicyOutcomeKind::DenyVeto => PolicyOutcomeKind::Allow,
+                        PolicyOutcomeKind::Neutral => PolicyOutcomeKind::Neutral,
+                    }
                 };
                 budget.leave_composite()?;
                 out
