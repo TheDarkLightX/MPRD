@@ -1,0 +1,10 @@
+{
+  "environment": "production",
+  "manifest_key_hex": null,
+  "policy_artifacts_dir": "policy-artifacts",
+  "production_config": "config.json",
+  "registry_authority": "registry-authority.json",
+  "registry_key_hex": "772c8a442b7db06e166cfbc1ccbcbcde6f3eba76a4e98ef3ffc519502237d6ef",
+  "registry_state": "registry_state.json",
+  "schema": "mprd/deployment-bundle/v1"
+}
