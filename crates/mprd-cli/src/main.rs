@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 mod commands;
+mod config_model;
 mod operator;
 #[cfg(test)]
 mod test_support;
@@ -358,6 +359,84 @@ enum DeployCommands {
         /// Directory containing policy artifact files named `<hex(policy_hash)>`.
         #[arg(long)]
         policy_artifacts_dir: PathBuf,
+
+        /// Output format for the bundle report.
+        #[arg(
+            long,
+            default_value = "human",
+            value_parser = ["human", "json", "normalized-json", "digest"]
+        )]
+        format: String,
+
+        /// Require declared exec kinds to be explicitly Tau-governed at deploy time.
+        #[arg(long = "strict-governed-source", value_name = "EXEC_KIND")]
+        strict_governed_source: Vec<String>,
+
+        /// Output format when `--strict-governed-source` rejects the bundle.
+        #[arg(
+            long,
+            default_value = "human",
+            value_parser = ["human", "json", "digest"]
+        )]
+        strict_governed_source_failure_format: String,
+
+        /// Require declared exec kinds to have a full source-artifact witness at deploy time.
+        #[arg(long = "strict-source-artifact-witness", value_name = "EXEC_KIND")]
+        strict_source_artifact_witness: Vec<String>,
+
+        /// Output format when `--strict-source-artifact-witness` rejects the bundle.
+        #[arg(
+            long,
+            default_value = "human",
+            value_parser = ["human", "json", "digest"]
+        )]
+        strict_source_artifact_witness_failure_format: String,
+    },
+
+    /// Verify a production release bundle before deployment.
+    VerifyRelease {
+        /// Signed registry checkpoint (JSON).
+        #[arg(long)]
+        registry_state: PathBuf,
+
+        /// Registry checkpoint verifying key (hex, 32 bytes).
+        #[arg(long)]
+        registry_key_hex: String,
+
+        /// Manifest verifying key (hex, 32 bytes).
+        ///
+        /// If omitted, defaults to `--registry-key-hex`.
+        #[arg(long)]
+        manifest_key_hex: Option<String>,
+
+        /// Directory containing policy artifact files named `<hex(policy_hash)>`.
+        #[arg(long)]
+        policy_artifacts_dir: PathBuf,
+
+        /// Output format for the release report.
+        #[arg(long, default_value = "human", value_parser = ["human", "json", "digest"])]
+        format: String,
+    },
+
+    /// Emit the strict governed-source response matrix used by deploy-time rejection handling.
+    StrictGovernedSourceResponseMatrix {
+        /// Output format for the response matrix.
+        #[arg(long, default_value = "human", value_parser = ["human", "json", "digest"])]
+        format: String,
+    },
+
+    /// Emit the strict source-artifact-witness response matrix used by deploy-time rejection handling.
+    StrictSourceArtifactWitnessResponseMatrix {
+        /// Output format for the response matrix.
+        #[arg(long, default_value = "human", value_parser = ["human", "json", "digest"])]
+        format: String,
+    },
+
+    /// Emit the built-in strict selector alias matrix used by deploy-time exec-kind matching.
+    StrictSelectorAliasMatrix {
+        /// Output format for the selector alias matrix.
+        #[arg(long, default_value = "human", value_parser = ["human", "json", "digest"])]
+        format: String,
     },
 }
 
@@ -830,12 +909,45 @@ fn main() -> Result<()> {
                 registry_key_hex,
                 manifest_key_hex,
                 policy_artifacts_dir,
+                format,
+                strict_governed_source,
+                strict_governed_source_failure_format,
+                strict_source_artifact_witness,
+                strict_source_artifact_witness_failure_format,
             } => commands::deploy::check_bundle(
                 registry_state,
                 registry_key_hex,
                 manifest_key_hex,
                 policy_artifacts_dir,
+                &format,
+                &strict_governed_source,
+                &strict_governed_source_failure_format,
+                &strict_source_artifact_witness,
+                &strict_source_artifact_witness_failure_format,
             ),
+            DeployCommands::VerifyRelease {
+                registry_state,
+                registry_key_hex,
+                manifest_key_hex,
+                policy_artifacts_dir,
+                format,
+            } => commands::deploy::verify_release(
+                registry_state,
+                registry_key_hex,
+                manifest_key_hex,
+                policy_artifacts_dir,
+                cli.config.clone(),
+                &format,
+            ),
+            DeployCommands::StrictGovernedSourceResponseMatrix { format } => {
+                commands::deploy::emit_strict_governed_source_response_matrix(&format)
+            }
+            DeployCommands::StrictSourceArtifactWitnessResponseMatrix { format } => {
+                commands::deploy::emit_strict_source_artifact_witness_response_matrix(&format)
+            }
+            DeployCommands::StrictSelectorAliasMatrix { format } => {
+                commands::deploy::emit_strict_selector_alias_matrix(&format)
+            }
         },
         Commands::Prove {
             decision,
