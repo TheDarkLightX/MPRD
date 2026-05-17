@@ -1839,6 +1839,76 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[derive(Clone, Default)]
+    struct DeterministicRedisContractStore {
+        claimed: Arc<Mutex<HashSet<(PolicyHash, NonceHash)>>>,
+        fail_closed: Arc<Mutex<bool>>,
+    }
+
+    impl DeterministicRedisContractStore {
+        fn set_fail_closed(&self, value: bool) {
+            *self.fail_closed.lock().expect("fail flag") = value;
+        }
+    }
+
+    impl DistributedNonceStore for DeterministicRedisContractStore {
+        fn try_claim_nonce(
+            &self,
+            policy_hash: &PolicyHash,
+            nonce: &NonceHash,
+            _used_at_ms: i64,
+            ttl_ms: i64,
+        ) -> Result<bool> {
+            if ttl_ms <= 0 {
+                return Err(MprdError::ExecutionError("ttl must be positive".into()));
+            }
+            if *self.fail_closed.lock().expect("fail flag") {
+                return Err(MprdError::ExecutionError("redis unavailable".into()));
+            }
+            let mut claimed = self.claimed.lock().expect("claimed set");
+            Ok(claimed.insert((policy_hash.clone(), nonce.clone())))
+        }
+
+        fn is_claimed(&self, policy_hash: &PolicyHash, nonce: &NonceHash) -> Result<bool> {
+            if *self.fail_closed.lock().expect("fail flag") {
+                return Err(MprdError::ExecutionError("redis unavailable".into()));
+            }
+            Ok(self
+                .claimed
+                .lock()
+                .expect("claimed set")
+                .contains(&(policy_hash.clone(), nonce.clone())))
+        }
+
+        fn backend_name(&self) -> &'static str {
+            "redis"
+        }
+    }
+
+    #[test]
+    fn low_trust_redis_contract_simulator_claims_once_and_fails_closed() {
+        let store = DeterministicRedisContractStore::default();
+        let policy = Hash32([1u8; 32]);
+        let nonce = Hash32([2u8; 32]);
+
+        assert!(store
+            .try_claim_nonce(&policy, &nonce, 123, 60_000)
+            .expect("first claim"));
+        assert!(!store
+            .try_claim_nonce(&policy, &nonce, 124, 60_000)
+            .expect("duplicate claim"));
+        assert!(store.is_claimed(&policy, &nonce).expect("claimed"));
+        assert!(store
+            .try_claim_nonce(&policy, &Hash32([3u8; 32]), 125, 0)
+            .is_err());
+
+        store.set_fail_closed(true);
+        assert!(store
+            .try_claim_nonce(&policy, &Hash32([4u8; 32]), 126, 60_000)
+            .is_err());
+        assert!(store.is_claimed(&policy, &nonce).is_err());
+    }
+
     #[test]
     fn parse_redis_url_supported_forms() {
         let e = parse_redis_url("redis://localhost").expect("url");

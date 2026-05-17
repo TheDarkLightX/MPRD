@@ -202,61 +202,81 @@ enum DenyIfValue {
     False,
 }
 
-/// Compile the **main-phase** policy semantics (veto already checked) into two boolean functions:
+/// Compile the **main-phase** policy semantics (veto already checked) into three boolean functions:
 /// - `A(expr)`: expr evaluates to `Allow`
 /// - `N(expr)`: expr evaluates to `Neutral`
+/// - `M(expr)`: expr references at least one missing signal
 ///
 /// This handles `DenyIf` under `Not` soundly: `DenyIf` is `Neutral` in the main phase, and
-/// `Not(Neutral)=Neutral`. We therefore cannot model the main phase as a single boolean formula
-/// without tracking `Neutral`.
+/// `Not(Neutral)=Neutral`. It also handles the explicit fail-closed rule for `Not`: any missing
+/// signal under the negated subexpression makes the `Not` deny, even when the child would otherwise
+/// be soft-denied. We therefore cannot model the main phase as a single boolean formula without
+/// tracking both `Neutral` and `Missing`.
 fn compile_main_allow_neutral(
     b: &mut BddBuilder,
     expr: &PolicyExpr,
     limits: PolicyLimits,
-) -> Result<(BddId, BddId)> {
+) -> Result<(BddId, BddId, BddId)> {
     match expr {
-        PolicyExpr::True => Ok((BddId::TRUE, BddId::FALSE)),
-        PolicyExpr::False => Ok((BddId::FALSE, BddId::FALSE)),
+        PolicyExpr::True => Ok((BddId::TRUE, BddId::FALSE, BddId::FALSE)),
+        PolicyExpr::False => Ok((BddId::FALSE, BddId::FALSE, BddId::FALSE)),
         PolicyExpr::Atom(a) => {
             let p = bit_present_name(a, limits)?;
             let v = bit_value_name(a, limits)?;
             let bp = b.var(&p)?;
             let bv = b.var(&v)?;
             let allow = b.apply(Op::And, bp, bv)?;
-            Ok((allow, BddId::FALSE))
+            let missing = b.apply_not(bp)?;
+            Ok((allow, BddId::FALSE, missing))
         }
-        PolicyExpr::DenyIf(_) => Ok((BddId::FALSE, BddId::TRUE)),
+        PolicyExpr::DenyIf(a) => {
+            let p = bit_present_name(a, limits)?;
+            let bp = b.var(&p)?;
+            let missing = b.apply_not(bp)?;
+            Ok((BddId::FALSE, BddId::TRUE, missing))
+        }
         PolicyExpr::Not(p) => {
-            let (a, n) = compile_main_allow_neutral(b, p, limits)?;
+            let (a, n, m) = compile_main_allow_neutral(b, p, limits)?;
             // DenySoft predicate: not Allow and not Neutral.
             let not_a = b.apply_not(a)?;
             let not_n = b.apply_not(n)?;
             let deny_soft = b.apply(Op::And, not_a, not_n)?;
-            Ok((deny_soft, n))
+            let not_missing = b.apply_not(m)?;
+            let allow = b.apply(Op::And, deny_soft, not_missing)?;
+            Ok((allow, n, m))
         }
         PolicyExpr::All(children) => {
             // All returns Allow iff no child is DenySoft.
             // DenySoft(child) = ¬A(child) ∧ ¬N(child), so "not DenySoft" is A ∨ N.
             let mut acc = BddId::TRUE;
+            let mut missing = BddId::FALSE;
             for ch in children {
-                let (a, n) = compile_main_allow_neutral(b, ch, limits)?;
+                let (a, n, m) = compile_main_allow_neutral(b, ch, limits)?;
                 let ok = b.apply(Op::Or, a, n)?;
                 acc = b.apply(Op::And, acc, ok)?;
+                missing = b.apply(Op::Or, missing, m)?;
             }
-            Ok((acc, BddId::FALSE))
+            Ok((acc, BddId::FALSE, missing))
         }
         PolicyExpr::Any(children) => {
             // Any returns Allow iff any child returns Allow (Neutral is ignored).
             let mut acc = BddId::FALSE;
+            let mut missing = BddId::FALSE;
             for ch in children {
-                let (a, _) = compile_main_allow_neutral(b, ch, limits)?;
+                let (a, _, m) = compile_main_allow_neutral(b, ch, limits)?;
                 acc = b.apply(Op::Or, acc, a)?;
+                missing = b.apply(Op::Or, missing, m)?;
             }
-            Ok((acc, BddId::FALSE))
+            Ok((acc, BddId::FALSE, missing))
         }
         PolicyExpr::Threshold { k, children } => {
             if *k == 0 {
-                return Ok((BddId::TRUE, BddId::FALSE));
+                let mut missing = BddId::FALSE;
+                for ch in children {
+                    let (_, _, m) = compile_main_allow_neutral(b, ch, limits)?;
+                    missing = b.apply(Op::Or, missing, m)?;
+                }
+                return Ok((BddId::TRUE, BddId::FALSE, missing));
             }
             let n = children.len();
             if (*k as usize) > n {
@@ -267,8 +287,10 @@ fn compile_main_allow_neutral(
             let kk = *k as usize;
             let mut dp: Vec<BddId> = vec![BddId::FALSE; kk + 1];
             dp[0] = BddId::TRUE;
+            let mut missing = BddId::FALSE;
             for ch in children {
-                let (a, _) = compile_main_allow_neutral(b, ch, limits)?;
+                let (a, _, m) = compile_main_allow_neutral(b, ch, limits)?;
+                missing = b.apply(Op::Or, missing, m)?;
                 let not_a = b.apply_not(a)?;
                 let mut next = dp.clone();
                 for j in (1..=kk).rev() {
@@ -279,7 +301,7 @@ fn compile_main_allow_neutral(
                 next[0] = BddId::TRUE;
                 dp = next;
             }
-            Ok((dp[kk], BddId::FALSE))
+            Ok((dp[kk], BddId::FALSE, missing))
         }
     }
 }
@@ -289,7 +311,7 @@ fn compile_allow_root(
     expr: &PolicyExpr,
     limits: PolicyLimits,
 ) -> Result<BddId> {
-    let (main_allow, _) = compile_main_allow_neutral(b, expr, limits)?;
+    let (main_allow, _, _) = compile_main_allow_neutral(b, expr, limits)?;
     let mut root = main_allow;
     for a in expr.deny_if_atoms() {
         let p = b.var(&bit_present_name(&a, limits)?)?;
@@ -1001,30 +1023,39 @@ mod tests {
     }
 
     #[test]
-    fn semantic_hash_collapses_tautology_even_when_structural_hash_differs() {
+    fn semantic_hash_keeps_excluded_middle_distinct_under_missing_semantics() {
         let limits = lim();
         let a = PolicyExpr::atom("a", limits).unwrap();
         let b = PolicyExpr::atom("b", limits).unwrap();
-        // Boolean tautology that canonicalization does not prove (requires distributivity):
+        // Classically, this is a tautology:
         //   (a ∧ b) ∨ (a ∧ ¬b) ∨ ¬a  ==  True
+        //
+        // Under MPRD's fail-closed semantics it is not a tautology: if `a` or `b`
+        // is missing under a negated subexpression, `Not` denies.
         let a_and_b = PolicyExpr::all(vec![a.clone(), b.clone()], limits).unwrap();
         let a_and_not_b = PolicyExpr::all(vec![a.clone(), PolicyExpr::not(b)], limits).unwrap();
-        let taut = PolicyExpr::any(
+        let excluded_middle = PolicyExpr::any(
             vec![a_and_b, a_and_not_b, PolicyExpr::not(a.clone())],
             limits,
         )
         .unwrap();
 
-        // Structural hash differs because canonicalization does not prove *all* tautologies.
         let canon_true = CanonicalPolicy::new(PolicyExpr::True, limits).unwrap();
-        let canon_taut = CanonicalPolicy::new(taut, limits).unwrap();
-        assert_ne!(canon_true.bytes_v1(), canon_taut.bytes_v1());
-        assert_ne!(canon_true.hash_v1(), canon_taut.hash_v1());
+        let canon_excluded_middle = CanonicalPolicy::new(excluded_middle, limits).unwrap();
+        assert_ne!(canon_true.bytes_v1(), canon_excluded_middle.bytes_v1());
+        assert_ne!(canon_true.hash_v1(), canon_excluded_middle.hash_v1());
 
-        // Semantic hash via ROBDD must agree.
+        // Semantic hash via ROBDD must not collapse this to True.
         let h_true = policy_semantic_hash_robdd_v1(canon_true.expr(), limits).unwrap();
-        let h_taut = policy_semantic_hash_robdd_v1(canon_taut.expr(), limits).unwrap();
-        assert_eq!(h_true, h_taut);
+        let h_excluded_middle =
+            policy_semantic_hash_robdd_v1(canon_excluded_middle.expr(), limits).unwrap();
+        assert_ne!(h_true, h_excluded_middle);
+
+        let eq =
+            policy_equiv_robdd(canon_true.expr(), canon_excluded_middle.expr(), limits).unwrap();
+        assert!(!eq.equivalent);
+        let ce = eq.counterexample.unwrap();
+        assert!(ce.values().any(Option::is_none));
     }
 
     #[test]
@@ -1038,13 +1069,23 @@ mod tests {
     }
 
     #[test]
-    fn canonicalize_eliminates_tautology_when_no_deny_if() {
+    fn canonicalize_preserves_excluded_middle_missing_sensitivity() {
         let limits = lim();
         let a = PolicyExpr::atom("a", limits).unwrap();
         let not_a = PolicyExpr::not(a.clone());
-        let taut = PolicyExpr::any(vec![a, not_a], limits).unwrap();
-        let canon = crate::policy_algebra::canon::CanonicalPolicy::new(taut, limits).unwrap();
-        assert_eq!(*canon.expr(), PolicyExpr::True);
+        let excluded_middle = PolicyExpr::any(vec![a, not_a], limits).unwrap();
+        let canon =
+            crate::policy_algebra::canon::CanonicalPolicy::new(excluded_middle.clone(), limits)
+                .unwrap();
+        assert_ne!(*canon.expr(), PolicyExpr::True);
+
+        let ctx = BTreeMap::<String, bool>::new();
+        assert!(!super::super::evaluate(&excluded_middle, &ctx, limits)
+            .unwrap()
+            .allowed());
+        assert!(!super::super::evaluate(canon.expr(), &ctx, limits)
+            .unwrap()
+            .allowed());
     }
 
     #[test]
@@ -1292,6 +1333,32 @@ mod tests {
         let expr = PolicyExpr::not(ban);
         let err = compile_allow_robdd(&expr, limits).unwrap_err();
         assert!(err.to_string().contains("DenyIf under Not"));
+    }
+
+    #[test]
+    fn not_over_missing_nested_signal_denies_like_evaluator() {
+        let limits = lim();
+        let a = PolicyExpr::atom("a", limits).unwrap();
+        let expr = PolicyExpr::not(
+            PolicyExpr::all(vec![PolicyExpr::any(vec![a], limits).unwrap()], limits).unwrap(),
+        );
+        let canon = CanonicalPolicy::new(expr, limits).unwrap();
+        let bdd = compile_allow_robdd(canon.expr(), limits).unwrap();
+        let ctx = BTreeMap::<String, bool>::new();
+
+        assert!(!super::super::evaluate(canon.expr(), &ctx, limits)
+            .unwrap()
+            .allowed());
+        assert!(!bdd.eval(|atom| {
+            let name = atom.as_str();
+            if let Some(sig) = name.strip_prefix("p_") {
+                ctx.contains_key(sig)
+            } else if let Some(sig) = name.strip_prefix("v_") {
+                *ctx.get(sig).unwrap_or(&false)
+            } else {
+                false
+            }
+        }));
     }
 
     #[test]

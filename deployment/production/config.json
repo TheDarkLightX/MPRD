@@ -1,0 +1,29 @@
+{
+  "anti_replay": {
+    "nonce_store_dir": "anti_replay"
+  },
+  "execution": {
+    "audit_file": "audit.jsonl",
+    "executor_type": "noop",
+    "http_url": null
+  },
+  "mode": "trustless",
+  "policy_artifacts_dir": "policy-artifacts",
+  "policy_storage": {
+    "ipfs_url": null,
+    "local_dir": "policies",
+    "storage_type": "local"
+  },
+  "registry_state_path": "registry_state.json",
+  "registry_verifying_key_hex": "772c8a442b7db06e166cfbc1ccbcbcde6f3eba76a4e98ef3ffc519502237d6ef",
+  "risc0_image_id": "6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d",
+  "state_provenance": {
+    "allowed_state_source_ids_hex": [
+      "643d808bdf7bf2d2c30672cb92945306107a2d2c3e236fb289e67b861eedf635"
+    ],
+    "require_provenance": true
+  },
+  "tau_binary": null,
+  "token_signing_key_env_var": "MPRD_TOKEN_SIGNING_KEY_HEX",
+  "token_signing_key_hex": null
+}
