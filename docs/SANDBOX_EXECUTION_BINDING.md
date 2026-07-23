@@ -53,6 +53,10 @@ A timeout, out-of-memory termination, policy denial, or runtime failure can be a
 
 This module binds the execution nonce into the candidate and receipt. Global freshness still requires MPRD's durable nonce validator or another authoritative anti-replay store before the executor launches the sandbox. Commitment is not uniqueness.
 
+## Validation
+
+The branch gates formatting, `mprd-core` tests, workspace tests, clippy, fuzz smoke, policy-menu equivalence, and RISC0 embedding checks. The PR remains draft until those checks are reconciled and any temporary validation workflow is removed.
+
 ## Nonclaims
 
 A validated sandbox receipt proves structural identity and resource binding. It does not prove that:
