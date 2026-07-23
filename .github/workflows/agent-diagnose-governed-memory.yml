@@ -23,11 +23,39 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Format and capture bounded diagnostics
+      - name: Apply narrow lint fixes and capture bounded diagnostics
         shell: bash
         run: |
           set -uo pipefail
           mkdir -p .agent-ci-diagnostics
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("crates/mprd-core/src/policy_algebra/governed_memory.rs")
+          source = path.read_text()
+          replacements = {
+              """        let mut policy = MemoryAdmissionPolicy::default();
+                  policy.allow_global = true;
+          """: """        let policy = MemoryAdmissionPolicy {
+                      allow_global: true,
+                      ..MemoryAdmissionPolicy::default()
+                  };
+          """,
+              """        let mut policy = MemoryAdmissionPolicy::default();
+                  policy.max_ttl_ms = Some(1_000);
+          """: """        let policy = MemoryAdmissionPolicy {
+                      max_ttl_ms: Some(1_000),
+                      ..MemoryAdmissionPolicy::default()
+                  };
+          """,
+          }
+          for old, new in replacements.items():
+              if old not in source:
+                  raise SystemExit(f"expected governed-memory test snippet not found: {old!r}")
+              source = source.replace(old, new, 1)
+          path.write_text(source)
+          PY
 
           cargo fmt --all
 
