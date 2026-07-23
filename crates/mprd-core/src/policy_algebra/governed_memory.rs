@@ -343,9 +343,7 @@ pub fn memory_content_hash(content: &str) -> Hash32 {
 }
 
 /// Hash an admission policy after validating its hard resource bounds.
-pub fn memory_policy_hash(
-    policy: &MemoryAdmissionPolicy,
-) -> Result<Hash32, MemoryAdmissionError> {
+pub fn memory_policy_hash(policy: &MemoryAdmissionPolicy) -> Result<Hash32, MemoryAdmissionError> {
     validate_policy(policy)?;
     let mut hasher = Sha256::new();
     hasher.update(POLICY_HASH_DOMAIN_V1);
@@ -360,8 +358,7 @@ pub fn memory_policy_hash(
 }
 
 fn validate_policy(policy: &MemoryAdmissionPolicy) -> Result<(), MemoryAdmissionError> {
-    if policy.max_identifier_bytes == 0
-        || policy.max_identifier_bytes > MAX_POLICY_IDENTIFIER_BYTES
+    if policy.max_identifier_bytes == 0 || policy.max_identifier_bytes > MAX_POLICY_IDENTIFIER_BYTES
     {
         return Err(MemoryAdmissionError::InvalidPolicy(format!(
             "max_identifier_bytes must be between 1 and {MAX_POLICY_IDENTIFIER_BYTES}"
@@ -372,9 +369,7 @@ fn validate_policy(policy: &MemoryAdmissionPolicy) -> Result<(), MemoryAdmission
             "max_content_bytes must be between 1 and {MAX_POLICY_CONTENT_BYTES}"
         )));
     }
-    if policy.max_evidence_items == 0
-        || policy.max_evidence_items > MAX_POLICY_EVIDENCE_ITEMS
-    {
+    if policy.max_evidence_items == 0 || policy.max_evidence_items > MAX_POLICY_EVIDENCE_ITEMS {
         return Err(MemoryAdmissionError::InvalidPolicy(format!(
             "max_evidence_items must be between 1 and {MAX_POLICY_EVIDENCE_ITEMS}"
         )));
@@ -427,9 +422,7 @@ fn validate_scope(
         (MemoryScope::Workspace, Some(workspace_id)) => {
             validate_identifier("workspace_id", workspace_id, max_identifier_bytes)
         }
-        (MemoryScope::Workspace, None) => {
-            Err(MemoryAdmissionError::WorkspaceScopeMissingWorkspace)
-        }
+        (MemoryScope::Workspace, None) => Err(MemoryAdmissionError::WorkspaceScopeMissingWorkspace),
         (MemoryScope::Global, Some(_)) => Err(MemoryAdmissionError::GlobalScopeHasWorkspace),
         (MemoryScope::Global, None) => Ok(()),
     }
@@ -522,9 +515,7 @@ fn validate_record_identity(
     proposal: &MemoryMutationProposal,
 ) -> Result<(), MemoryAdmissionError> {
     if record.memory_id != proposal.memory_id {
-        return Err(MemoryAdmissionError::ExistingRecordMismatch {
-            field: "memory_id",
-        });
+        return Err(MemoryAdmissionError::ExistingRecordMismatch { field: "memory_id" });
     }
     if record.subject_id != proposal.subject_id {
         return Err(MemoryAdmissionError::ExistingRecordMismatch {
@@ -653,12 +644,9 @@ mod tests {
 
     #[test]
     fn valid_workspace_create_is_admitted_and_canonicalized() {
-        let admitted = admit_memory_mutation(
-            &MemoryAdmissionPolicy::default(),
-            None,
-            create_proposal(),
-        )
-        .expect("admitted create");
+        let admitted =
+            admit_memory_mutation(&MemoryAdmissionPolicy::default(), None, create_proposal())
+                .expect("admitted create");
         assert_eq!(admitted.next_revision(), 1);
         assert_eq!(admitted.previous_content_hash(), None);
         assert_eq!(admitted.proposal().evidence_hashes, vec![hash(1), hash(2)]);
@@ -711,11 +699,7 @@ mod tests {
         proposal.kind = MemoryMutationKind::Update;
         proposal.expected_revision = Some(2);
         assert_eq!(
-            admit_memory_mutation(
-                &MemoryAdmissionPolicy::default(),
-                Some(&record),
-                proposal,
-            ),
+            admit_memory_mutation(&MemoryAdmissionPolicy::default(), Some(&record), proposal,),
             Err(MemoryAdmissionError::StaleRevision {
                 expected: 2,
                 actual: 3
@@ -731,11 +715,7 @@ mod tests {
         proposal.expected_revision = Some(3);
         proposal.subject_id = "other-user".to_string();
         assert_eq!(
-            admit_memory_mutation(
-                &MemoryAdmissionPolicy::default(),
-                Some(&record),
-                proposal,
-            ),
+            admit_memory_mutation(&MemoryAdmissionPolicy::default(), Some(&record), proposal,),
             Err(MemoryAdmissionError::ExistingRecordMismatch {
                 field: "subject_id"
             })
@@ -797,12 +777,9 @@ mod tests {
         let mut proposal = create_proposal();
         proposal.kind = MemoryMutationKind::Update;
         proposal.expected_revision = Some(3);
-        let admitted = admit_memory_mutation(
-            &MemoryAdmissionPolicy::default(),
-            Some(&record),
-            proposal,
-        )
-        .expect("admitted update");
+        let admitted =
+            admit_memory_mutation(&MemoryAdmissionPolicy::default(), Some(&record), proposal)
+                .expect("admitted update");
         assert_eq!(admitted.next_revision(), 4);
         assert_eq!(admitted.previous_content_hash(), Some(&record.content_hash));
     }
