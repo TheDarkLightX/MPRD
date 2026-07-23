@@ -1,2 +1,2 @@
 workspace_test=101
-workspace_clippy=101
+workspace_clippy=0

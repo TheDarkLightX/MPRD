@@ -680,8 +680,10 @@ mod tests {
 
     #[test]
     fn enabled_global_memory_still_requires_expiry() {
-        let mut policy = MemoryAdmissionPolicy::default();
-        policy.allow_global = true;
+        let policy = MemoryAdmissionPolicy {
+            allow_global: true,
+            ..MemoryAdmissionPolicy::default()
+        };
         let mut proposal = create_proposal();
         proposal.scope = MemoryScope::Global;
         proposal.workspace_id = None;
@@ -760,8 +762,10 @@ mod tests {
     fn ttl_above_policy_maximum_is_rejected() {
         let mut proposal = create_proposal();
         proposal.expires_at_ms = Some(2_001);
-        let mut policy = MemoryAdmissionPolicy::default();
-        policy.max_ttl_ms = Some(1_000);
+        let policy = MemoryAdmissionPolicy {
+            max_ttl_ms: Some(1_000),
+            ..MemoryAdmissionPolicy::default()
+        };
         assert_eq!(
             admit_memory_mutation(&policy, None, proposal),
             Err(MemoryAdmissionError::TtlTooLong {
