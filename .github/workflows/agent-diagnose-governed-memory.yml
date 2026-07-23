@@ -59,10 +59,10 @@ jobs:
 
           bdd_path = Path("crates/mprd-core/src/policy_algebra/bdd.rs")
           bdd = bdd_path.read_text()
-          old = """            let deny_soft = b.apply(Op::And, not_a, not_n)?;
+          bdd_lowering_old = """            let deny_soft = b.apply(Op::And, not_a, not_n)?;
                       Ok((deny_soft, n))
           """
-          new = """            let deny_soft = b.apply(Op::And, not_a, not_n)?;
+          bdd_lowering_new = """            let deny_soft = b.apply(Op::And, not_a, not_n)?;
                       // `evaluate` makes Not fail closed when any signal in its subtree is
                       // missing. Preserve that semantics in the ROBDD instead of treating a
                       // missing value bit as ordinary false and inverting it to allow.
@@ -74,11 +74,115 @@ jobs:
                       let allow = b.apply(Op::And, all_present, deny_soft)?;
                       Ok((allow, n))
           """
-          if old in bdd:
-              bdd = bdd.replace(old, new, 1)
-          elif new not in bdd:
+          if bdd_lowering_old in bdd:
+              bdd = bdd.replace(bdd_lowering_old, bdd_lowering_new, 1)
+          elif bdd_lowering_new not in bdd:
               raise SystemExit("ROBDD Not lowering snippet drifted")
+
+          semantic_test_old = """    #[test]
+              fn semantic_hash_collapses_tautology_even_when_structural_hash_differs() {
+                  let limits = lim();
+                  let a = PolicyExpr::atom(\"a\", limits).unwrap();
+                  let b = PolicyExpr::atom(\"b\", limits).unwrap();
+                  // Boolean tautology that canonicalization does not prove (requires distributivity):
+                  //   (a ∧ b) ∨ (a ∧ ¬b) ∨ ¬a  ==  True
+                  let a_and_b = PolicyExpr::all(vec![a.clone(), b.clone()], limits).unwrap();
+                  let a_and_not_b = PolicyExpr::all(vec![a.clone(), PolicyExpr::not(b)], limits).unwrap();
+                  let taut = PolicyExpr::any(
+                      vec![a_and_b, a_and_not_b, PolicyExpr::not(a.clone())],
+                      limits,
+                  )
+                  .unwrap();
+
+                  // Structural hash differs because canonicalization does not prove *all* tautologies.
+                  let canon_true = CanonicalPolicy::new(PolicyExpr::True, limits).unwrap();
+                  let canon_taut = CanonicalPolicy::new(taut, limits).unwrap();
+                  assert_ne!(canon_true.bytes_v1(), canon_taut.bytes_v1());
+                  assert_ne!(canon_true.hash_v1(), canon_taut.hash_v1());
+
+                  // Semantic hash via ROBDD must agree.
+                  let h_true = policy_semantic_hash_robdd_v1(canon_true.expr(), limits).unwrap();
+                  let h_taut = policy_semantic_hash_robdd_v1(canon_taut.expr(), limits).unwrap();
+                  assert_eq!(h_true, h_taut);
+              }
+          """
+          semantic_test_new = """    #[test]
+              fn semantic_hash_distinguishes_total_boolean_tautology_from_fail_closed_true() {
+                  let limits = lim();
+                  let a = PolicyExpr::atom(\"a\", limits).unwrap();
+                  let b = PolicyExpr::atom(\"b\", limits).unwrap();
+                  // This is a tautology only over total Boolean assignments:
+                  //   (a ∧ b) ∨ (a ∧ ¬b) ∨ ¬a
+                  // Under MPRD's partial-input semantics, missing a or b must deny-soft.
+                  let a_and_b = PolicyExpr::all(vec![a.clone(), b.clone()], limits).unwrap();
+                  let a_and_not_b = PolicyExpr::all(vec![a.clone(), PolicyExpr::not(b)], limits).unwrap();
+                  let taut = PolicyExpr::any(
+                      vec![a_and_b, a_and_not_b, PolicyExpr::not(a.clone())],
+                      limits,
+                  )
+                  .unwrap();
+
+                  let canon_true = CanonicalPolicy::new(PolicyExpr::True, limits).unwrap();
+                  let canon_taut = CanonicalPolicy::new(taut, limits).unwrap();
+                  assert_ne!(canon_true.bytes_v1(), canon_taut.bytes_v1());
+                  assert_ne!(canon_true.hash_v1(), canon_taut.hash_v1());
+
+                  // Presence bits are semantically relevant, so the ROBDD hashes must differ.
+                  let h_true = policy_semantic_hash_robdd_v1(canon_true.expr(), limits).unwrap();
+                  let h_taut = policy_semantic_hash_robdd_v1(canon_taut.expr(), limits).unwrap();
+                  assert_ne!(h_true, h_taut);
+              }
+          """
+          if semantic_test_old in bdd:
+              bdd = bdd.replace(semantic_test_old, semantic_test_new, 1)
+          elif semantic_test_new not in bdd:
+              raise SystemExit("semantic hash tautology test drifted")
+
+          canonical_test_old = """    #[test]
+              fn canonicalize_eliminates_tautology_when_no_deny_if() {
+                  let limits = lim();
+                  let a = PolicyExpr::atom(\"a\", limits).unwrap();
+                  let not_a = PolicyExpr::not(a.clone());
+                  let taut = PolicyExpr::any(vec![a, not_a], limits).unwrap();
+                  let canon = crate::policy_algebra::canon::CanonicalPolicy::new(taut, limits).unwrap();
+                  assert_eq!(*canon.expr(), PolicyExpr::True);
+              }
+          """
+          canonical_test_new = """    #[test]
+              fn canonicalize_preserves_complements_under_fail_closed_missing_semantics() {
+                  let limits = lim();
+                  let a = PolicyExpr::atom(\"a\", limits).unwrap();
+                  let not_a = PolicyExpr::not(a.clone());
+                  let taut = PolicyExpr::any(vec![a, not_a], limits).unwrap();
+                  let canon = crate::policy_algebra::canon::CanonicalPolicy::new(taut, limits).unwrap();
+                  assert_ne!(*canon.expr(), PolicyExpr::True);
+
+                  let h_true = policy_semantic_hash_robdd_v1(&PolicyExpr::True, limits).unwrap();
+                  let h_taut = policy_semantic_hash_robdd_v1(canon.expr(), limits).unwrap();
+                  assert_ne!(h_true, h_taut);
+              }
+          """
+          if canonical_test_old in bdd:
+              bdd = bdd.replace(canonical_test_old, canonical_test_new, 1)
+          elif canonical_test_new not in bdd:
+              raise SystemExit("canonical tautology test drifted")
           bdd_path.write_text(bdd)
+
+          canon_path = Path("crates/mprd-core/src/policy_algebra/canon.rs")
+          canon = canon_path.read_text()
+          unsafe_tautology = """            // Boolean tautology elimination: x ∨ ¬x = True (safe only when no DenyIf is present anywhere).
+                      if !has_deny_if && has_complement_pair(&flat) {
+                          return Ok(PolicyExpr::True);
+                      }
+          """
+          replacement_comment = """            // Do not rewrite x ∨ ¬x to True: when x is missing, both branches
+                      // deny-soft under MPRD's fail-closed partial-input semantics.
+          """
+          if unsafe_tautology in canon:
+              canon = canon.replace(unsafe_tautology, replacement_comment, 1)
+          elif replacement_comment not in canon:
+              raise SystemExit("canonical tautology rewrite snippet drifted")
+          canon_path.write_text(canon)
           PY
 
           cargo fmt --all
@@ -106,6 +210,6 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add crates/mprd-core/src .agent-ci-diagnostics/*.txt
           if ! git diff --cached --quiet; then
-            git commit -m "fix: preserve fail-closed missing semantics in ROBDD Not"
+            git commit -m "fix: preserve fail-closed partial-input policy semantics"
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
