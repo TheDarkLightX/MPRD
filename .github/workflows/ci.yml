@@ -6,64 +6,7 @@ on:
     branches:
       - main
 
-permissions:
-  contents: write
-
 jobs:
-  sandbox-diagnostics:
-    if: github.event_name == 'pull_request' && github.head_ref == 'agent/sandbox-run-plan-binding'
-    runs-on: ubuntu-latest
-    env:
-      RISC0_SKIP_BUILD: "1"
-    steps:
-      - name: Checkout PR branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-          persist-credentials: true
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.87.0
-
-      - name: Capture focused and workspace test diagnostics
-        shell: bash
-        run: |
-          set -uo pipefail
-          mkdir -p .agent-sandbox-diagnostics
-
-          set +e
-          cargo test -p mprd-core sandbox_execution_binding \
-            > .agent-sandbox-diagnostics/focused.full.txt 2>&1
-          focused_status=$?
-          cargo test -p mprd-core \
-            > .agent-sandbox-diagnostics/core.full.txt 2>&1
-          core_status=$?
-          cargo test --workspace --all-targets \
-            > .agent-sandbox-diagnostics/workspace.full.txt 2>&1
-          workspace_status=$?
-          set -e
-
-          tail -n 360 .agent-sandbox-diagnostics/focused.full.txt \
-            > .agent-sandbox-diagnostics/focused.txt
-          tail -n 360 .agent-sandbox-diagnostics/core.full.txt \
-            > .agent-sandbox-diagnostics/core.txt
-          tail -n 360 .agent-sandbox-diagnostics/workspace.full.txt \
-            > .agent-sandbox-diagnostics/workspace.txt
-          rm .agent-sandbox-diagnostics/*.full.txt
-          printf 'focused=%s\ncore=%s\nworkspace=%s\n' \
-            "$focused_status" "$core_status" "$workspace_status" \
-            > .agent-sandbox-diagnostics/status.txt
-
-          git fetch origin main --depth=1
-          git checkout origin/main -- .github/workflows/ci.yml
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/workflows .agent-sandbox-diagnostics
-          git commit -m "Capture sandbox binding test diagnostics"
-          git push origin "HEAD:${GITHUB_HEAD_REF}"
-
   fmt:
     name: cargo fmt --check
     runs-on: ubuntu-latest

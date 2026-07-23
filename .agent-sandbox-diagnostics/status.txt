@@ -1,0 +1,3 @@
+focused=0
+core=101
+workspace=101
