@@ -232,7 +232,16 @@ fn compile_main_allow_neutral(
             let not_a = b.apply_not(a)?;
             let not_n = b.apply_not(n)?;
             let deny_soft = b.apply(Op::And, not_a, not_n)?;
-            Ok((deny_soft, n))
+            // `evaluate` makes Not fail closed when any signal in its subtree is
+            // missing. Preserve that semantics in the ROBDD instead of treating a
+            // missing value bit as ordinary false and inverting it to allow.
+            let mut all_present = BddId::TRUE;
+            for atom in p.atoms() {
+                let present = b.var(&bit_present_name(&atom, limits)?)?;
+                all_present = b.apply(Op::And, all_present, present)?;
+            }
+            let allow = b.apply(Op::And, all_present, deny_soft)?;
+            Ok((allow, n))
         }
         PolicyExpr::All(children) => {
             // All returns Allow iff no child is DenySoft.
