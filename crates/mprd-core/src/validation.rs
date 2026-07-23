@@ -31,8 +31,7 @@ pub const MAX_CANDIDATE_PREIMAGE_BYTES_V1: usize = 16 * 1024;
 
 pub const ACTION_TYPE_NOOP_V1: &str = "noop";
 pub const ACTION_TYPE_HTTP_CALL_V1: &str = "http_call";
-pub const ACTION_TYPE_SANDBOX_RUN_V1: &str =
-    sandbox_execution_binding::ACTION_TYPE_SANDBOX_RUN_V1;
+pub const ACTION_TYPE_SANDBOX_RUN_V1: &str = sandbox_execution_binding::ACTION_TYPE_SANDBOX_RUN_V1;
 
 /// Validate a canonical v1 action schema (fail-closed).
 ///

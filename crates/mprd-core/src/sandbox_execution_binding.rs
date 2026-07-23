@@ -285,7 +285,8 @@ pub fn admitted_sandbox_run_binding_v1(
     }
     validate_sandbox_run_params_v1(&candidate.params)?;
     let expected_candidate_hash = hash_candidate(candidate);
-    if candidate.candidate_hash == ZERO_HASH || candidate.candidate_hash != expected_candidate_hash {
+    if candidate.candidate_hash == ZERO_HASH || candidate.candidate_hash != expected_candidate_hash
+    {
         return Err(SandboxExecutionBindingError::CandidateHashMismatch);
     }
 
@@ -392,9 +393,7 @@ pub fn validate_sandbox_runtime_receipt_v1(
     })
 }
 
-fn validate_proposal(
-    proposal: &SandboxRunProposalV1,
-) -> Result<(), SandboxExecutionBindingError> {
+fn validate_proposal(proposal: &SandboxRunProposalV1) -> Result<(), SandboxExecutionBindingError> {
     for (field, hash) in [
         (PARAM_PLAN_HASH, proposal.plan_hash),
         (PARAM_POLICY_HASH, proposal.sandbox_policy_hash),
@@ -413,9 +412,7 @@ fn validate_proposal(
         (PARAM_MAX_OUTPUT_BYTES, proposal.max_output_bytes),
     ] {
         if value == 0 {
-            return Err(SandboxExecutionBindingError::InvalidPositiveInteger(
-                field,
-            ));
+            return Err(SandboxExecutionBindingError::InvalidPositiveInteger(field));
         }
     }
     Ok(())
@@ -488,11 +485,7 @@ fn read_positive_u64(
     let value = match params.get(key) {
         Some(Value::UInt(value)) => *value,
         Some(Value::Int(value)) if *value > 0 => *value as u64,
-        _ => {
-            return Err(SandboxExecutionBindingError::InvalidPositiveInteger(
-                key,
-            ))
-        }
+        _ => return Err(SandboxExecutionBindingError::InvalidPositiveInteger(key)),
     };
     if value == 0 {
         return Err(SandboxExecutionBindingError::InvalidPositiveInteger(key));
@@ -691,8 +684,7 @@ mod tests {
         let mut value = receipt();
         value.termination = SandboxRuntimeTerminationV1::TimedOut;
         value.exit_code = None;
-        let validated =
-            validate_sandbox_runtime_receipt_v1(&admitted(), value).expect("receipt");
+        let validated = validate_sandbox_runtime_receipt_v1(&admitted(), value).expect("receipt");
         assert!(!validated.succeeded());
     }
 
