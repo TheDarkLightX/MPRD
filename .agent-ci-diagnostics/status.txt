@@ -1,2 +1,0 @@
-workspace_test=0
-workspace_clippy=0
