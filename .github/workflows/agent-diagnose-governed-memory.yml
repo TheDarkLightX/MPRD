@@ -23,7 +23,7 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Apply narrow lint fixes and capture bounded diagnostics
+      - name: Apply bounded correctness fixes and capture diagnostics
         shell: bash
         run: |
           set -uo pipefail
@@ -32,9 +32,9 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path("crates/mprd-core/src/policy_algebra/governed_memory.rs")
-          source = path.read_text()
-          replacements = {
+          governed_path = Path("crates/mprd-core/src/policy_algebra/governed_memory.rs")
+          governed = governed_path.read_text()
+          governed_replacements = {
               """        let mut policy = MemoryAdmissionPolicy::default();
                   policy.allow_global = true;
           """: """        let policy = MemoryAdmissionPolicy {
@@ -50,11 +50,35 @@ jobs:
                   };
           """,
           }
-          for old, new in replacements.items():
-              if old not in source:
-                  raise SystemExit(f"expected governed-memory test snippet not found: {old!r}")
-              source = source.replace(old, new, 1)
-          path.write_text(source)
+          for old, new in governed_replacements.items():
+              if old in governed:
+                  governed = governed.replace(old, new, 1)
+              elif new not in governed:
+                  raise SystemExit(f"governed-memory snippet drifted: {old!r}")
+          governed_path.write_text(governed)
+
+          bdd_path = Path("crates/mprd-core/src/policy_algebra/bdd.rs")
+          bdd = bdd_path.read_text()
+          old = """            let deny_soft = b.apply(Op::And, not_a, not_n)?;
+                      Ok((deny_soft, n))
+          """
+          new = """            let deny_soft = b.apply(Op::And, not_a, not_n)?;
+                      // `evaluate` makes Not fail closed when any signal in its subtree is
+                      // missing. Preserve that semantics in the ROBDD instead of treating a
+                      // missing value bit as ordinary false and inverting it to allow.
+                      let mut all_present = BddId::TRUE;
+                      for atom in p.atoms() {
+                          let present = b.var(&bit_present_name(&atom, limits)?)?;
+                          all_present = b.apply(Op::And, all_present, present)?;
+                      }
+                      let allow = b.apply(Op::And, all_present, deny_soft)?;
+                      Ok((allow, n))
+          """
+          if old in bdd:
+              bdd = bdd.replace(old, new, 1)
+          elif new not in bdd:
+              raise SystemExit("ROBDD Not lowering snippet drifted")
+          bdd_path.write_text(bdd)
           PY
 
           cargo fmt --all
@@ -82,6 +106,6 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add crates/mprd-core/src .agent-ci-diagnostics/*.txt
           if ! git diff --cached --quiet; then
-            git commit -m "chore: capture governed-memory diagnostics"
+            git commit -m "fix: preserve fail-closed missing semantics in ROBDD Not"
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
