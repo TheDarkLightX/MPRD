@@ -1,260 +1,260 @@
-test tokenomics_v6::simplex_ample_set::tests::dfs_c2_decision_falsifier_sweep_small ... ok
-test tokenomics_v6::simplex_ample_set::tests::min_only_is_not_sound_on_small_instances ... ok
-test tokenomics_v6::simplex_ample_set::tests::min_plus_dependents_is_plausible_but_not_assumed_sound ... ok
-test tokenomics_v6::simplex_ample_set::tests::plan_best_linear_dfs_c2_matches_bruteforce_small ... ok
-test tokenomics_v6::simplex_ceo::tests::config_wrapper_matches_functions ... ok
-test tokenomics_v6::simplex_ceo::tests::plan_best_linear_matches_bruteforce_small ... ok
-test tokenomics_v6::simplex_ceo::tests::symmetry_mode_rejects_inconsistent_linear_weights ... ok
-test tokenomics_v6::simplex_por_oracle::tests::shared_destination_tight_cap_counterexample_matches_research ... ok
-test tokenomics_v6::simplex_por_oracle::tests::shared_source_minimal_counterexample_matches_research ... ok
-test tokenomics_v6::simplex_por_oracle::tests::shared_source_with_margin_commutes_under_oracle ... ok
-test tokenomics_v6::simplex_por_oracle::tests::stable_enabled_ineq_matches_dynamic_stable_enabledness_exhaustive_small_domain ... ok
-test tokenomics_v6::simplex_symmetry_key::tests::symmetry_key_groups_and_sorts_deterministically ... ok
-test tokenomics_v6::simplex_symmetry_key::tests::symmetry_key_rejects_bad_shapes ... ok
-test tokenomics_v6::types::tests::action_id_noop_is_center_of_encoding ... ok
-test tokenomics_v6::types::tests::apply_delta_fails_closed_on_bounds_and_cap ... ok
-test tokenomics_v6::types::tests::auctionpct_bounds_and_mapping ... ok
-test tokenomics_v6::types::tests::burnpct_bounds_and_mapping ... ok
-test tokenomics_v6::types::tests::dripstep_bounds_and_mapping ... ok
-test tokenomics_v6::types::tests::menu_node_key_is_canonical ... ok
-test tokenomics_v6::types::tests::validsplit_enforces_split_cap ... ok
-test validation::tests::candidate_preimage_roundtrips ... ok
-test validation::tests::decode_candidate_preimage_never_panics ... ok
-test validation::tests::validate_action_schema_accepts_basic_http_call ... ok
-test validation::tests::validate_action_schema_rejects_http_call_userinfo_and_fragment ... ok
-test validation::tests::validate_action_schema_rejects_unknown_param_key ... ok
-test validation::tests::validate_state_snapshot_rejects_too_many_fields ... ok
-test verified_kernels::artifact_commit_consistency_gate::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::artifact_commit_consistency_gate::tests::tests::test_accept_from_init ... ok
-test verified_kernels::artifact_commit_consistency_gate::tests::tests::test_checkpoint_fails_from_init ... ok
-test verified_kernels::artifact_commit_consistency_gate::tests::tests::test_mst_fails_from_init ... ok
-test verified_kernels::artifact_commit_consistency_gate::tests::tests::test_reject_from_init ... ok
-test verified_kernels::artifact_commit_consistency_gate::tests::tests::test_require_checkpoint_from_init ... ok
-test verified_kernels::artifact_commit_consistency_gate::tests::tests::test_sig_fails_from_init ... ok
-test verified_kernels::autopilot_controller::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::autopilot_controller::tests::tests::test_add_critical_from_init ... ok
-test verified_kernels::autopilot_controller::tests::tests::test_auto_degrade_from_init ... ok
-test verified_kernels::autopilot_controller::tests::tests::test_configure_anchors_from_init ... ok
-test verified_kernels::autopilot_controller::tests::tests::test_go_assisted_from_init ... ok
-test verified_kernels::autopilot_controller::tests::tests::test_go_autopilot_from_init ... ok
-test verified_kernels::autopilot_controller::tests::tests::test_go_off_from_init ... ok
-test verified_kernels::autopilot_controller::tests::tests::test_human_ack_from_init ... ok
-test verified_kernels::autopilot_controller::tests::tests::test_resolve_critical_from_init ... ok
-test verified_kernels::autopilot_controller::tests::tests::test_tick_hour_from_init ... ok
-test verified_kernels::autopilot_controller::tests::tests::test_update_failure_rate_from_init ... ok
-test verified_kernels::bcr_staking::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::bcr_staking::tests::tests::test_bond_from_init ... ok
-test verified_kernels::bcr_staking::tests::tests::test_finalize_unbond_from_init ... ok
-test verified_kernels::bcr_staking::tests::tests::test_slash_from_init ... ok
-test verified_kernels::bcr_staking::tests::tests::test_unbond_from_init ... ok
-test verified_kernels::decision_token_anti_replay_race::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::decision_token_anti_replay_race::tests::tests::test_a_claim_from_init ... ok
-test verified_kernels::decision_token_anti_replay_race::tests::tests::test_a_execute_from_init ... ok
-test verified_kernels::decision_token_anti_replay_race::tests::tests::test_a_reject_from_init ... ok
-test verified_kernels::decision_token_anti_replay_race::tests::tests::test_a_start_validate_from_init ... ok
-test verified_kernels::decision_token_anti_replay_race::tests::tests::test_b_claim_from_init ... ok
-test verified_kernels::decision_token_anti_replay_race::tests::tests::test_b_execute_from_init ... ok
-test verified_kernels::decision_token_anti_replay_race::tests::tests::test_b_reject_from_init ... ok
-test verified_kernels::decision_token_anti_replay_race::tests::tests::test_b_start_validate_from_init ... ok
-test verified_kernels::decision_token_timestamp_freshness::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::decision_token_timestamp_freshness::tests::tests::test_reject_from_init ... ok
-test verified_kernels::decision_token_timestamp_freshness::tests::tests::test_token_expires_from_init ... ok
-test verified_kernels::decision_token_timestamp_freshness::tests::tests::test_token_future_from_init ... ok
-test verified_kernels::decision_token_timestamp_freshness::tests::tests::test_validate_fresh_from_init ... ok
-test verified_kernels::drip_payroll::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::drip_payroll::tests::tests::test_approve_from_init ... ok
-test verified_kernels::drip_payroll::tests::tests::test_finalize_epoch_from_init ... ok
-test verified_kernels::drip_payroll::tests::tests::test_pay_recipient_from_init ... ok
-test verified_kernels::executor_action_preimage_binding::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::executor_action_preimage_binding::tests::tests::test_execute_from_init ... ok
-test verified_kernels::executor_action_preimage_binding::tests::tests::test_hash_mismatch_from_init ... ok
-test verified_kernels::executor_action_preimage_binding::tests::tests::test_limits_binding_fail_from_init ... ok
-test verified_kernels::executor_action_preimage_binding::tests::tests::test_preimage_missing_from_init ... ok
-test verified_kernels::executor_action_preimage_binding::tests::tests::test_reject_from_init ... ok
-test verified_kernels::executor_action_preimage_binding::tests::tests::test_schema_invalid_from_init ... ok
-test verified_kernels::executor_circuit_breaker::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::executor_circuit_breaker::tests::tests::test_manual_reset_from_init ... ok
-test verified_kernels::executor_circuit_breaker::tests::tests::test_record_failure_from_init ... ok
-test verified_kernels::executor_circuit_breaker::tests::tests::test_record_success_from_init ... ok
-test verified_kernels::executor_circuit_breaker::tests::tests::test_tick_from_init ... ok
-test verified_kernels::executor_circuit_breaker::tests::tests::test_try_half_open_from_init ... ok
-test verified_kernels::fee_distribution::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::fee_distribution::tests::tests::test_burn_from_init ... ok
-test verified_kernels::fee_distribution::tests::tests::test_collect_from_init ... ok
-test verified_kernels::fee_distribution::tests::tests::test_distribute_from_init ... ok
-test verified_kernels::fee_distribution::tests::tests::test_finalize_from_init ... ok
-test verified_kernels::mprd_difficulty_adjustment::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::mprd_difficulty_adjustment::tests::tests::test_adjust_down_from_init ... ok
-test verified_kernels::mprd_difficulty_adjustment::tests::tests::test_adjust_up_from_init ... ok
-test verified_kernels::mprd_difficulty_adjustment::tests::tests::test_end_window_from_init ... ok
-test verified_kernels::mprd_difficulty_adjustment::tests::tests::test_submit_block_from_init ... ok
-test verified_kernels::mprd_emission_schedule::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::mprd_emission_schedule::tests::tests::test_advance_epoch_from_init ... ok
-test verified_kernels::mprd_emission_schedule::tests::tests::test_emit_tokens_from_init ... ok
-test verified_kernels::mprd_emission_schedule::tests::tests::test_halve_rate_from_init ... ok
-test verified_kernels::mprd_operator_mining_round::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::mprd_operator_mining_round::tests::tests::test_close_round_from_init ... ok
-test verified_kernels::mprd_operator_mining_round::tests::tests::test_complete_payments_from_init ... ok
-test verified_kernels::mprd_operator_mining_round::tests::tests::test_file_dispute_from_init ... ok
-test verified_kernels::mprd_operator_mining_round::tests::tests::test_finalize_from_init ... ok
-test verified_kernels::mprd_operator_mining_round::tests::tests::test_pay_miner_from_init ... ok
-test verified_kernels::mprd_operator_mining_round::tests::tests::test_run_proof_check_from_init ... ok
-test verified_kernels::mprd_operator_mining_round::tests::tests::test_run_spec_check_from_init ... ok
-test verified_kernels::mprd_operator_mining_round::tests::tests::test_submit_from_init ... ok
-test verified_kernels::mprd_proof_market_slot::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::mprd_proof_market_slot::tests::tests::test_commit_from_init ... ok
-test verified_kernels::mprd_proof_market_slot::tests::tests::test_expire_from_init ... ok
-test verified_kernels::mprd_proof_market_slot::tests::tests::test_settle_from_init ... ok
-test verified_kernels::mprd_proof_market_slot::tests::tests::test_slash_from_init ... ok
-test verified_kernels::mprd_proof_market_slot::tests::tests::test_start_proving_from_init ... ok
-test verified_kernels::mprd_proof_market_slot::tests::tests::test_tick_from_init ... ok
-test verified_kernels::mprd_reward_pool::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::mprd_reward_pool::tests::tests::test_add_to_pool_from_init ... ok
-test verified_kernels::mprd_reward_pool::tests::tests::test_finalize_from_init ... ok
-test verified_kernels::mprd_reward_pool::tests::tests::test_pay_recipient_from_init ... ok
-test verified_kernels::mprd_reward_pool::tests::tests::test_start_distribution_from_init ... ok
-test verified_kernels::mprd_v6_auction_escrow_carry::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::mprd_v6_auction_escrow_carry::tests::tests::test_reveal_bid1_from_init ... ok
-test verified_kernels::mprd_v6_auction_escrow_carry::tests::tests::test_reveal_bid2_from_init ... ok
-test verified_kernels::mprd_v6_auction_escrow_carry::tests::tests::test_settle_from_init ... ok
-test verified_kernels::mprd_v6_fee_lanes_bcr_caps::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::mprd_v6_fee_lanes_bcr_caps::tests::tests::test_apply_tx_from_init ... ok
-test verified_kernels::mprd_v6_stake_penalty_shares::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::mprd_v6_stake_penalty_shares::tests::tests::test_stake_end_from_init ... ok
-test verified_kernels::mprd_v6_stake_penalty_shares::tests::tests::test_stake_start_from_init ... ok
-test verified_kernels::mprd_work_submission::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::mprd_work_submission::tests::tests::test_file_dispute_from_init ... ok
-test verified_kernels::mprd_work_submission::tests::tests::test_reject_from_init ... ok
-test verified_kernels::mprd_work_submission::tests::tests::test_reward_from_init ... ok
-test verified_kernels::mprd_work_submission::tests::tests::test_run_proof_check_from_init ... ok
-test verified_kernels::mprd_work_submission::tests::tests::test_run_spec_check_from_init ... ok
-test verified_kernels::mprd_work_submission::tests::tests::test_submit_work_from_init ... ok
-test verified_kernels::mprd_work_verification::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::mprd_work_verification::tests::tests::test_file_dispute_from_init ... ok
-test verified_kernels::mprd_work_verification::tests::tests::test_reject_from_init ... ok
-test verified_kernels::mprd_work_verification::tests::tests::test_reward_from_init ... ok
-test verified_kernels::mprd_work_verification::tests::tests::test_run_proof_check_from_init ... ok
-test verified_kernels::mprd_work_verification::tests::tests::test_run_spec_check_from_init ... ok
-test verified_kernels::mprd_work_verification::tests::tests::test_submit_work_from_init ... ok
-test verified_kernels::nonce_manager_lifecycle::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::nonce_manager_lifecycle::tests::tests::test_advance_window_from_init ... ok
-test verified_kernels::nonce_manager_lifecycle::tests::tests::test_consume_nonce_from_init ... ok
-test verified_kernels::nonce_manager_lifecycle::tests::tests::test_set_window_size_from_init ... ok
-test verified_kernels::nonce_manager_lifecycle::tests::tests::test_tick_time_from_init ... ok
-test verified_kernels::opi_oracle_round::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::opi_oracle_round::tests::tests::test_aggregate_from_init ... ok
-test verified_kernels::opi_oracle_round::tests::tests::test_commit_from_init ... ok
-test verified_kernels::opi_oracle_round::tests::tests::test_finalize_from_init ... ok
-test verified_kernels::opi_oracle_round::tests::tests::test_reveal_from_init ... ok
-test verified_kernels::optimistic_relay_claim::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::optimistic_relay_claim::tests::tests::test_challenge_from_init ... ok
-test verified_kernels::optimistic_relay_claim::tests::tests::test_commit_from_init ... ok
-test verified_kernels::optimistic_relay_claim::tests::tests::test_finalize_from_init ... ok
-test verified_kernels::optimistic_relay_claim::tests::tests::test_resolve_from_init ... ok
-test verified_kernels::optimistic_relay_claim::tests::tests::test_slash_from_init ... ok
-test verified_kernels::policy_algebra_operators::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::policy_algebra_operators::tests::tests::test_eval_and_from_init ... ok
-test verified_kernels::policy_algebra_operators::tests::tests::test_eval_not_from_init ... ok
-test verified_kernels::policy_algebra_operators::tests::tests::test_eval_or_from_init ... ok
-test verified_kernels::policy_algebra_operators::tests::tests::test_pop_composite_from_init ... ok
-test verified_kernels::policy_algebra_operators::tests::tests::test_push_composite_from_init ... ok
-test verified_kernels::policy_algebra_operators::tests::tests::test_reset_session_from_init ... ok
-test verified_kernels::policy_registry_gate::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::policy_registry_gate::tests::tests::test_advance_epoch_from_init ... ok
-test verified_kernels::policy_registry_gate::tests::tests::test_freeze_from_init ... ok
-test verified_kernels::policy_registry_gate::tests::tests::test_register_policy_from_init ... ok
-test verified_kernels::rate_limited_withdrawals::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::rate_limited_withdrawals::tests::tests::test_deposit_from_init ... ok
-test verified_kernels::rate_limited_withdrawals::tests::tests::test_emergency_halt_from_init ... ok
-test verified_kernels::rate_limited_withdrawals::tests::tests::test_lift_halt_from_init ... ok
-test verified_kernels::rate_limited_withdrawals::tests::tests::test_new_epoch_from_init ... ok
-test verified_kernels::rate_limited_withdrawals::tests::tests::test_pause_from_init ... ok
-test verified_kernels::rate_limited_withdrawals::tests::tests::test_resume_from_init ... ok
-test verified_kernels::rate_limited_withdrawals::tests::tests::test_tick_hour_from_init ... ok
-test verified_kernels::rate_limited_withdrawals::tests::tests::test_withdraw_from_init ... ok
-test verified_kernels::reserve_management::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::reserve_management::tests::tests::test_deposit_from_init ... ok
-test verified_kernels::reserve_management::tests::tests::test_enter_emergency_from_init ... ok
-test verified_kernels::reserve_management::tests::tests::test_exit_emergency_from_init ... ok
-test verified_kernels::reserve_management::tests::tests::test_update_coverage_from_init ... ok
-test verified_kernels::reserve_management::tests::tests::test_withdraw_from_init ... ok
-test verified_kernels::reverse_auction::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::reverse_auction::tests::tests::test_place_bid_from_init ... ok
-test verified_kernels::reverse_auction::tests::tests::test_seal_from_init ... ok
-test verified_kernels::reverse_auction::tests::tests::test_settle_from_init ... ok
-test verified_kernels::selector_canonical_tiebreak::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::selector_canonical_tiebreak::tests::tests::test_select_by_score_from_init ... ok
-test verified_kernels::selector_canonical_tiebreak::tests::tests::test_select_canonical_from_init ... ok
-test verified_kernels::selector_canonical_tiebreak::tests::tests::test_setup_a_wins_score_from_init ... ok
-test verified_kernels::selector_canonical_tiebreak::tests::tests::test_setup_b_wins_score_from_init ... ok
-test verified_kernels::selector_canonical_tiebreak::tests::tests::test_setup_tie_a_canonical_from_init ... ok
-test verified_kernels::selector_canonical_tiebreak::tests::tests::test_setup_tie_b_canonical_from_init ... ok
-test verified_kernels::selector_fail_closed_required_limits::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::selector_fail_closed_required_limits::tests::tests::test_limits_invalid_from_init ... ok
-test verified_kernels::selector_fail_closed_required_limits::tests::tests::test_limits_missing_from_init ... ok
-test verified_kernels::selector_fail_closed_required_limits::tests::tests::test_none_allowed_from_init ... ok
-test verified_kernels::selector_fail_closed_required_limits::tests::tests::test_receive_allowed_from_init ... ok
-test verified_kernels::selector_fail_closed_required_limits::tests::tests::test_select_from_init ... ok
-test verified_kernels::slashing_escrow::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::slashing_escrow::tests::tests::test_challenge_from_init ... ok
-test verified_kernels::slashing_escrow::tests::tests::test_lock_from_init ... ok
-test verified_kernels::slashing_escrow::tests::tests::test_release_from_init ... ok
-test verified_kernels::slashing_escrow::tests::tests::test_slash_from_init ... ok
-test verified_kernels::slashing_escrow::tests::tests::test_submit_evidence_from_init ... ok
-test verified_kernels::tau_attestation_replay_guard::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::tau_attestation_replay_guard::tests::tests::test_accept_from_init ... ok
-test verified_kernels::tau_attestation_replay_guard::tests::tests::test_chain_breaks_from_init ... ok
-test verified_kernels::tau_attestation_replay_guard::tests::tests::test_receive_stale_from_init ... ok
-test verified_kernels::tau_attestation_replay_guard::tests::tests::test_reject_from_init ... ok
-test verified_kernels::tokenomics_ceo_menu::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::tokenomics_ceo_menu::tests::tests::test_step_auction_down_from_init ... ok
-test verified_kernels::tokenomics_ceo_menu::tests::tests::test_step_auction_up_from_init ... ok
-test verified_kernels::tokenomics_ceo_menu::tests::tests::test_step_burn_down_from_init ... ok
-test verified_kernels::tokenomics_ceo_menu::tests::tests::test_step_burn_up_from_init ... ok
-test verified_kernels::tokenomics_ceo_menu::tests::tests::test_step_drip_down_from_init ... ok
-test verified_kernels::tokenomics_ceo_menu::tests::tests::test_step_drip_up_from_init ... ok
-test verified_kernels::ui_mode_adaptive_gates::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::ui_mode_adaptive_gates::tests::tests::test_configure_anchors_from_init ... ok
-test verified_kernels::ui_mode_adaptive_gates::tests::tests::test_go_local_from_init ... ok
-test verified_kernels::ui_mode_adaptive_gates::tests::tests::test_go_private_from_init ... ok
-test verified_kernels::ui_mode_adaptive_gates::tests::tests::test_go_trustless_from_init ... ok
-test verified_kernels::ui_trust_anchor_fingerprints_only::tests::tests::init_satisfies_invariants ... ok
-test verified_kernels::ui_trust_anchor_fingerprints_only::tests::tests::test_attempt_raw_display_from_init ... ok
-test verified_kernels::ui_trust_anchor_fingerprints_only::tests::tests::test_clear_key_from_init ... ok
-test verified_kernels::ui_trust_anchor_fingerprints_only::tests::tests::test_display_fingerprint_from_init ... ok
-test verified_kernels::ui_trust_anchor_fingerprints_only::tests::tests::test_hide_display_from_init ... ok
-test verified_kernels::ui_trust_anchor_fingerprints_only::tests::tests::test_load_key_from_init ... ok
-test wire::tests::bounded_accepts_within_limit_legacy ... ok
-test wire::tests::bounded_handles_u64_max_gracefully ... ok
-test wire::tests::bounded_never_panics_on_arbitrary_bytes ... ok
-test wire::tests::bounded_rejects_oversized_enveloped ... ok
-test wire::tests::bounded_rejects_oversized_legacy ... ok
-test wire::tests::bounded_with_zero_limit_rejects_nonempty ... ok
-test wire::tests::parse_never_panics_on_small_inputs ... ok
-test wire::tests::parse_or_legacy_accepts_legacy ... ok
-test wire::tests::parse_or_legacy_rejects_kind_mismatch ... ok
-test wire::tests::peek_header_matches_parse_header ... ok
-test wire::tests::rejects_digest_mismatch ... ok
-test wire::tests::roundtrip_wrap_parse_v1 ... ok
-test wire::tests::wrap_parse_roundtrips ... ok
-test state_provenance::tests::quorum_threshold_is_exact ... ok
-test artifact_repo::chain::tests::verify_commit_chain_accepts_valid_chains ... ok
-test tokenomics_v6::safety_controller::tests::compute_action_always_returns_graph_edge ... ok
+test modes_v2::tests::robust_mpb_verifier_accepts_valid_proof ... ok
+test modes_v2::tests::robust_mpb_verifier_rejects_missing_artifact ... ok
+test mpb_lite::tests::peek_artifact_version_reads_bincode_tag_for_v2 ... ok
+test mpb_lite::tests::peek_artifact_version_reads_bincode_tag_for_v3 ... ok
+test policy_artifacts::tests::mpb_policy_artifact_decode_rejects_trailing_bytes ... ok
+test policy_artifacts::tests::mpb_policy_artifact_decode_rejects_unsorted_bindings ... ok
+test policy_artifacts::tests::mpb_policy_artifact_decode_roundtrips_basic_fields ... ok
+test policy_fetch::artifact_repo_store_tests::artifact_repo_policy_store_roundtrip ... ok
+test manifest::tests::manifest_roundtrip_sign_and_verify ... ok
+test policy_fetch::tests::registry_bound_mpb_provider_decodes_and_verifies_hash ... ok
+test privacy::tests::canonical_state_serialization_ignores_map_insertion_order ... ok
+test policy_fetch::tests::registry_bound_mpb_provider_returns_none_for_unauthorized_policy ... ok
+test privacy::tests::commitment_hiding_and_binding ... ok
+test privacy::tests::deterministic_commitment ... ok
+test privacy::tests::different_encryptions_have_different_nonces ... ok
+test privacy::tests::encryption_fails_without_master_key ... ok
+test privacy::tests::mode_c_disclosure_binding_hash_covers_revealed_fields_and_commitments ... ok
+test privacy::tests::pedersen_commitment_roundtrips_and_is_binding ... ok
+test privacy::tests::selective_disclosure_builder ... ok
+test privacy::tests::state_encryption_roundtrip ... ok
+test registry_state::tests::policy_authorization_provider_fails_closed_on_epoch_mismatch ... ok
+test bounded_deser::tests::mpb_artifact_deserialize_classifies_enveloped_oversize_payload_as_input_too_large ... ok
+test registry_state::tests::policy_authorization_provider_requires_policy_source_mapping_by_default ... ok
+test registry_state::tests::policy_authorization_provider_resolves_authorized_policy ... ok
+test registry_state::tests::quorum_signed_registry_state_fails_below_threshold ... ok
+test registry_state::tests::quorum_signed_registry_state_2_of_3 ... ok
+test registry_state::tests::quorum_signed_registry_state_ignores_untrusted_signers ... ok
+test registry_state::tests::quorum_signed_registry_state_prevents_double_counting ... ok
+test registry_state::tests::registry_authorization_attestation_metadata_rejects_image_id_drift ... ok
+test registry_state::tests::registry_authorization_attestation_metadata_rejects_incomplete_source_mapping ... ok
+test registry_state::tests::registry_authorization_attestation_metadata_rejects_partial_required_fields ... ok
+test registry_state::tests::registry_authorization_attestation_metadata_rejects_resolution_hash_drift ... ok
+test registry_state::tests::registry_authorization_attestation_metadata_returns_none_when_absent ... ok
+test registry_state::tests::registry_authorization_attestation_metadata_round_trips ... ok
+test external_verifier::tests::external_verifier_rejects_oversize_enveloped_proof_data_fail_closed ... ok
+test registry_state::tests::registry_checkpoint_attestation_metadata_rejects_drift ... ok
+test registry_state::tests::registry_checkpoint_attestation_metadata_round_trips ... ok
+test registry_state::tests::registry_bound_verifier_can_require_policy_source_mapping ... ok
+test registry_state::tests::signed_registry_bridge_metadata_packet_rejects_checkpoint_without_registry_auth ... ok
+test registry_state::tests::signed_registry_bridge_metadata_packet_round_trips ... ok
+test registry_state::tests::signed_registry_state_rejects_unsorted_policies ... ok
+test registry_state::tests::signed_registry_state_roundtrip_sign_and_verify ... ok
+test registry_state::tests::weighted_quorum_registry_state_fails_below_required_weight ... ok
+test registry_state::tests::weighted_quorum_registry_state_ignores_untrusted_signers ... ok
+test registry_state::tests::weighted_quorum_registry_state_meets_required_weight ... ok
+test risc0_host::tests::attest_with_verdict_fails_closed_when_methods_not_embedded ... ok
+test risc0_host::tests::decoded_journal_metamorphic_mutations_fail_closed ... ok
+test risc0_host::tests::guest_input_uses_actual_verdict ... ok
+test risc0_host::tests::guest_input_validation_rejects_out_of_bounds ... ok
+test risc0_host::tests::mpb_attestor_fails_closed_on_policy_substitution ... ok
+test risc0_host::tests::sha256_is_deterministic ... ok
+test security::tests::binding_check_fails_when_mismatched ... ok
+test security::tests::binding_check_passes_when_matching ... ok
+test security::tests::binding_commitment_is_deterministic ... ok
+test security::tests::permissive_mode_warns_but_continues ... ok
+test security::tests::validate_decision_allowed_rejects_denied ... ok
+test tests::attestor_returns_explicit_error ... ok
+test tests::execute_verified_from_signed_registry_and_governance_fails_closed_before_executor_on_execution_auth_hash_drift ... ok
+test tests::execute_verified_from_signed_registry_and_governance_threads_ready_authorization ... ok
+test tests::prepare_execution_ready_from_registry_and_governance_rejects_execution_auth_hash_drift ... ok
+test tests::prepare_execution_ready_from_registry_and_governance_rejects_gate_input_drift ... ok
+test tests::prepare_execution_ready_from_registry_and_governance_rejects_registry_checkpoint_drift ... ok
+test privacy::tests::canonical_state_serialization_is_order_invariant ... ok
+test tests::prepare_execution_ready_from_registry_and_governance_rejects_registry_metadata_drift ... ok
+test tests::prepare_execution_ready_from_registry_and_governance_rejects_resolution_hash_drift ... ok
+test tests::prepare_execution_ready_from_registry_and_governance_rejects_unexpected_checkpoint_metadata_on_generic_path ... ok
+test tests::registry_bound_mpb_attestor_factory_requires_policy_source_mapping_by_default ... ok
+test tests::prepare_execution_ready_from_signed_registry_and_governance_accepts_aligned_inputs ... ok
+test tests::registry_bound_tau_compiled_attestor_factory_requires_policy_source_mapping_by_default ... ok
+test tests::registry_governance_execution_authorization_packet_matches_ready_bridge ... ok
+test tests::registry_governance_execution_authorization_packet_rejects_gate_input_drift ... ok
+test tests::signed_registry_execution_metadata_packet_from_ready_matches_metadata_packet ... ok
+test tests::signed_registry_execution_metadata_packet_from_registry_and_governance_matches_ready_bridge ... ok
+test tests::signed_registry_execution_metadata_packet_from_registry_and_governance_rejects_gate_input_drift ... ok
+test tests::signed_registry_execution_refinement_packet_from_ready_matches_component_packets ... ok
+test tests::signed_registry_execution_refinement_packet_from_ready_rejects_binding_drift ... ok
+test tests::verified_repo_commit_mpb_pair_factory_preserves_policy_ref ... ok
+test tests::verifier_always_fails_in_stub_mode ... ok
+test tests::verified_repo_commit_tau_pair_factory_preserves_policy_ref ... ok
+test registry_state::tests::sign_then_verify_roundtrip ... ok
+test registry_state::tests::quorum_threshold_is_exact ... ok
 
-failures:
+test result: ok. 159 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.39s
 
----- policy_algebra::bdd::tests::semantic_hash_collapses_tautology_even_when_structural_hash_differs stdout ----
+[1m[32m     Running[0m tests/binding_failure_pbt_tests.rs (target/debug/deps/binding_failure_pbt_tests-bcbbb1de9c14d7f0)
 
-thread 'policy_algebra::bdd::tests::semantic_hash_collapses_tautology_even_when_structural_hash_differs' panicked at crates/mprd-core/src/policy_algebra/bdd.rs:1036:9:
-assertion `left == right` failed
-  left: PolicySemanticHash(Hash32([53, 22, 159, 52, 81, 141, 234, 76, 181, 5, 185, 140, 196, 154, 247, 224, 160, 220, 187, 5, 134, 95, 207, 252, 63, 154, 93, 126, 187, 189, 146, 220]))
- right: PolicySemanticHash(Hash32([153, 0, 194, 59, 204, 97, 114, 222, 60, 127, 165, 167, 164, 228, 187, 24, 163, 31, 168, 109, 106, 154, 97, 157, 190, 41, 236, 23, 209, 209, 255, 73]))
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+running 1 test
+test tampering_any_bound_field_fails_closed_b_full ... ok
 
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-failures:
-    policy_algebra::bdd::tests::semantic_hash_collapses_tautology_even_when_structural_hash_differs
+[1m[32m     Running[0m tests/execution_guard_acceptance_tests.rs (target/debug/deps/execution_guard_acceptance_tests-4932899eb38b7164)
 
-test result: FAILED. 686 passed; 1 failed; 3 ignored; 0 measured; 0 filtered out; finished in 39.22s
+running 4 tests
+test b_full_executor_does_not_run_on_verification_failure ... ok
+test mode_a_executor_does_not_run_when_verifier_fails ... ok
+test mode_c_executor_does_not_run_on_verification_failure ... ok
+test b_lite_executor_does_not_run_on_verification_failure ... ok
 
-[1m[31merror[0m[1m:[0m test failed, to rerun pass `-p mprd-core --lib`
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m     Running[0m tests/external_verifier_gates_tests.rs (target/debug/deps/external_verifier_gates_tests-2a0c6a786e783ab7)
+
+running 8 tests
+test request_json_denies_unknown_fields ... ok
+test private_mode_enforces_encryption_metadata_and_key_binding ... ok
+test trustless_full_fails_closed_on_empty_receipt ... ok
+test trustless_full_rejects_all_zero_image_id ... ok
+test trustless_full_requires_image_id_before_parsing_untrusted_receipt_bytes ... ok
+test trustless_lite_requires_mode_marker_and_fails_closed_without_required_metadata ... ok
+test with_verified_manifest_rejects_invalid_signature ... ok
+test verifier_never_panics_on_small_untrusted_inputs ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+[1m[32m     Running[0m tests/mode_integration_tests.rs (target/debug/deps/mode_integration_tests-7259b595e802aa79)
+
+running 10 tests
+test factory_creates_correct_verifiers ... ok
+test factory_creates_correct_attestors ... ok
+test mode_a_local_trusted_flow ... ok
+test mode_b_full_external_verifier_requires_image_id ... ok
+test mode_b_full_requires_risc0 ... ok
+test mode_b_lite_external_verification ... ok
+test mode_c_private_attestor_builds_with_master_key ... ok
+test mode_c_private_attestor_requires_master_key ... ok
+test mode_config_serialization ... ok
+test mode_b_lite_attestation_flow ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m     Running[0m tests/robust_mode_tests.rs (target/debug/deps/robust_mode_tests-17999caa6f719139)
+
+running 24 tests
+test binding_commitment_is_deterministic ... ok
+test factory_validates_before_creating ... ok
+test full_pipeline_with_robust_b_lite ... ok
+test mode_b_full_requires_image_id ... ok
+test mode_b_lite_requires_minimum_spot_checks ... ok
+test mode_c_requires_encryption_key ... ok
+test mode_properties ... ok
+test mpb_v1_invalid_bytecode_denies_without_executor_side_effects ... ok
+test mpb_v1_out_of_fuel_denies_without_executor_side_effects ... ok
+test production_verifier_rejects_signed_registry_checkpoint_hash_drift ... ok
+test registry_bound_verifier_rejects_unauthorized_policy_hash ... ok
+test registry_bound_verifier_rejects_wrong_image_id_routing ... ok
+test robust_mpb_attestor_generates_binding_commitment ... ok
+test robust_private_attestor_emits_mode_c_metadata ... ok
+test robust_mpb_verifier_rejects_tampered_binding ... ok
+test robust_mpb_verifier_validates_binding_commitment ... ok
+test robust_private_verifier_rejects_tampered_encrypted_state ... ok
+test robust_private_verifier_rejects_tampered_revealed_fields ... ok
+test robust_risc0_attestor_reports_availability ... ok
+test full_pipeline_with_robust_b_full ... ok
+test robust_risc0_verifier_requires_receipt ... ok
+test security_checker_enforces_s5_binding ... ok
+test security_checker_rejects_zero_hashes ... ok
+test verifier_rejects_exec_kind_mismatch_even_with_valid_receipt ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m     Running[0m tests/tau_interpreter_output_tests.rs (target/debug/deps/tau_interpreter_output_tests-0b71e9bcdacc317a)
+
+running 11 tests
+test decision_tool_emergency_pause_override_truth_table_matches_expected ... ok
+test decision_tool_quorum_abstention_2_of_3_present_truth_table_matches_expected ... ok
+test decision_tool_proposal_sequencing_gate_truth_table_matches_expected ... ok
+test decision_tool_supermajority_2_of_3_truth_table_matches_expected ... ok
+test governance_gate_rust_vs_tau_cross_verification ... ok
+test mprd_governance_gate_truth_table_matches_expected ... ok
+test mprd_risk_threshold_policy_bv16_grid_matches_expected ... ok
+test mprd_risk_threshold_policy_truth_table_matches_expected ... ok
+test mprd_committee_decision_matrix_2_of_3_with_veto_truth_table_matches_expected ... ok
+test tokenomics_v6_action_gate_examples_match_expected ... ok
+test tau_testnet_genesis_step0_outputs_are_deterministic ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m   Doc-tests[0m mprd_adapters
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m   Doc-tests[0m mprd_asde
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m   Doc-tests[0m mprd_core
+
+running 3 tests
+test crates/mprd-core/src/artifact_repo/mod.rs - artifact_repo (line 31) ... ignored
+test crates/mprd-core/src/config.rs - config (line 14) ... ignored
+test crates/mprd-core/src/metrics.rs - metrics (line 11) ... ignored
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m   Doc-tests[0m mprd_generators
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m   Doc-tests[0m mprd_krr
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m   Doc-tests[0m mprd_models_market
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m   Doc-tests[0m mprd_mpb
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m   Doc-tests[0m mprd_proof
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m   Doc-tests[0m mprd_risc0_methods
+
+running 2 tests
+test methods/src/lib.rs - (line 12) ... ignored
+test methods/src/lib.rs - (line 24) ... ignored
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m   Doc-tests[0m mprd_risc0_shared
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m   Doc-tests[0m mprd_services
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[32m   Doc-tests[0m mprd_zk
+
+running 5 tests
+test crates/mprd-zk/src/bounded_deser.rs - bounded_deser (line 11) ... ignored
+test crates/mprd-zk/src/external_verifier.rs - external_verifier (line 12) ... ignored
+test crates/mprd-zk/src/lib.rs - (line 12) ... ignored
+test crates/mprd-zk/src/modes.rs - modes (line 14) ... ignored
+test crates/mprd-zk/src/risc0_host.rs - risc0_host::Risc0Attestor (line 103) ... ignored
+
+test result: ok. 0 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
