@@ -1,0 +1,59 @@
+name: Agent diagnose governed memory
+
+on:
+  push:
+    branches:
+      - agent/governed-memory-mutations
+    paths-ignore:
+      - .agent-ci-diagnostics/**
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Format and capture bounded diagnostics
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p .agent-ci-diagnostics
+
+          cargo fmt --all
+
+          set +e
+          cargo test --workspace \
+            > .agent-ci-diagnostics/workspace-test.full.log 2>&1
+          test_status=$?
+          cargo clippy --workspace --all-targets -- -D warnings \
+            > .agent-ci-diagnostics/workspace-clippy.full.log 2>&1
+          clippy_status=$?
+          set -e
+
+          tail -n 260 .agent-ci-diagnostics/workspace-test.full.log \
+            > .agent-ci-diagnostics/workspace-test.log
+          tail -n 260 .agent-ci-diagnostics/workspace-clippy.full.log \
+            > .agent-ci-diagnostics/workspace-clippy.log
+          rm .agent-ci-diagnostics/*.full.log
+
+          printf 'workspace_test=%s\nworkspace_clippy=%s\n' \
+            "$test_status" "$clippy_status" \
+            > .agent-ci-diagnostics/status.txt
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add crates/mprd-core/src .agent-ci-diagnostics
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: capture governed-memory diagnostics"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
