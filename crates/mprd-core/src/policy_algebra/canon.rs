@@ -155,7 +155,10 @@ fn canonicalize_inner(
             // Constant short-circuit is only safe when there is no veto (`DenyIf`) anywhere
             // in the subtree. Otherwise we would erase veto guards, changing DenyVeto vs DenySoft.
             let has_deny_if = flat.iter().any(|c| c.contains_deny_if());
-            if !preserve_atoms && !has_deny_if && flat.iter().any(|c| matches!(c, PolicyExpr::False)) {
+            if !preserve_atoms
+                && !has_deny_if
+                && flat.iter().any(|c| matches!(c, PolicyExpr::False))
+            {
                 return Ok(PolicyExpr::False);
             }
             // Boolean contradiction elimination: x ∧ ¬x = False (safe only when no DenyIf is present anywhere).
@@ -234,7 +237,10 @@ fn canonicalize_inner(
             // no veto (`DenyIf`) anywhere in the subtree. Otherwise `DenyIf` must be preserved
             // as an absorbing deny guard.
             let has_deny_if = flat.iter().any(|c| c.contains_deny_if());
-            if !preserve_atoms && !has_deny_if && flat.iter().any(|c| matches!(c, PolicyExpr::True)) {
+            if !preserve_atoms
+                && !has_deny_if
+                && flat.iter().any(|c| matches!(c, PolicyExpr::True))
+            {
                 return Ok(PolicyExpr::True);
             }
             // Do not rewrite x ∨ ¬x to True. Under MPRD's fail-closed semantics,
