@@ -1083,12 +1083,15 @@ mod tests {
         let a = PolicyExpr::atom("a", limits).unwrap();
         let not_a = PolicyExpr::not(a.clone());
         let expr = PolicyExpr::any(vec![a, not_a], limits).unwrap();
-        let canon = crate::policy_algebra::canon::CanonicalPolicy::new(expr.clone(), limits).unwrap();
+        let canon =
+            crate::policy_algebra::canon::CanonicalPolicy::new(expr.clone(), limits).unwrap();
 
         assert_ne!(*canon.expr(), PolicyExpr::True);
 
         let ctx: BTreeMap<String, bool> = BTreeMap::new();
-        let raw_allowed = super::super::evaluate(&expr, &ctx, limits).unwrap().allowed();
+        let raw_allowed = super::super::evaluate(&expr, &ctx, limits)
+            .unwrap()
+            .allowed();
         let canon_allowed = super::super::evaluate(canon.expr(), &ctx, limits)
             .unwrap()
             .allowed();
