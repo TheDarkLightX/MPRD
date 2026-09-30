@@ -225,10 +225,9 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
             if !has_deny_if && flat.iter().any(|c| matches!(c, PolicyExpr::True)) {
                 return Ok(PolicyExpr::True);
             }
-            // Boolean tautology elimination: x ∨ ¬x = True (safe only when no DenyIf is present anywhere).
-            if !has_deny_if && has_complement_pair(&flat) {
-                return Ok(PolicyExpr::True);
-            }
+            // Do not rewrite x ∨ ¬x to True. Under MPRD's fail-closed semantics,
+            // a missing signal makes both x and ¬x deny-soft, so the classical Boolean
+            // tautology is not a policy tautology unless presence is independently guaranteed.
             // Boolean absorption: x ∨ (x ∧ y) = x (safe only when no DenyIf is present anywhere).
             if !has_deny_if {
                 flat = absorb_in_any(flat);
