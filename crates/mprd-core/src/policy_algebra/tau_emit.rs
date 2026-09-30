@@ -340,10 +340,7 @@ fn emit_expr_v2(
             // NOTE: `DenyIf` under `Not` is rejected by `validate_no_deny_if_under_not`.
             // Missing ordinary signals must still deny. Boolean negation alone would turn
             // a missing atom's false value into true, so conjunct an explicit presence guard.
-            let negated = format!(
-                "({})'",
-                emit_expr_v2(child, DenyIfValue::False, limits)?
-            );
+            let negated = format!("({})'", emit_expr_v2(child, DenyIfValue::False, limits)?);
             let present = emit_presence_guard_v2(child, limits)?;
             if present == "1:sbf" {
                 Ok(negated)
