@@ -1038,30 +1038,33 @@ mod tests {
     }
 
     #[test]
-    fn semantic_hash_collapses_tautology_even_when_structural_hash_differs() {
+    fn semantic_hash_preserves_fail_closed_presence_in_classical_tautologies() {
         let limits = lim();
         let a = PolicyExpr::atom("a", limits).unwrap();
         let b = PolicyExpr::atom("b", limits).unwrap();
-        // Boolean tautology that canonicalization does not prove (requires distributivity):
+        // Classically:
         //   (a ∧ b) ∨ (a ∧ ¬b) ∨ ¬a  ==  True
+        //
+        // MPRD intentionally differs when a referenced signal is missing: Not does not
+        // convert missing into allow. Presence is therefore part of the policy semantics.
         let a_and_b = PolicyExpr::all(vec![a.clone(), b.clone()], limits).unwrap();
         let a_and_not_b = PolicyExpr::all(vec![a.clone(), PolicyExpr::not(b)], limits).unwrap();
-        let taut = PolicyExpr::any(
+        let fail_closed_taut = PolicyExpr::any(
             vec![a_and_b, a_and_not_b, PolicyExpr::not(a.clone())],
             limits,
         )
         .unwrap();
 
-        // Structural hash differs because canonicalization does not prove *all* tautologies.
         let canon_true = CanonicalPolicy::new(PolicyExpr::True, limits).unwrap();
-        let canon_taut = CanonicalPolicy::new(taut, limits).unwrap();
-        assert_ne!(canon_true.bytes_v1(), canon_taut.bytes_v1());
-        assert_ne!(canon_true.hash_v1(), canon_taut.hash_v1());
+        let canon_expr = CanonicalPolicy::new(fail_closed_taut, limits).unwrap();
+        assert_ne!(canon_true.bytes_v1(), canon_expr.bytes_v1());
+        assert_ne!(canon_true.hash_v1(), canon_expr.hash_v1());
 
-        // Semantic hash via ROBDD must agree.
+        // The semantic hashes must also differ because the expression denies when a
+        // referenced signal is missing, whereas True always allows.
         let h_true = policy_semantic_hash_robdd_v1(canon_true.expr(), limits).unwrap();
-        let h_taut = policy_semantic_hash_robdd_v1(canon_taut.expr(), limits).unwrap();
-        assert_eq!(h_true, h_taut);
+        let h_expr = policy_semantic_hash_robdd_v1(canon_expr.expr(), limits).unwrap();
+        assert_ne!(h_true, h_expr);
     }
 
     #[test]
@@ -1075,13 +1078,22 @@ mod tests {
     }
 
     #[test]
-    fn canonicalize_eliminates_tautology_when_no_deny_if() {
+    fn canonicalize_keeps_complement_pair_fail_closed_for_missing() {
         let limits = lim();
         let a = PolicyExpr::atom("a", limits).unwrap();
         let not_a = PolicyExpr::not(a.clone());
-        let taut = PolicyExpr::any(vec![a, not_a], limits).unwrap();
-        let canon = crate::policy_algebra::canon::CanonicalPolicy::new(taut, limits).unwrap();
-        assert_eq!(*canon.expr(), PolicyExpr::True);
+        let expr = PolicyExpr::any(vec![a, not_a], limits).unwrap();
+        let canon = crate::policy_algebra::canon::CanonicalPolicy::new(expr.clone(), limits).unwrap();
+
+        assert_ne!(*canon.expr(), PolicyExpr::True);
+
+        let ctx: BTreeMap<String, bool> = BTreeMap::new();
+        let raw_allowed = super::super::evaluate(&expr, &ctx, limits).unwrap().allowed();
+        let canon_allowed = super::super::evaluate(canon.expr(), &ctx, limits)
+            .unwrap()
+            .allowed();
+        assert!(!raw_allowed);
+        assert_eq!(raw_allowed, canon_allowed);
     }
 
     #[test]
