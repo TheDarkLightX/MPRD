@@ -108,6 +108,8 @@ You use Policy Algebra to **make the rail explicit and testable**:
 
 **Key invariant:** Missing signals = deny (fail-closed). `DenyIf` vetoes can't be bypassed by short-circuiting.
 
+This is not ordinary two-valued Boolean logic over incomplete inputs. In particular, `a OR NOT a` still denies when `a` is missing; canonicalization, ROBDD compilation, and Tau emission preserve that presence-sensitive semantics.
+
 ### Operator / Infra Runner
 
 You use Policy Algebra to **run policies, not pick them**:
