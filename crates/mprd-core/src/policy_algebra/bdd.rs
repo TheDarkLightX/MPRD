@@ -202,6 +202,24 @@ enum DenyIfValue {
     False,
 }
 
+/// Compile a predicate that is true iff every signal referenced by `expr` is present.
+///
+/// `evaluate` deliberately treats a missing signal anywhere below `Not` as fail-closed,
+/// even when ordinary Boolean negation of the child would otherwise be true. Keep that
+/// provenance bit explicit when compiling the policy to a Boolean decision diagram.
+fn compile_all_present(
+    b: &mut BddBuilder,
+    expr: &PolicyExpr,
+    limits: PolicyLimits,
+) -> Result<BddId> {
+    let mut acc = BddId::TRUE;
+    for atom in expr.atoms() {
+        let present = b.var(&bit_present_name(&atom, limits)?)?;
+        acc = b.apply(Op::And, acc, present)?;
+    }
+    Ok(acc)
+}
+
 /// Compile the **main-phase** policy semantics (veto already checked) into two boolean functions:
 /// - `A(expr)`: expr evaluates to `Allow`
 /// - `N(expr)`: expr evaluates to `Neutral`
@@ -232,7 +250,14 @@ fn compile_main_allow_neutral(
             let not_a = b.apply_not(a)?;
             let not_n = b.apply_not(n)?;
             let deny_soft = b.apply(Op::And, not_a, not_n)?;
-            Ok((deny_soft, n))
+
+            // Policy evaluation is deliberately stronger than ordinary Boolean negation:
+            // if *any* signal below Not is missing, Not must remain DenySoft. Without this
+            // guard, Atom(missing) compiles to false and Boolean NOT would unsafely allow it.
+            let all_present = compile_all_present(b, p, limits)?;
+            let allow = b.apply(Op::And, deny_soft, all_present)?;
+            let neutral = b.apply(Op::And, n, all_present)?;
+            Ok((allow, neutral))
         }
         PolicyExpr::All(children) => {
             // All returns Allow iff no child is DenySoft.
@@ -328,6 +353,31 @@ fn bit_var_order(signals: &BTreeSet<PolicyAtom>, limits: PolicyLimits) -> Result
 /// veto-first, fail-closed semantics.
 #[cfg(test)]
 fn lower_to_presence_bits(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
+    fn nested_all(mut parts: Vec<PolicyExpr>, limits: PolicyLimits) -> Result<PolicyExpr> {
+        if parts.is_empty() {
+            return Ok(PolicyExpr::True);
+        }
+        if parts.len() <= limits.max_children {
+            return PolicyExpr::all(parts, limits);
+        }
+
+        let mut next = Vec::new();
+        while !parts.is_empty() {
+            let take = parts.len().min(limits.max_children);
+            let chunk = parts.drain(0..take).collect::<Vec<_>>();
+            next.push(PolicyExpr::all(chunk, limits)?);
+        }
+        nested_all(next, limits)
+    }
+
+    fn all_present_expr(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
+        let mut parts = Vec::new();
+        for atom in expr.atoms() {
+            parts.push(PolicyExpr::Atom(bit_present_name(&atom, limits)?));
+        }
+        nested_all(parts, limits)
+    }
+
     fn lower_main(
         expr: &PolicyExpr,
         deny_if_value: DenyIfValue,
@@ -347,9 +397,11 @@ fn lower_to_presence_bits(expr: &PolicyExpr, limits: PolicyLimits) -> Result<Pol
                 DenyIfValue::False => PolicyExpr::False,
             },
             PolicyExpr::Not(p) => {
-                // `DenyIf` under `Not` is rejected by outer validation. Still, force False
-                // semantics if it were present.
-                PolicyExpr::not(lower_main(p, DenyIfValue::False, limits)?)
+                // `evaluate` fails closed if any signal below Not is missing. Preserve that
+                // rule explicitly instead of relying on ordinary Boolean negation.
+                let child = lower_main(p, DenyIfValue::False, limits)?;
+                let present = all_present_expr(p, limits)?;
+                PolicyExpr::all(vec![present, PolicyExpr::not(child)], limits)?
             }
             PolicyExpr::All(children) => {
                 let mut out = Vec::with_capacity(children.len());
@@ -397,21 +449,6 @@ fn lower_to_presence_bits(expr: &PolicyExpr, limits: PolicyLimits) -> Result<Pol
         let v = PolicyExpr::Atom(bit_value_name(&a, limits)?);
         let ok = PolicyExpr::all(vec![p, PolicyExpr::not(v)], limits)?;
         conj.push(ok);
-    }
-
-    // If we ever exceed max_children, build nested conjunctions deterministically.
-    fn nested_all(mut parts: Vec<PolicyExpr>, limits: PolicyLimits) -> Result<PolicyExpr> {
-        if parts.len() <= limits.max_children {
-            return PolicyExpr::all(parts, limits);
-        }
-        // Chunk into groups of max_children and fold.
-        let mut acc: Vec<PolicyExpr> = Vec::new();
-        while !parts.is_empty() {
-            let take = parts.len().min(limits.max_children);
-            let chunk = parts.drain(0..take).collect::<Vec<_>>();
-            acc.push(PolicyExpr::all(chunk, limits)?);
-        }
-        nested_all(acc, limits)
     }
 
     nested_all(conj, limits)
@@ -1001,30 +1038,33 @@ mod tests {
     }
 
     #[test]
-    fn semantic_hash_collapses_tautology_even_when_structural_hash_differs() {
+    fn semantic_hash_preserves_fail_closed_presence_in_classical_tautologies() {
         let limits = lim();
         let a = PolicyExpr::atom("a", limits).unwrap();
         let b = PolicyExpr::atom("b", limits).unwrap();
-        // Boolean tautology that canonicalization does not prove (requires distributivity):
+        // Classically:
         //   (a ∧ b) ∨ (a ∧ ¬b) ∨ ¬a  ==  True
+        //
+        // MPRD intentionally differs when a referenced signal is missing: Not does not
+        // convert missing into allow. Presence is therefore part of the policy semantics.
         let a_and_b = PolicyExpr::all(vec![a.clone(), b.clone()], limits).unwrap();
         let a_and_not_b = PolicyExpr::all(vec![a.clone(), PolicyExpr::not(b)], limits).unwrap();
-        let taut = PolicyExpr::any(
+        let fail_closed_taut = PolicyExpr::any(
             vec![a_and_b, a_and_not_b, PolicyExpr::not(a.clone())],
             limits,
         )
         .unwrap();
 
-        // Structural hash differs because canonicalization does not prove *all* tautologies.
         let canon_true = CanonicalPolicy::new(PolicyExpr::True, limits).unwrap();
-        let canon_taut = CanonicalPolicy::new(taut, limits).unwrap();
-        assert_ne!(canon_true.bytes_v1(), canon_taut.bytes_v1());
-        assert_ne!(canon_true.hash_v1(), canon_taut.hash_v1());
+        let canon_expr = CanonicalPolicy::new(fail_closed_taut, limits).unwrap();
+        assert_ne!(canon_true.bytes_v1(), canon_expr.bytes_v1());
+        assert_ne!(canon_true.hash_v1(), canon_expr.hash_v1());
 
-        // Semantic hash via ROBDD must agree.
+        // The semantic hashes must also differ because the expression denies when a
+        // referenced signal is missing, whereas True always allows.
         let h_true = policy_semantic_hash_robdd_v1(canon_true.expr(), limits).unwrap();
-        let h_taut = policy_semantic_hash_robdd_v1(canon_taut.expr(), limits).unwrap();
-        assert_eq!(h_true, h_taut);
+        let h_expr = policy_semantic_hash_robdd_v1(canon_expr.expr(), limits).unwrap();
+        assert_ne!(h_true, h_expr);
     }
 
     #[test]
@@ -1038,13 +1078,25 @@ mod tests {
     }
 
     #[test]
-    fn canonicalize_eliminates_tautology_when_no_deny_if() {
+    fn canonicalize_keeps_complement_pair_fail_closed_for_missing() {
         let limits = lim();
         let a = PolicyExpr::atom("a", limits).unwrap();
         let not_a = PolicyExpr::not(a.clone());
-        let taut = PolicyExpr::any(vec![a, not_a], limits).unwrap();
-        let canon = crate::policy_algebra::canon::CanonicalPolicy::new(taut, limits).unwrap();
-        assert_eq!(*canon.expr(), PolicyExpr::True);
+        let expr = PolicyExpr::any(vec![a, not_a], limits).unwrap();
+        let canon =
+            crate::policy_algebra::canon::CanonicalPolicy::new(expr.clone(), limits).unwrap();
+
+        assert_ne!(*canon.expr(), PolicyExpr::True);
+
+        let ctx: BTreeMap<String, bool> = BTreeMap::new();
+        let raw_allowed = super::super::evaluate(&expr, &ctx, limits)
+            .unwrap()
+            .allowed();
+        let canon_allowed = super::super::evaluate(canon.expr(), &ctx, limits)
+            .unwrap()
+            .allowed();
+        assert!(!raw_allowed);
+        assert_eq!(raw_allowed, canon_allowed);
     }
 
     #[test]
@@ -1418,6 +1470,34 @@ mod tests {
             ]
         })
         .boxed()
+    }
+
+    #[test]
+    fn robdd_not_missing_signal_stays_fail_closed() {
+        let limits = lim();
+        let atom = PolicyExpr::atom("a", limits).unwrap();
+        let expr = PolicyExpr::not(atom);
+        let canon = CanonicalPolicy::new(expr, limits).unwrap();
+        let bdd = compile_allow_robdd(canon.expr(), limits).unwrap();
+
+        let ctx: BTreeMap<String, bool> = BTreeMap::new();
+        let allowed_eval = super::super::evaluate(canon.expr(), &ctx, limits)
+            .unwrap()
+            .allowed();
+        let allowed_bdd = bdd.eval(|bit| {
+            let name = bit.as_str();
+            if let Some(sig) = name.strip_prefix("p_") {
+                ctx.contains_key(sig)
+            } else if let Some(sig) = name.strip_prefix("v_") {
+                *ctx.get(sig).unwrap_or(&false)
+            } else {
+                false
+            }
+        });
+
+        assert!(!allowed_eval);
+        assert!(!allowed_bdd);
+        assert_eq!(allowed_eval, allowed_bdd);
     }
 
     proptest! {

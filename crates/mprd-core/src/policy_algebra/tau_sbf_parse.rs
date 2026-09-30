@@ -378,6 +378,24 @@ mod tests {
     }
 
     #[test]
+    fn emitted_v2_not_preserves_fail_closed_missing_semantics() {
+        let limits = lim();
+        let atom = PolicyExpr::atom("a", limits).unwrap();
+        let expr = PolicyExpr::not(atom);
+        let canon = CanonicalPolicy::new(expr, limits).unwrap();
+
+        let tau = emit_tau_gate_v2(canon.expr(), "allow", limits).unwrap();
+        let parsed = parse_emitted_tau_gate_allow_expr_v1(&tau, "allow", limits).unwrap();
+        let result = policy_equiv_robdd_policy_vs_tau_bits(canon.expr(), &parsed, limits).unwrap();
+
+        assert!(
+            result.equivalent,
+            "counterexample: {:?}",
+            result.counterexample
+        );
+    }
+
+    #[test]
     fn parse_emitted_gate_requires_output_line() {
         let limits = lim();
         let err = parse_emitted_tau_gate_allow_expr_v1("defs\nq\n", "allow", limits).unwrap_err();
