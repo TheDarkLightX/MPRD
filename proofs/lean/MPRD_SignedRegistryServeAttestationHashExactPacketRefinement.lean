@@ -8,8 +8,7 @@
     * the grouped exact ready-packet admissions.
 
   This composes the richer shipped-path model through the grouped
-  signed-registry execution artifact lane, admits a witness in the smaller
-  generic execute-ready artifact language, and then reaches the abstract
+  signed-registry execution artifact lane and then reaches the abstract
   `MPRD_ExecutionBoundary` theorem without a separate witness premise at this
   top-level model.
 -/
@@ -61,7 +60,7 @@ theorem executed_signed_registry_serve_attestation_hash_states_refine_to_executi
         hReach hExec with
     ⟨hPacketReach, hPacketExec⟩
   rcases
-      MPRDSignedRegistryExecutionArtifactRuntimeRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary_from_generic_artifact_witness
+      MPRDSignedRegistryExecutionArtifactRuntimeRefinement.executed_execution_ready_packet_states_refine_to_execution_boundary_from_artifact
         hPacketReach hPacketExec hArtifact with
     ⟨t, hBindings, hExecutorGate, hAbsReach, hAbsExec, hAbsBoundary⟩
   exact ⟨hPacketReach, hPacketExec,
