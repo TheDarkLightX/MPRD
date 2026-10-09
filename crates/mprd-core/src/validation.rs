@@ -4,6 +4,9 @@
 //! used at pipeline boundaries.
 #![allow(clippy::items_after_test_module)]
 
+#[path = "sandbox_execution_binding.rs"]
+pub mod sandbox_execution_binding;
+
 use crate::hash::{
     candidate_hash_preimage, hash_candidate_preimage_v1, hash_state_preimage_v1,
     state_hash_preimage,
@@ -28,6 +31,7 @@ pub const MAX_CANDIDATE_PREIMAGE_BYTES_V1: usize = 16 * 1024;
 
 pub const ACTION_TYPE_NOOP_V1: &str = "noop";
 pub const ACTION_TYPE_HTTP_CALL_V1: &str = "http_call";
+pub const ACTION_TYPE_SANDBOX_RUN_V1: &str = sandbox_execution_binding::ACTION_TYPE_SANDBOX_RUN_V1;
 
 /// Validate a canonical v1 action schema (fail-closed).
 ///
@@ -146,6 +150,10 @@ pub fn validate_action_schema_v1(action_type: &str, params: &HashMap<String, Val
 
             Ok(())
         }
+        ACTION_TYPE_SANDBOX_RUN_V1 => {
+            sandbox_execution_binding::validate_sandbox_run_params_v1(params)
+                .map_err(|error| MprdError::InvalidInput(error.to_string()))
+        }
         _ => Err(MprdError::InvalidInput(format!(
             "unsupported action_type (v1): {action_type}"
         ))),
@@ -259,6 +267,28 @@ mod tests {
             Value::String("https://example.com/#frag".into()),
         );
         assert!(validate_action_schema_v1(ACTION_TYPE_HTTP_CALL_V1, &params).is_err());
+    }
+
+    #[test]
+    fn validate_action_schema_accepts_canonical_sandbox_run() {
+        use sandbox_execution_binding::{sandbox_run_candidate_v1, SandboxRunProposalV1};
+        let candidate = sandbox_run_candidate_v1(
+            SandboxRunProposalV1 {
+                plan_hash: Hash32([1; 32]),
+                sandbox_policy_hash: Hash32([2; 32]),
+                runtime_profile_hash: Hash32([3; 32]),
+                network_policy_hash: Hash32([4; 32]),
+                execution_nonce: Hash32([5; 32]),
+                execution_epoch: 1,
+                max_wall_time_ms: 1_000,
+                max_memory_mib: 512,
+                max_output_bytes: 1_024,
+            },
+            Score(0),
+        )
+        .expect("sandbox candidate");
+        validate_action_schema_v1(&candidate.action_type, &candidate.params)
+            .expect("global validator accepts sandbox_run");
     }
 
     #[test]
