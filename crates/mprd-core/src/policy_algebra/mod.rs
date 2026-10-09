@@ -14,6 +14,7 @@ mod ast;
 mod bdd;
 mod canon;
 mod eval;
+pub mod governed_memory;
 mod hash;
 mod menu;
 mod tau_emit;
