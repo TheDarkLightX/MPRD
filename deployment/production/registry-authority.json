@@ -1,0 +1,33 @@
+{
+  "environment": "production",
+  "local_node_id": "prod-node-1",
+  "namespaces": [
+    {
+      "activation_epoch": 11,
+      "allowed_node_ids": [
+        "prod-node-1"
+      ],
+      "min_certification_tier": "certified",
+      "namespace_id": "tau-owner-default",
+      "owner_set_id": "tau-owner-set-production"
+    }
+  ],
+  "policy_admissions": [
+    {
+      "activation_epoch": 11,
+      "admitted_node_ids": [
+        "prod-node-1"
+      ],
+      "certification_tier": "certified",
+      "namespace_id": "tau-owner-default",
+      "policy_exec_kind": "mpb_v1",
+      "policy_hash_hex": "442d7d7529ad0ac96f8c4e93a12020f703e5c2b2c033c6101a0caf7267290e3f",
+      "source_governance": "TauGovernedMapped"
+    }
+  ],
+  "registry_binding": {
+    "policy_epoch": 11,
+    "registry_root_hex": "7777777777777777777777777777777777777777777777777777777777777777"
+  },
+  "schema": "mprd/registry-authority-admission/v1"
+}

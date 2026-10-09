@@ -28,6 +28,24 @@
 // Include the generated methods
 include!(concat!(env!("OUT_DIR"), "/methods.rs"));
 
+fn image_id_is_placeholder(image_id: &[u32; 8]) -> bool {
+    image_id.iter().all(|word| *word == 0)
+}
+
+fn embedded_method_is_available(guest_elf: &[u8], image_id: &[u32; 8]) -> bool {
+    !guest_elf.is_empty() && !image_id_is_placeholder(image_id)
+}
+
+/// Returns true when the MPB guest ELF and image ID are embedded.
+pub fn mprd_mpb_guest_is_embedded() -> bool {
+    embedded_method_is_available(MPRD_MPB_GUEST_ELF, &MPRD_MPB_GUEST_ID)
+}
+
+/// Returns true when the Tau-compiled guest ELF and image ID are embedded.
+pub fn mprd_tau_compiled_guest_is_embedded() -> bool {
+    embedded_method_is_available(MPRD_TAU_COMPILED_GUEST_ELF, &MPRD_TAU_COMPILED_GUEST_ID)
+}
+
 #[cfg(test)]
 mod expected_image_ids;
 

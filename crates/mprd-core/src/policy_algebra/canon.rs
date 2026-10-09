@@ -108,12 +108,20 @@ fn deny_if_rank(expr: &PolicyExpr) -> u8 {
 }
 
 fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
+    canonicalize_with_context(expr, limits, false)
+}
+
+fn canonicalize_with_context(
+    expr: &PolicyExpr,
+    limits: PolicyLimits,
+    under_not: bool,
+) -> Result<PolicyExpr> {
     match expr {
         PolicyExpr::True | PolicyExpr::False | PolicyExpr::Atom(_) | PolicyExpr::DenyIf(_) => {
             Ok(expr.clone())
         }
         PolicyExpr::Not(child) => {
-            let c = canonicalize(child, limits)?;
+            let c = canonicalize_with_context(child, limits, true)?;
             match c {
                 PolicyExpr::True => Ok(PolicyExpr::False),
                 PolicyExpr::False => Ok(PolicyExpr::True),
@@ -124,7 +132,7 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
         PolicyExpr::All(children) => {
             let mut flat: Vec<PolicyExpr> = Vec::new();
             for ch in children {
-                let c = canonicalize(ch, limits)?;
+                let c = canonicalize_with_context(ch, limits, under_not)?;
                 match c {
                     PolicyExpr::All(grand) => flat.extend(grand),
                     other => flat.push(other),
@@ -141,17 +149,21 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
             // Remove identity elements.
             flat.retain(|c| !matches!(c, PolicyExpr::True));
             // Constant short-circuit is only safe when there is no veto (`DenyIf`) anywhere
-            // in the subtree. Otherwise we would erase veto guards, changing DenyVeto vs DenySoft.
+            // in the subtree, and only outside a Not context. Otherwise we would erase veto guards,
+            // or erase atoms whose missingness is observed by the enclosing Not.
             let has_deny_if = flat.iter().any(|c| c.contains_deny_if());
-            if !has_deny_if && flat.iter().any(|c| matches!(c, PolicyExpr::False)) {
+            if !under_not && !has_deny_if && flat.iter().any(|c| matches!(c, PolicyExpr::False)) {
                 return Ok(PolicyExpr::False);
             }
-            // Boolean contradiction elimination: x ∧ ¬x = False (safe only when no DenyIf is present anywhere).
-            if !has_deny_if && has_complement_pair(&flat) {
+            // Boolean contradiction elimination: x ∧ ¬x = False. This is safe for allow/deny
+            // semantics outside Not, but not below Not because it can erase missing-signal
+            // sensitivity from the enclosing Not.
+            if !under_not && !has_deny_if && has_complement_pair(&flat) {
                 return Ok(PolicyExpr::False);
             }
-            // Boolean absorption: x ∧ (x ∨ y) = x (safe only when no DenyIf is present anywhere).
-            if !has_deny_if {
+            // Boolean absorption: x ∧ (x ∨ y) = x. Skip below Not for the same missing-signal
+            // reason as contradiction elimination.
+            if !under_not && !has_deny_if {
                 flat = absorb_in_all(flat);
             }
 
@@ -198,7 +210,7 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
         PolicyExpr::Any(children) => {
             let mut flat: Vec<PolicyExpr> = Vec::new();
             for ch in children {
-                let c = canonicalize(ch, limits)?;
+                let c = canonicalize_with_context(ch, limits, under_not)?;
                 match c {
                     PolicyExpr::Any(grand) => flat.extend(grand),
                     other => flat.push(other),
@@ -219,18 +231,18 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
             }
 
             // We only short-circuit `Any(..., True, ...) -> True` when we can prove there is
-            // no veto (`DenyIf`) anywhere in the subtree. Otherwise `DenyIf` must be preserved
-            // as an absorbing deny guard.
+            // no veto (`DenyIf`) anywhere in the subtree and only outside a Not context. Below
+            // Not, erased atoms can still affect fail-closed missing-signal denial.
             let has_deny_if = flat.iter().any(|c| c.contains_deny_if());
-            if !has_deny_if && flat.iter().any(|c| matches!(c, PolicyExpr::True)) {
+            if !under_not && !has_deny_if && flat.iter().any(|c| matches!(c, PolicyExpr::True)) {
                 return Ok(PolicyExpr::True);
             }
-            // Boolean tautology elimination: x ∨ ¬x = True (safe only when no DenyIf is present anywhere).
-            if !has_deny_if && has_complement_pair(&flat) {
-                return Ok(PolicyExpr::True);
-            }
-            // Boolean absorption: x ∨ (x ∧ y) = x (safe only when no DenyIf is present anywhere).
-            if !has_deny_if {
+            // Do not apply excluded middle (`x ∨ ¬x = True`): MPRD's fail-closed
+            // missing-signal semantics makes it false when x references a missing signal.
+            //
+            // Boolean absorption: x ∨ (x ∧ y) = x. Skip below Not because it can erase
+            // missing-signal sensitivity from y.
+            if !under_not && !has_deny_if {
                 flat = absorb_in_any(flat);
             }
 
@@ -273,7 +285,7 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
         PolicyExpr::Threshold { k, children } => {
             let mut canon_children: Vec<PolicyExpr> = Vec::with_capacity(children.len());
             for ch in children {
-                canon_children.push(canonicalize(ch, limits)?);
+                canon_children.push(canonicalize_with_context(ch, limits, under_not)?);
             }
 
             if canon_children.len() > limits.max_children {
@@ -282,6 +294,41 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
                     canon_children.len(),
                     limits.max_children
                 )));
+            }
+            if (*k as usize) > canon_children.len() {
+                return Err(MprdError::InvalidInput(format!(
+                    "PolicyExpr::Threshold invalid: k={k} exceeds child count {}",
+                    canon_children.len()
+                )));
+            }
+
+            if under_not {
+                let mut keyed: Vec<CanonChild> = canon_children
+                    .into_iter()
+                    .map(|c| CanonChild {
+                        deny_if_rank: deny_if_rank(&c),
+                        bytes: encode_policy_v1(&c),
+                        expr: c,
+                    })
+                    .collect();
+
+                keyed.sort_by(|a, b| {
+                    a.deny_if_rank
+                        .cmp(&b.deny_if_rank)
+                        .then_with(|| a.bytes.cmp(&b.bytes))
+                });
+
+                if (*k as usize) > keyed.len() {
+                    return Err(MprdError::InvalidInput(format!(
+                        "PolicyExpr::Threshold invalid after canonicalization: k={k} exceeds child count {}",
+                        keyed.len()
+                    )));
+                }
+
+                return Ok(PolicyExpr::Threshold {
+                    k: *k,
+                    children: keyed.into_iter().map(|k| k.expr).collect(),
+                });
             }
 
             // Removing `False` is safe: it can never help satisfy the threshold.
@@ -322,13 +369,24 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
             // duplicates can change the allow-count. Deduplicating would change semantics
             // (and can spuriously make `k` exceed the new child count).
 
-            if k_usize > keyed.len() {
-                return Err(MprdError::InvalidInput(format!(
-                    "PolicyExpr::Threshold invalid after canonicalization: k={k} exceeds child count {}",
-                    keyed.len()
-                )));
-            }
             let has_deny_if = keyed.iter().any(|c| c.expr.contains_deny_if());
+            if k_usize > keyed.len() {
+                // Constants can make a previously valid threshold impossible. Collapse to a
+                // deterministic deny while preserving any DenyIf carriers so veto semantics remain
+                // visible to phase-1 evaluation and later canonicalization passes.
+                if !has_deny_if {
+                    return Ok(PolicyExpr::False);
+                }
+                let mut deny_parts = Vec::with_capacity(keyed.len() + 1);
+                deny_parts.push(PolicyExpr::False);
+                deny_parts.extend(
+                    keyed
+                        .into_iter()
+                        .filter(|c| c.expr.contains_deny_if())
+                        .map(|c| c.expr),
+                );
+                return canonicalize_with_context(&PolicyExpr::All(deny_parts), limits, under_not);
+            }
             if k_usize == 0 {
                 // Threshold(0, children) == True in the main semantics, but rewriting is only safe
                 // if it would not erase any DenyIf atoms (veto set). So require no DenyIf anywhere.
@@ -348,7 +406,7 @@ fn canonicalize(expr: &PolicyExpr, limits: PolicyLimits) -> Result<PolicyExpr> {
                 //
                 // This holds even with `DenyIf` (Neutral) children; we do not erase DenyIf atoms.
                 let xs = keyed.into_iter().map(|k| k.expr).collect();
-                return canonicalize(&PolicyExpr::Any(xs), limits);
+                return canonicalize_with_context(&PolicyExpr::Any(xs), limits, under_not);
             }
             if k_usize == keyed.len() {
                 // Threshold(n, xs) == All(xs) iff none of the children can be Neutral.
