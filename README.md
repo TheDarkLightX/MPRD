@@ -38,16 +38,19 @@ The model cannot execute. The executor cannot act without a valid token. The tok
 ## The Safety Invariant
 
 ```
-∀ executed_action: Allowed(policy, state, action) = true
+∀ action admitted through the modeled executor boundary:
+    Allowed(committed_policy, committed_state, action) = true
 ```
 
-This isn't a goal. It's a guarantee. The architecture enforces it:
+This is the architectural invariant MPRD is designed to enforce under its stated trust assumptions. The strength of the claim depends on the deployed executor, canonicalization, token verification, freshness/epoch rules, anti-replay checks, and implementation matching the modeled boundary:
 
 1. **Proposer cannot execute**: zero direct capability, like steam without a cylinder
 2. **Executor is the ONLY path to action**: single, guarded channel
 3. **No token, no execution**: the piston won't move without pressure
 4. **Tokens only mint for allowed actions**: the governor controls the valve
-5. **ZK attestation**: third parties can verify without trusting the operator
+5. **ZK attestation**: supported deployment modes can let third parties verify selected execution claims without trusting the operator for those claims
+
+See [Production Readiness](docs/PRODUCTION_READINESS.md) for the remaining trust and deployment assumptions. A component proof is not, by itself, a proof of an entire production system.
 
 ## Proof artifacts
 

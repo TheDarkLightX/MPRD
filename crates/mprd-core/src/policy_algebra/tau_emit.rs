@@ -298,6 +298,26 @@ fn emit_expr(expr: &PolicyExpr, deny_if_value: DenyIfValue) -> Result<String> {
     }
 }
 
+fn emit_presence_guard_v2(expr: &PolicyExpr, limits: PolicyLimits) -> Result<String> {
+    let atoms = expr.atoms();
+    if atoms.is_empty() {
+        return Ok("1:sbf".to_string());
+    }
+
+    let mut parts = Vec::with_capacity(atoms.len());
+    for atom in atoms {
+        let p = bit_present_name(&atom, limits)?;
+        parts.push(format!("i_{}[t]", p.as_str()));
+    }
+
+    let joined = parts.join(" & ");
+    Ok(if parts.len() == 1 {
+        joined
+    } else {
+        format!("({joined})")
+    })
+}
+
 fn emit_expr_v2(
     expr: &PolicyExpr,
     deny_if_value: DenyIfValue,
@@ -318,10 +338,15 @@ fn emit_expr_v2(
         .to_string()),
         PolicyExpr::Not(child) => {
             // NOTE: `DenyIf` under `Not` is rejected by `validate_no_deny_if_under_not`.
-            Ok(format!(
-                "({})'",
-                emit_expr_v2(child, DenyIfValue::False, limits)?
-            ))
+            // Missing ordinary signals must still deny. Boolean negation alone would turn
+            // a missing atom's false value into true, so conjunct an explicit presence guard.
+            let negated = format!("({})'", emit_expr_v2(child, DenyIfValue::False, limits)?);
+            let present = emit_presence_guard_v2(child, limits)?;
+            if present == "1:sbf" {
+                Ok(negated)
+            } else {
+                Ok(format!("({present}) & ({negated})"))
+            }
         }
         PolicyExpr::All(children) => {
             if children.is_empty() {
